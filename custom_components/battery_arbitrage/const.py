@@ -89,11 +89,13 @@ MODE_DISABLED = "disabled"
 
 # Temperature buckets for learned charge rates: (key, min_c, max_c, default_kw)
 TEMP_BUCKETS: list[tuple[str, float | None, float | None, float]] = [
-    ("below_0",   None, 0.0,  0.5),
-    ("0_to_10",   0.0,  10.0, 1.5),
-    ("10_to_20",  10.0, 20.0, 2.5),
-    ("20_to_35",  20.0, 35.0, 3.6),
-    ("above_35",  35.0, None, 2.0),
+    ("below_0",   None,  0.0,  0.5),
+    ("0_to_5",    0.0,   6.0,  1.0),
+    ("6_to_15",   6.0,  16.0,  1.8),
+    ("16_to_21",  16.0, 21.0,  2.5),
+    ("21_to_35",  21.0, 35.0,  3.6),
+    ("35_to_50",  35.0, 50.0,  2.0),
+    ("above_50",  50.0, None,  1.0),
 ]
 
 # Solar forecast accuracy tracking
