@@ -1,0 +1,15 @@
+{
+  "domain": "battery_arbitrage",
+  "name": "Battery Arbitrage",
+  "version": "0.1.0",
+  "documentation": "https://github.com/planckus/ha-battery-arbitrage",
+  "issue_tracker": "https://github.com/planckus/ha-battery-arbitrage/issues",
+  "codeowners": ["@planckus"],
+  "requirements": [],
+  "dependencies": [],
+  "after_dependencies": ["foxess_modbus", "stromligning"],
+  "iot_class": "local_polling",
+  "config_flow": true,
+  "integration_type": "hub",
+  "quality_scale": "custom"
+}

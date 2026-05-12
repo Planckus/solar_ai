@@ -1,0 +1,280 @@
+"""Sensor platform for Battery Arbitrage."""
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfEnergy, UnitOfPower, UnitOfTemperature, UnitOfTime
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+from .const import DOMAIN, TEMP_BUCKETS
+from .coordinator import BatteryArbitrageCoordinator
+
+
+@dataclass(frozen=True, kw_only=True)
+class BatteryArbitrageSensorDescription(SensorEntityDescription):
+    """Sensor description with a value extractor."""
+
+    value_fn: Callable[[dict[str, Any]], Any] = lambda _: None
+
+
+SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
+    BatteryArbitrageSensorDescription(
+        key="mode",
+        translation_key="mode",
+        icon="mdi:sine-wave",
+        value_fn=lambda d: d.get("mode"),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="mode_reason",
+        translation_key="mode_reason",
+        icon="mdi:information-outline",
+        value_fn=lambda d: d.get("reason"),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="export_price",
+        translation_key="export_price",
+        native_unit_of_measurement="DKK/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:currency-usd",
+        value_fn=lambda d: round(d.get("export_price", 0.0), 4),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="grid_spread",
+        translation_key="grid_spread",
+        native_unit_of_measurement="DKK/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:chart-bar",
+        value_fn=lambda d: round(d.get("grid_arbitrage_spread", 0.0), 4),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="price_min",
+        translation_key="price_min",
+        native_unit_of_measurement="DKK/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:arrow-down-bold",
+        value_fn=lambda d: round(d.get("price_min", 0.0), 4),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="price_max",
+        translation_key="price_max",
+        native_unit_of_measurement="DKK/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:arrow-up-bold",
+        value_fn=lambda d: round(d.get("price_max", 0.0), 4),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="price_mean",
+        translation_key="price_mean",
+        native_unit_of_measurement="DKK/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:approximately-equal",
+        value_fn=lambda d: round(d.get("price_mean", 0.0), 4),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="price_p25",
+        translation_key="price_p25",
+        native_unit_of_measurement="DKK/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:percent",
+        value_fn=lambda d: round(d.get("price_p25", 0.0), 4),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="price_p75",
+        translation_key="price_p75",
+        native_unit_of_measurement="DKK/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:percent",
+        value_fn=lambda d: round(d.get("price_p75", 0.0), 4),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="price_next_slot",
+        translation_key="price_next_slot",
+        native_unit_of_measurement="DKK/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:clock-outline",
+        value_fn=lambda d: round(d.get("price_next_slot", 0.0), 4),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="solar_forecast_24h",
+        translation_key="solar_forecast_24h",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:solar-power",
+        value_fn=lambda d: round(d.get("solar_kwh_24h", 0.0), 2),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="solar_forecast_6h",
+        translation_key="solar_forecast_6h",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:solar-power-variant",
+        value_fn=lambda d: round(d.get("solar_kwh_6h", 0.0), 2),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="predicted_load_24h",
+        translation_key="predicted_load_24h",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:home-lightning-bolt",
+        value_fn=lambda d: round(d.get("predicted_house_load_24h_kwh", 0.0), 2),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="exportable_kwh",
+        translation_key="exportable_kwh",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:battery-arrow-up",
+        value_fn=lambda d: round(d.get("exportable_kwh", 0.0), 2),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="importable_kwh",
+        translation_key="importable_kwh",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:battery-arrow-down",
+        value_fn=lambda d: round(d.get("importable_kwh", 0.0), 2),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="load_2h_avg",
+        translation_key="load_2h_avg",
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:home-lightning-bolt-outline",
+        value_fn=lambda d: round(d.get("load_2h_avg_kw", 0.0), 3),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="load_28d_avg",
+        translation_key="load_28d_avg",
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:chart-timeline-variant",
+        value_fn=lambda d: round(d.get("load_28d_avg_kw", 0.0), 3),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="learned_charge_rate",
+        translation_key="learned_charge_rate",
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:battery-charging",
+        value_fn=lambda d: round(d.get("learned_charge_rate", 0.0), 3),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="time_to_charge",
+        translation_key="time_to_charge",
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:timer-outline",
+        value_fn=lambda d: round(min(d.get("time_to_charge_h", 999.0), 999.0), 1),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="cell_temp_low",
+        translation_key="cell_temp_low",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:thermometer",
+        value_fn=lambda d: d.get("cell_temp_low"),
+    ),
+)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Battery Arbitrage sensors from config entry."""
+    coordinator: BatteryArbitrageCoordinator = hass.data[DOMAIN][entry.entry_id]
+
+    entities: list[SensorEntity] = [
+        BatteryArbitrageSensor(coordinator, entry, desc) for desc in SENSORS
+    ]
+
+    # One sensor per temperature bucket for the learned charge rates
+    for bucket_key, _, _, _ in TEMP_BUCKETS:
+        entities.append(
+            BatteryArbitrageLearnedRateSensor(coordinator, entry, bucket_key)
+        )
+
+    async_add_entities(entities)
+
+
+class BatteryArbitrageSensor(CoordinatorEntity[BatteryArbitrageCoordinator], SensorEntity):
+    """A single Battery Arbitrage sensor derived from coordinator data."""
+
+    entity_description: BatteryArbitrageSensorDescription
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+        description: BatteryArbitrageSensorDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{entry.entry_id}_{description.key}"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def native_value(self) -> Any:
+        if self.coordinator.data is None:
+            return None
+        return self.entity_description.value_fn(self.coordinator.data)
+
+
+class BatteryArbitrageLearnedRateSensor(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SensorEntity
+):
+    """Sensor showing the learned charge rate for one temperature bucket."""
+
+    _attr_has_entity_name = True
+    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:battery-charging-outline"
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+        bucket_key: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._bucket_key = bucket_key
+        self._attr_unique_id = f"{entry.entry_id}_learned_rate_{bucket_key}"
+        self._attr_translation_key = f"learned_rate_{bucket_key}"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def native_value(self) -> float:
+        return round(self.coordinator.get_learned_rate(self._bucket_key), 3)
+
+
+def _device_info(entry: ConfigEntry) -> dict:
+    return {
+        "identifiers": {(DOMAIN, entry.entry_id)},
+        "name": "Battery Arbitrage",
+        "manufacturer": "Community",
+        "model": "Battery Arbitrage v0.1",
+        "entry_type": "service",
+    }
