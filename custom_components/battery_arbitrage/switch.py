@@ -52,10 +52,13 @@ class BatteryArbitrageSwitch(
 
     async def async_turn_on(self, **kwargs: object) -> None:
         self.coordinator.enabled = True
+        # Re-disable the legacy automation when arbitrage is re-enabled
+        await self.coordinator.async_disable_legacy_automation()
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: object) -> None:
         self.coordinator.enabled = False
-        # Immediately restore inverter/EVCC to normal if we were mid-cycle
+        # Restore the legacy automation and inverter/EVCC to normal
+        await self.coordinator.async_restore_legacy_automation()
         await self.coordinator.async_restore_normal()
         self.async_write_ha_state()
