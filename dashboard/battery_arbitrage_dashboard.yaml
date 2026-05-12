@@ -1,4 +1,4 @@
-title: Battery Arbitrage
+title: Solar AI
 views:
   - title: Overview
     path: overview
@@ -9,12 +9,12 @@ views:
       - type: horizontal-stack
         cards:
           - type: tile
-            entity: switch.battery_arbitrage_enabled
+            entity: switch.battery_arbitrage_arbitrage_aktiv
             color: green
             tap_action:
               action: toggle
           - type: tile
-            entity: sensor.battery_arbitrage_mode
+            entity: sensor.battery_arbitrage_driftstilstand
             icon: mdi:sine-wave
           - type: tile
             entity: sensor.foxessmodbus_battery_soc_1
@@ -22,7 +22,7 @@ views:
             icon: mdi:battery
 
       - type: entity
-        entity: sensor.battery_arbitrage_mode_reason
+        entity: sensor.battery_arbitrage_begrundelse_for_tilstand
         name: Decision reason
         icon: mdi:information-outline
 
@@ -32,15 +32,15 @@ views:
         icon: mdi:currency-eur
         show_header_toggle: false
         entities:
-          - entity: sensor.battery_arbitrage_export_price
-          - entity: sensor.battery_arbitrage_grid_spread
+          - entity: sensor.battery_arbitrage_eksportpris
+          - entity: sensor.battery_arbitrage_net_arbitrage_spread
           - type: divider
-          - entity: sensor.battery_arbitrage_price_min
-          - entity: sensor.battery_arbitrage_price_max
-          - entity: sensor.battery_arbitrage_price_mean
-          - entity: sensor.battery_arbitrage_price_p25
-          - entity: sensor.battery_arbitrage_price_p75
-          - entity: sensor.battery_arbitrage_price_next_slot
+          - entity: sensor.battery_arbitrage_24h_prisminimum
+          - entity: sensor.battery_arbitrage_24h_prismaksimum
+          - entity: sensor.battery_arbitrage_24h_prisgennemsnit
+          - entity: sensor.battery_arbitrage_24h_pris_25_percentil
+          - entity: sensor.battery_arbitrage_24h_pris_75_percentil
+          - entity: sensor.battery_arbitrage_naeste_slots_pris
 
       # ── Solar Forecast ─────────────────────────────────────────────────────
       - type: entities
@@ -48,18 +48,18 @@ views:
         icon: mdi:solar-power
         show_header_toggle: false
         entities:
-          - entity: sensor.battery_arbitrage_solar_accuracy_factor
+          - entity: sensor.battery_arbitrage_solcelle_prognose_nojagtighed
           - type: divider
-          - entity: sensor.battery_arbitrage_solar_forecast_24h
+          - entity: sensor.battery_arbitrage_solcelle_prognose_24h
             name: Raw 24h
-          - entity: sensor.battery_arbitrage_solar_forecast_24h_adjusted
+          - entity: sensor.battery_arbitrage_solcelle_prognose_24h_justeret
             name: Adjusted 24h
-          - entity: sensor.battery_arbitrage_solar_forecast_6h
+          - entity: sensor.battery_arbitrage_solcelle_prognose_6h
             name: Raw 6h
-          - entity: sensor.battery_arbitrage_solar_forecast_6h_adjusted
+          - entity: sensor.battery_arbitrage_solcelle_prognose_6h_justeret
             name: Adjusted 6h
           - type: divider
-          - entity: binary_sensor.battery_arbitrage_solar_will_fill
+          - entity: binary_sensor.battery_arbitrage_sol_fylder_batteri
 
       # ── Battery ────────────────────────────────────────────────────────────
       - type: entities
@@ -69,32 +69,32 @@ views:
         entities:
           - entity: sensor.foxessmodbus_battery_soc_1
             name: State of charge
-          - entity: sensor.battery_arbitrage_exportable_kwh
-          - entity: sensor.battery_arbitrage_importable_kwh
-          - entity: sensor.battery_arbitrage_time_to_charge
+          - entity: sensor.battery_arbitrage_eksporterbar_energi
+          - entity: sensor.battery_arbitrage_importerbar_energi
+          - entity: sensor.battery_arbitrage_tid_til_fuld_opladning
           - type: divider
           - entity: sensor.foxessmodbus_battery_charge
             name: Charge power
           - entity: sensor.foxessmodbus_battery_discharge
             name: Discharge power
-          - entity: sensor.battery_arbitrage_cell_temp_low
+          - entity: sensor.battery_arbitrage_batteritemperatur_laveste_celle
 
       # ── Conditions ─────────────────────────────────────────────────────────
       - type: glance
         title: Conditions
         show_state: true
         entities:
-          - entity: binary_sensor.battery_arbitrage_should_export
+          - entity: binary_sensor.battery_arbitrage_bor_eksportere
             name: Should export
-          - entity: binary_sensor.battery_arbitrage_should_grid_charge
+          - entity: binary_sensor.battery_arbitrage_bor_net_oplade
             name: Should charge
-          - entity: binary_sensor.battery_arbitrage_vacation_mode
+          - entity: binary_sensor.battery_arbitrage_tilstedevaerelse
             name: Home
-          - entity: binary_sensor.battery_arbitrage_ev_connected
+          - entity: binary_sensor.battery_arbitrage_ev_tilsluttet
             name: EV
-          - entity: binary_sensor.battery_arbitrage_ev_charging_now
+          - entity: binary_sensor.battery_arbitrage_ev_oplader_now_minpv_tilstand
             name: EV charging
-          - entity: sensor.battery_arbitrage_evcc_battery_mode
+          - entity: sensor.battery_arbitrage_evcc_batteritilstand
             name: EVCC mode
 
       # ── Load Model ─────────────────────────────────────────────────────────
@@ -103,9 +103,9 @@ views:
         icon: mdi:home-lightning-bolt
         show_header_toggle: false
         entities:
-          - entity: sensor.battery_arbitrage_load_2h_avg
-          - entity: sensor.battery_arbitrage_load_28d_avg
-          - entity: sensor.battery_arbitrage_predicted_load_24h
+          - entity: sensor.battery_arbitrage_husstand_forbrug_2h_gennemsnit
+          - entity: sensor.battery_arbitrage_husstand_forbrug_28_dages_gennemsnit
+          - entity: sensor.battery_arbitrage_forudsagt_husstand_forbrug_24h
           - entity: sensor.foxessmodbus_load_power
             name: Current load power
 
@@ -115,14 +115,14 @@ views:
         icon: mdi:thermometer-lines
         show_header_toggle: false
         entities:
-          - entity: sensor.battery_arbitrage_learned_charge_rate
+          - entity: sensor.battery_arbitrage_laert_opladningshastighed_aktuel_temp
             name: Current temperature bucket
           - type: divider
-          - entity: sensor.battery_arbitrage_learned_rate_below_0
-          - entity: sensor.battery_arbitrage_learned_rate_0_to_10
-          - entity: sensor.battery_arbitrage_learned_rate_10_to_20
-          - entity: sensor.battery_arbitrage_learned_rate_20_to_35
-          - entity: sensor.battery_arbitrage_learned_rate_above_35
+          - entity: sensor.battery_arbitrage_laert_opladningshastighed_under_0degc
+          - entity: sensor.battery_arbitrage_laert_opladningshastighed_0_10degc
+          - entity: sensor.battery_arbitrage_laert_opladningshastighed_10_20degc
+          - entity: sensor.battery_arbitrage_laert_opladningshastighed_20_35degc
+          - entity: sensor.battery_arbitrage_laert_opladningshastighed_over_35degc
 
       # ── FoxESS Inverter ────────────────────────────────────────────────────
       - type: entities

@@ -1,6 +1,6 @@
 {
   "domain": "battery_arbitrage",
-  "name": "Battery Arbitrage",
+  "name": "Solar AI",
   "version": "0.1.0",
   "documentation": "https://github.com/planckus/ha-battery-arbitrage",
   "issue_tracker": "https://github.com/planckus/ha-battery-arbitrage/issues",
