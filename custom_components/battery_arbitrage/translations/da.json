@@ -106,7 +106,11 @@
       "learned_rate_0_to_10": { "name": "Lært opladningshastighed 0–10°C" },
       "learned_rate_10_to_20": { "name": "Lært opladningshastighed 10–20°C" },
       "learned_rate_20_to_35": { "name": "Lært opladningshastighed 20–35°C" },
-      "learned_rate_above_35": { "name": "Lært opladningshastighed over 35°C" }
+      "learned_rate_above_35": { "name": "Lært opladningshastighed over 35°C" },
+      "evcc_battery_mode": { "name": "EVCC batteritilstand" },
+      "solar_accuracy_factor": { "name": "Solcelle-prognose nøjagtighed" },
+      "solar_forecast_24h_adjusted": { "name": "Solcelle-prognose 24h (justeret)" },
+      "solar_forecast_6h_adjusted": { "name": "Solcelle-prognose 6h (justeret)" }
     },
     "binary_sensor": {
       "should_export": { "name": "Bør eksportere" },
@@ -119,7 +123,8 @@
         }
       },
       "solar_will_fill": { "name": "Sol fylder batteri" },
-      "ev_connected": { "name": "EV tilsluttet" }
+      "ev_connected": { "name": "EV tilsluttet" },
+      "ev_charging_now": { "name": "EV oplader (now/minpv tilstand)" }
     },
     "number": {
       "charge_rate_below_0": { "name": "Maks. opladning under 0°C" },

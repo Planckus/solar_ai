@@ -26,6 +26,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_load_storage()
     await coordinator.async_config_entry_first_refresh()
 
+    # Disable the legacy export-limit automation so it can't fight us over register 46616
+    await coordinator.async_disable_legacy_automation()
+
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -81,7 +84,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload Battery Arbitrage config entry — restore HA to normal state."""
     coordinator: BatteryArbitrageCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    # Restore inverter and EVCC to normal before unloading
+    # Restore the legacy automation and inverter/EVCC before unloading
+    await coordinator.async_restore_legacy_automation()
     await coordinator.async_restore_normal()
 
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
