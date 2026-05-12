@@ -102,11 +102,13 @@
       "learned_charge_rate": { "name": "Learned charge rate (current temp)" },
       "time_to_charge": { "name": "Time to full charge" },
       "cell_temp_low": { "name": "Battery cell temperature (lowest)" },
-      "learned_rate_below_0": { "name": "Learned charge rate below 0°C" },
-      "learned_rate_0_to_10": { "name": "Learned charge rate 0–10°C" },
-      "learned_rate_10_to_20": { "name": "Learned charge rate 10–20°C" },
-      "learned_rate_20_to_35": { "name": "Learned charge rate 20–35°C" },
-      "learned_rate_above_35": { "name": "Learned charge rate above 35°C" },
+      "learned_rate_below_0": { "name": "Learned charge rate — under 0°C" },
+      "learned_rate_0_to_5": { "name": "Learned charge rate — 0–5°C" },
+      "learned_rate_6_to_15": { "name": "Learned charge rate — 6–15°C" },
+      "learned_rate_16_to_21": { "name": "Learned charge rate — 16–21°C" },
+      "learned_rate_21_to_35": { "name": "Learned charge rate — 21–35°C" },
+      "learned_rate_35_to_50": { "name": "Learned charge rate — 35–50°C" },
+      "learned_rate_above_50": { "name": "Learned charge rate — over 50°C" },
       "evcc_battery_mode": { "name": "EVCC battery mode" },
       "solar_accuracy_factor": { "name": "Solar forecast accuracy" },
       "solar_forecast_24h_adjusted": { "name": "Solar forecast 24h (adjusted)" },
@@ -127,11 +129,13 @@
       "ev_charging_now": { "name": "EV charging (now/minpv mode)" }
     },
     "number": {
-      "charge_rate_below_0": { "name": "Max charge rate below 0°C" },
-      "charge_rate_0_to_10": { "name": "Max charge rate 0–10°C" },
-      "charge_rate_10_to_20": { "name": "Max charge rate 10–20°C" },
-      "charge_rate_20_to_35": { "name": "Max charge rate 20–35°C" },
-      "charge_rate_above_35": { "name": "Max charge rate above 35°C" }
+      "charge_rate_below_0": { "name": "Max charge rate — under 0°C" },
+      "charge_rate_0_to_5": { "name": "Max charge rate — 0–5°C" },
+      "charge_rate_6_to_15": { "name": "Max charge rate — 6–15°C" },
+      "charge_rate_16_to_21": { "name": "Max charge rate — 16–21°C" },
+      "charge_rate_21_to_35": { "name": "Max charge rate — 21–35°C" },
+      "charge_rate_35_to_50": { "name": "Max charge rate — 35–50°C" },
+      "charge_rate_above_50": { "name": "Max charge rate — over 50°C" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage enabled" }
