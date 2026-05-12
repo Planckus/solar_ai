@@ -230,9 +230,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     # ------------------------------------------------------------------ #
 
     async def _async_update_data(self) -> dict[str, Any]:
-        if not self._enabled:
-            return self._make_result(mode=MODE_DISABLED, reason="System disabled")
-
         session = async_get_clientsession(self.hass)
         evcc_url = self.config["evcc_url"]
 
@@ -387,13 +384,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and not evcc_managing_battery
         )
 
-        # ---- execute action ----
-        new_mode, reason = await self._execute_decision(
-            should_export, should_grid_charge, export_price,
-            grid_arbitrage_spread, price_min, price_next_slot, price_p25,
-            truly_exportable_kwh, importable_kwh, solar_will_fill,
-            ev_charging_now, evcc_battery_mode, evcc_managing_battery,
-        )
+        # ---- execute action (skipped when disabled — data still reported) ----
+        if self._enabled:
+            new_mode, reason = await self._execute_decision(
+                should_export, should_grid_charge, export_price,
+                grid_arbitrage_spread, price_min, price_next_slot, price_p25,
+                truly_exportable_kwh, importable_kwh, solar_will_fill,
+                ev_charging_now, evcc_battery_mode, evcc_managing_battery,
+            )
+        else:
+            new_mode = MODE_DISABLED
+            if ev_charging_now:
+                reason = "Disabled — EV actively charging"
+            elif should_export:
+                reason = "Disabled — would export if enabled"
+            elif should_grid_charge:
+                reason = "Disabled — would grid charge if enabled"
+            else:
+                reason = "Disabled — monitoring only"
 
         # ---- save storage periodically ----
         await self._store.async_save(self._stored)
