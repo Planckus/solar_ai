@@ -103,19 +103,19 @@ views:
         icon: mdi:cash
         show_header_toggle: false
         entities:
-          - entity: sensor.battery_arbitrage_faktisk_besparelse_i_dag
+          - entity: sensor.solar_ai_faktisk_besparelse_i_dag
             name: "Today — actual"
-          - entity: sensor.battery_arbitrage_forpasset_besparelse_i_dag
+          - entity: sensor.solar_ai_forpasset_besparelse_i_dag
             name: "Today — missed (disabled)"
           - type: divider
-          - entity: sensor.battery_arbitrage_faktisk_besparelse_7_dage
+          - entity: sensor.solar_ai_faktisk_besparelse_7_dage
             name: "7 days — actual"
-          - entity: sensor.battery_arbitrage_forpasset_besparelse_7_dage
+          - entity: sensor.solar_ai_forpasset_besparelse_7_dage
             name: "7 days — missed (disabled)"
           - type: divider
-          - entity: sensor.battery_arbitrage_faktisk_besparelse_30_dage
+          - entity: sensor.solar_ai_faktisk_besparelse_30_dage
             name: "30 days — actual"
-          - entity: sensor.battery_arbitrage_forpasset_besparelse_30_dage
+          - entity: sensor.solar_ai_forpasset_besparelse_30_dage
             name: "30 days — missed (disabled)"
 
       # ── Load Model ─────────────────────────────────────────────────────────
@@ -140,12 +140,12 @@ views:
             name: Charge rate (current temp)
           - type: divider
           - entity: sensor.battery_arbitrage_laert_opladningshastighed_under_0degc
-          - entity: sensor.battery_arbitrage_laert_opladningshastighed_0_5degc
-          - entity: sensor.battery_arbitrage_laert_opladningshastighed_6_15degc
-          - entity: sensor.battery_arbitrage_laert_opladningshastighed_16_21degc
-          - entity: sensor.battery_arbitrage_laert_opladningshastighed_21_35degc
-          - entity: sensor.battery_arbitrage_laert_opladningshastighed_35_50degc
-          - entity: sensor.battery_arbitrage_laert_opladningshastighed_over_50degc
+          - entity: sensor.solar_ai_laert_opladningshastighed_0_5degc
+          - entity: sensor.solar_ai_laert_opladningshastighed_6_15degc
+          - entity: sensor.solar_ai_laert_opladningshastighed_16_21degc
+          - entity: sensor.solar_ai_laert_opladningshastighed_21_35degc
+          - entity: sensor.solar_ai_laert_opladningshastighed_35_50degc
+          - entity: sensor.solar_ai_laert_opladningshastighed_over_50degc
 
       # ── FoxESS Inverter ────────────────────────────────────────────────────
       - type: entities
