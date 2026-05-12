@@ -199,7 +199,7 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
             self._data.pop("_evcc_data", None)
 
             return self.async_create_entry(
-                title="Battery Arbitrage",
+                title="Solar AI",
                 data=self._data,
             )
 
