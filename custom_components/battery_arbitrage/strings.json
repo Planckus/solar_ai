@@ -1,0 +1,153 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "EVCC Connection",
+        "description": "Enter the URL of your EVCC instance. The default is {default_url}.",
+        "data": {
+          "evcc_url": "EVCC URL"
+        },
+        "data_description": {
+          "evcc_url": "Full URL including port, e.g. http://192.168.1.2:7070"
+        }
+      },
+      "foxess": {
+        "title": "FoxESS Inverter Entities",
+        "description": "Battery Arbitrage needs to control three FoxESS Modbus entities. Auto-detected values are pre-filled.",
+        "data": {
+          "foxess_inverter_id": "Inverter ID",
+          "foxess_work_mode_entity": "Work mode select entity",
+          "foxess_force_charge_entity": "Force charge power entity",
+          "foxess_force_discharge_entity": "Force discharge power entity"
+        }
+      },
+      "stromligning": {
+        "title": "Electricity Price Entity",
+        "description": "Select the Strømligning spot price entity (excl. VAT).",
+        "data": {
+          "stromligning_entity": "Spot price entity"
+        }
+      },
+      "battery": {
+        "title": "Battery & Trading Parameters",
+        "description": "Configure your battery and the arbitrage thresholds.",
+        "data": {
+          "battery_capacity": "Battery capacity (kWh)",
+          "battery_floor_soc": "Minimum SoC during export (%)",
+          "battery_max_soc": "Maximum SoC for grid charging (%)",
+          "round_trip_efficiency": "Round-trip efficiency (%)",
+          "min_spread_arbitrage": "Minimum spread for grid arbitrage (DKK/kWh)",
+          "min_solar_export_price": "Minimum solar export price (DKK/kWh)",
+          "forecast_hours": "Forecast horizon (hours)"
+        },
+        "data_description": {
+          "battery_floor_soc": "Battery will not export below this state of charge",
+          "battery_max_soc": "Battery will not grid-charge above this state of charge",
+          "round_trip_efficiency": "Charge + discharge efficiency, typically 85–95%",
+          "min_spread_arbitrage": "Minimum price difference (sell − cheapest-in-window) to trigger grid arbitrage",
+          "min_solar_export_price": "Minimum spot price to export solar surplus"
+        }
+      },
+      "dashboard": {
+        "title": "Dashboard (optional)",
+        "description": "Optionally link an existing Lovelace dashboard. Available dashboards: {dashboards}",
+        "data": {
+          "dashboard_url_path": "Dashboard URL path"
+        }
+      }
+    },
+    "error": {
+      "evcc_unreachable": "Could not reach EVCC at the specified URL",
+      "evcc_no_battery": "EVCC is reachable but reports no battery",
+      "entity_not_found": "One or more entities could not be found in Home Assistant"
+    },
+    "abort": {
+      "already_configured": "Battery Arbitrage is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Battery Arbitrage Options",
+        "data": {
+          "battery_floor_soc": "Minimum SoC during export (%)",
+          "battery_max_soc": "Maximum SoC for grid charging (%)",
+          "round_trip_efficiency": "Round-trip efficiency (%)",
+          "min_spread_arbitrage": "Minimum spread for grid arbitrage (DKK/kWh)",
+          "min_solar_export_price": "Minimum solar export price (DKK/kWh)",
+          "forecast_hours": "Forecast horizon (hours)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "mode": { "name": "Operating mode" },
+      "mode_reason": { "name": "Mode reason" },
+      "export_price": { "name": "Export price" },
+      "grid_spread": { "name": "Grid arbitrage spread" },
+      "price_min": { "name": "24h price minimum" },
+      "price_max": { "name": "24h price maximum" },
+      "price_mean": { "name": "24h price average" },
+      "price_p25": { "name": "24h price 25th percentile" },
+      "price_p75": { "name": "24h price 75th percentile" },
+      "price_next_slot": { "name": "Next-slot price" },
+      "solar_forecast_24h": { "name": "Solar forecast 24h" },
+      "solar_forecast_6h": { "name": "Solar forecast 6h" },
+      "predicted_load_24h": { "name": "Predicted house load 24h" },
+      "exportable_kwh": { "name": "Exportable energy" },
+      "importable_kwh": { "name": "Importable energy" },
+      "load_2h_avg": { "name": "House load 2h average" },
+      "load_28d_avg": { "name": "House load 28-day average" },
+      "learned_charge_rate": { "name": "Learned charge rate (current temp)" },
+      "time_to_charge": { "name": "Time to full charge" },
+      "cell_temp_low": { "name": "Battery cell temperature (lowest)" },
+      "learned_rate_below_0": { "name": "Learned charge rate below 0°C" },
+      "learned_rate_0_to_10": { "name": "Learned charge rate 0–10°C" },
+      "learned_rate_10_to_20": { "name": "Learned charge rate 10–20°C" },
+      "learned_rate_20_to_35": { "name": "Learned charge rate 20–35°C" },
+      "learned_rate_above_35": { "name": "Learned charge rate above 35°C" }
+    },
+    "binary_sensor": {
+      "should_export": { "name": "Should export" },
+      "should_grid_charge": { "name": "Should grid charge" },
+      "vacation_mode": {
+        "name": "Home presence",
+        "state": {
+          "on": "Home",
+          "off": "Away / Vacation"
+        }
+      },
+      "solar_will_fill": { "name": "Solar will fill battery" },
+      "ev_connected": { "name": "EV connected" }
+    },
+    "number": {
+      "charge_rate_below_0": { "name": "Max charge rate below 0°C" },
+      "charge_rate_0_to_10": { "name": "Max charge rate 0–10°C" },
+      "charge_rate_10_to_20": { "name": "Max charge rate 10–20°C" },
+      "charge_rate_20_to_35": { "name": "Max charge rate 20–35°C" },
+      "charge_rate_above_35": { "name": "Max charge rate above 35°C" }
+    },
+    "switch": {
+      "enabled": { "name": "Arbitrage enabled" }
+    }
+  },
+  "services": {
+    "force_export": {
+      "name": "Force export",
+      "description": "Immediately activate Force Discharge mode regardless of price conditions."
+    },
+    "force_grid_charge": {
+      "name": "Force grid charge",
+      "description": "Immediately activate grid charging via EVCC."
+    },
+    "restore_normal": {
+      "name": "Restore normal",
+      "description": "Cancel active export or grid-charge and restore Self-Use mode."
+    },
+    "reset_learning": {
+      "name": "Reset learned data",
+      "description": "Clear all learned charge rates and load history."
+    }
+  }
+}
