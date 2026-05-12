@@ -1,0 +1,27 @@
+force_export:
+  name: Force export
+  description: >
+    Immediately switch the inverter to Force Discharge mode and open the export
+    gate, regardless of price conditions. Useful for manual tests or emergencies.
+  fields: {}
+
+force_grid_charge:
+  name: Force grid charge
+  description: >
+    Immediately tell EVCC to charge the battery from the grid at the current
+    learned rate. Useful for pre-charging before a known high-price window.
+  fields: {}
+
+restore_normal:
+  name: Restore normal operation
+  description: >
+    Cancel any active export or grid-charge session and return the inverter and
+    EVCC to Self-Use / normal battery mode.
+  fields: {}
+
+reset_learning:
+  name: Reset learned data
+  description: >
+    Clears all learned charge-rate samples and resets the load history to
+    factory defaults. Use after replacing the battery or moving to a new home.
+  fields: {}
