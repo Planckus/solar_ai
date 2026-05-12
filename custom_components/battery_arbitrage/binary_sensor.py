@@ -63,6 +63,13 @@ BINARY_SENSORS: tuple[BatteryArbitrageBinarySensorDescription, ...] = (
         icon="mdi:ev-plug-type2",
         value_fn=lambda d: d.get("ev_connected", False),
     ),
+    BatteryArbitrageBinarySensorDescription(
+        key="ev_charging_now",
+        translation_key="ev_charging_now",
+        device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
+        icon="mdi:car-electric",
+        value_fn=lambda d: d.get("ev_charging_now", False),
+    ),
 )
 
 

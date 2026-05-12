@@ -61,7 +61,14 @@ EVCC_API_PRIORITY_SOC = "/api/prioritysoc"
 WORK_MODE_SELF_USE = "Self Use"
 WORK_MODE_FORCE_CHARGE = "Force Charge"
 WORK_MODE_FORCE_DISCHARGE = "Force Discharge"
-WORK_MODE_FEED_IN_FIRST = "Feed-in First"
+WORK_MODE_FEED_IN_FIRST = "Feed-in First"  # Best mode for grid export (battery + solar)
+
+# The work mode to use when actively exporting to the grid
+WORK_MODE_EXPORT = WORK_MODE_FEED_IN_FIRST
+
+# Pre-existing HA automation that controls the export limit register —
+# disabled while our integration is running to avoid conflicts
+LEGACY_EXPORT_AUTOMATION = "automation.foxess_export_limit_by_systemtariff"
 
 # EVCC battery mode values
 EVCC_BATTERY_NORMAL = "normal"
@@ -88,6 +95,13 @@ TEMP_BUCKETS: list[tuple[str, float | None, float | None, float]] = [
     ("20_to_35",  20.0, 35.0, 3.6),
     ("above_35",  35.0, None, 2.0),
 ]
+
+# Solar forecast accuracy tracking
+SOLAR_ACCURACY_MAX_SAMPLES = 2016    # 14 days × 24h × 6 per hour
+SOLAR_ACCURACY_MIN_FORECAST_W = 50   # Only sample when meaningful production expected
+SOLAR_ACCURACY_MIN_SAMPLES = 12      # Need ≥ 1 hour of daylight data before applying factor
+SOLAR_ACCURACY_COMPARISON_W = 100    # Min forecast to include in ratio calculation
+SOLAR_ACCURACY_WINDOW = 576          # Use last 4 days (576 × 5 min) for the ratio
 
 # Coordinator update intervals
 UPDATE_INTERVAL_SECONDS = 300        # 5 min — normal polling

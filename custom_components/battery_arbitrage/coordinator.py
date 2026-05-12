@@ -33,6 +33,7 @@ from .const import (
     FOXESS_LOAD_POWER,
     FOXESS_WORK_MODE_ENTITY,
     FOXESS_EXPORT_LIMIT_REGISTER,
+    LEGACY_EXPORT_AUTOMATION,
     LOAD_HISTORY_MAX_SAMPLES,
     MIN_EXPORTABLE_KWH,
     MIN_GRID_CHARGE_KWH,
@@ -40,6 +41,11 @@ from .const import (
     MODE_EXPORTING,
     MODE_GRID_CHARGING,
     MODE_NORMAL,
+    SOLAR_ACCURACY_COMPARISON_W,
+    SOLAR_ACCURACY_MAX_SAMPLES,
+    SOLAR_ACCURACY_MIN_FORECAST_W,
+    SOLAR_ACCURACY_MIN_SAMPLES,
+    SOLAR_ACCURACY_WINDOW,
     STORAGE_KEY,
     STORAGE_VERSION,
     STROMLIGNING_SPOTPRICE_EX_VAT,
@@ -48,11 +54,13 @@ from .const import (
     VACATION_MIN_DURATION,
     VACATION_SHORT_WINDOW,
     VACATION_THRESHOLD,
+    WORK_MODE_EXPORT,
     WORK_MODE_FORCE_CHARGE,
-    WORK_MODE_FORCE_DISCHARGE,
     WORK_MODE_SELF_USE,
     EVCC_BATTERY_CHARGE,
     EVCC_BATTERY_NORMAL,
+    EVCC_BATTERY_HOLD,
+    EV_MODE_MIN_PV,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,7 +81,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._stored: dict[str, Any] = {}
         self._current_mode = MODE_NORMAL
         self._mode_reason = ""
-        self._enabled = True
+        self._enabled = False        # OFF by default — user enables after learning period
+        self._we_set_evcc_mode = False  # True while WE have EVCC battery mode set non-normal
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -86,6 +95,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     @enabled.setter
     def enabled(self, value: bool) -> None:
         self._enabled = value
+        self._stored["enabled"] = value
+        # Persist asynchronously (setters can't be awaited)
+        if self.hass:
+            self.hass.async_create_task(self._store.async_save(self._stored))
 
     @property
     def current_mode(self) -> str:
@@ -119,12 +132,30 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return 0.0
         return self.get_learned_rate(bucket)
 
+    def get_solar_accuracy_factor(self) -> float:
+        """Return the rolling median of actual/forecast ratio (clamped 0.3–1.5)."""
+        samples = self._stored.get("solar_accuracy_samples", [])
+        if len(samples) < SOLAR_ACCURACY_MIN_SAMPLES:
+            return 1.0
+        ratios = []
+        for s in samples[-SOLAR_ACCURACY_WINDOW:]:
+            f = s.get("f", 0)
+            a = s.get("a", 0)
+            if f >= SOLAR_ACCURACY_COMPARISON_W:
+                ratios.append(a / f)
+        if len(ratios) < 6:
+            return 1.0
+        factor = statistics.median(ratios)
+        return round(max(0.3, min(1.5, factor)), 3)
+
     def reset_learned_rates(self) -> None:
-        """Reset all learned charge rates to defaults."""
+        """Reset all learned charge rates and history to defaults."""
         self._stored["charge_rates"] = {
             key: default for key, _, _, default in TEMP_BUCKETS
         }
+        self._stored["charge_samples"] = {key: [] for key, _, _, _ in TEMP_BUCKETS}
         self._stored["load_history"] = []
+        self._stored["solar_accuracy_samples"] = []
         self.hass.async_create_task(self._store.async_save(self._stored))
 
     # ------------------------------------------------------------------ #
@@ -139,6 +170,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "charge_samples": {key: [] for key, _, _, _ in TEMP_BUCKETS},
                 "load_history": [],
                 "vacation_counter": 0,
+                "solar_accuracy_samples": [],
             }
         else:
             self._stored = data
@@ -147,6 +179,51 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("charge_samples", {key: [] for key, _, _, _ in TEMP_BUCKETS})
             self._stored.setdefault("load_history", [])
             self._stored.setdefault("vacation_counter", 0)
+            self._stored.setdefault("solar_accuracy_samples", [])
+        # Restore enabled state — default OFF so user must consciously turn on
+        self._enabled = self._stored.get("enabled", False)
+
+    # ------------------------------------------------------------------ #
+    # Legacy automation management                                          #
+    # ------------------------------------------------------------------ #
+
+    async def async_disable_legacy_automation(self) -> None:
+        """Turn off the pre-existing export-limit automation to avoid conflicts."""
+        state = self.hass.states.get(LEGACY_EXPORT_AUTOMATION)
+        if state is None:
+            return
+        if state.state == "on":
+            try:
+                await self.hass.services.async_call(
+                    "automation", "turn_off",
+                    {"entity_id": LEGACY_EXPORT_AUTOMATION},
+                    blocking=True,
+                )
+                _LOGGER.info(
+                    "Battery Arbitrage: disabled legacy automation %s",
+                    LEGACY_EXPORT_AUTOMATION,
+                )
+            except Exception as err:
+                _LOGGER.warning("Could not disable legacy automation: %s", err)
+
+    async def async_restore_legacy_automation(self) -> None:
+        """Re-enable the pre-existing export-limit automation on unload."""
+        state = self.hass.states.get(LEGACY_EXPORT_AUTOMATION)
+        if state is None:
+            return
+        if state.state == "off":
+            try:
+                await self.hass.services.async_call(
+                    "automation", "turn_on",
+                    {"entity_id": LEGACY_EXPORT_AUTOMATION},
+                    blocking=True,
+                )
+                _LOGGER.info(
+                    "Battery Arbitrage: re-enabled legacy automation %s",
+                    LEGACY_EXPORT_AUTOMATION,
+                )
+            except Exception as err:
+                _LOGGER.warning("Could not re-enable legacy automation: %s", err)
 
     # ------------------------------------------------------------------ #
     # Main update cycle                                                     #
@@ -178,14 +255,39 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         lp = loadpoints[0] if loadpoints else {}
         ev_charge_power_w = lp.get("chargePower", 0)
         ev_mode = lp.get("mode", "pv")
-        ev_connected = lp.get("connected", False)
 
-        # Base house load (subtract EV charging)
+        # Check all loadpoints for EV presence and active non-PV charging
+        ev_connected = any(lp_.get("connected", False) for lp_ in loadpoints)
+        ev_charging_now = any(
+            lp_.get("charging", False) and lp_.get("mode") in (EV_MODE_NOW, EV_MODE_MIN_PV)
+            for lp_ in loadpoints
+        )
+
+        # EVCC battery mode: "normal", "hold", or "charge"
+        # If EVCC (not us) has set it to hold/charge, we must not override it
+        evcc_battery_mode = evcc_state.get("batteryMode", EVCC_BATTERY_NORMAL)
+        evcc_managing_battery = (
+            evcc_battery_mode != EVCC_BATTERY_NORMAL and not self._we_set_evcc_mode
+        )
+
+        # Base house load (subtract EV charging — it's a separate decision)
         base_load_kw = max(0.0, (home_power_w - ev_charge_power_w) / 1000)
 
-        # ---- solar forecast ----
-        solar_kwh = _sum_forecast(solar_rates.get("rates", []), now, forecast_hours, watts=True)
-        solar_kwh_6h = _sum_forecast(solar_rates.get("rates", []), now, 6, watts=True)
+        # ---- solar forecast (raw from Solcast via EVCC) ----
+        solar_kwh_raw = _sum_forecast(solar_rates.get("rates", []), now, forecast_hours, watts=True)
+        solar_kwh_6h_raw = _sum_forecast(solar_rates.get("rates", []), now, 6, watts=True)
+
+        # ---- solar accuracy: sample current slot ----
+        current_forecast_w = _current_slot_forecast(solar_rates.get("rates", []), now)
+        if current_forecast_w is not None and (
+            current_forecast_w >= SOLAR_ACCURACY_MIN_FORECAST_W or pv_power_w >= SOLAR_ACCURACY_MIN_FORECAST_W
+        ):
+            self._update_solar_accuracy(current_forecast_w, pv_power_w)
+        solar_accuracy_factor = self.get_solar_accuracy_factor()
+
+        # Apply the learned correction to get realistic forecasts
+        solar_kwh = round(solar_kwh_raw * solar_accuracy_factor, 3)
+        solar_kwh_6h = round(solar_kwh_6h_raw * solar_accuracy_factor, 3)
 
         # ---- grid price analysis ----
         grid_vals = _forecast_values(grid_rates.get("rates", []), now, forecast_hours)
@@ -197,7 +299,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             price_mean = statistics.mean(sorted_vals)
             price_p25 = sorted_vals[max(0, n // 4 - 1)]
             price_p75 = sorted_vals[min(n - 1, 3 * n // 4)]
-            # Next-slot price (15 min)
             next_slot_vals = _forecast_values(grid_rates.get("rates", []), now, 0.5)
             price_next_slot = next_slot_vals[0] if next_slot_vals else price_min
         else:
@@ -211,8 +312,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         work_mode_str = current_work_mode.state if current_work_mode else WORK_MODE_SELF_USE
 
         # ---- strømligning export price ----
-        spot_state = self.hass.states.get(STROMLIGNING_SPOTPRICE_EX_VAT)
-        spot_ex_vat = float(spot_state.state) if spot_state and spot_state.state not in ("unknown", "unavailable") else 0.0
+        spot_state = self.hass.states.get(
+            self.config.get("stromligning_entity", "sensor.stromligning_spotprice_ex_vat")
+        )
+        spot_ex_vat = (
+            float(spot_state.state)
+            if spot_state and spot_state.state not in ("unknown", "unavailable")
+            else 0.0
+        )
         export_price = max(0.0, spot_ex_vat - DEFAULT_EXPORT_DEDUCTION)
 
         # ---- load model ----
@@ -241,18 +348,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         exportable_kwh = max(0.0, (battery_soc - floor_soc) / 100 * capacity_kwh * efficiency)
         importable_kwh = max(0.0, (max_soc - battery_soc) / 100 * capacity_kwh)
 
-        # Net house need = predicted load minus expected solar (what battery must cover)
+        # Net house need = predicted load minus expected solar (corrected)
         net_house_need_kwh = max(0.0, predicted_house_load_24h - solar_kwh)
         truly_exportable_kwh = max(0.0, exportable_kwh - net_house_need_kwh)
 
-        # Time to charge to target SoC
+        # Time to charge to target SoC at current learned rate
         if learned_charge_rate > 0:
             time_to_charge_h = importable_kwh / learned_charge_rate
         else:
             time_to_charge_h = 999.0
 
         # ---- spread calculations ----
-        grid_arbitrage_spread = export_price - price_min  # sell now vs cheapest in window
+        grid_arbitrage_spread = export_price - price_min
         solar_export_worthwhile = export_price >= self.config.get("min_solar_export_price", 0.50)
         grid_arbitrage_worthwhile = grid_arbitrage_spread >= self.config.get("min_spread_arbitrage", 1.0)
 
@@ -261,25 +368,31 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             (solar_export_worthwhile or grid_arbitrage_worthwhile)
             and truly_exportable_kwh >= MIN_EXPORTABLE_KWH
             and battery_soc > floor_soc
-            and ev_mode != EV_MODE_NOW
+            # Don't fight EVCC: if EV is fast/minpv-charging, hold the battery for it
+            and not ev_charging_now
+            # Don't override EVCC if it has explicitly taken control of battery mode
+            and not evcc_managing_battery
         )
 
-        # Don't grid-charge if solar will fill the battery anyway in 6h
+        # Don't grid-charge if corrected solar forecast will fill the battery anyway
         solar_will_fill = solar_kwh_6h >= importable_kwh
         should_grid_charge = (
             not should_export
-            and grid_vals
+            and bool(grid_vals)
             and price_next_slot <= price_p25
             and importable_kwh >= MIN_GRID_CHARGE_KWH
             and not solar_will_fill
             and battery_soc < max_soc
+            # Same EVCC respect: don't grid-charge if EVCC is managing battery
+            and not evcc_managing_battery
         )
 
         # ---- execute action ----
         new_mode, reason = await self._execute_decision(
             should_export, should_grid_charge, export_price,
             grid_arbitrage_spread, price_min, price_next_slot, price_p25,
-            truly_exportable_kwh, importable_kwh, solar_will_fill, ev_mode
+            truly_exportable_kwh, importable_kwh, solar_will_fill,
+            ev_charging_now, evcc_battery_mode, evcc_managing_battery,
         )
 
         # ---- save storage periodically ----
@@ -293,13 +406,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             ev_charge_power_w=ev_charge_power_w,
             ev_mode=ev_mode,
             ev_connected=ev_connected,
+            ev_charging_now=ev_charging_now,
+            evcc_battery_mode=evcc_battery_mode,
             base_load_kw=base_load_kw,
             load_2h_avg_kw=load_2h_avg,
             load_28d_avg_kw=load_28d_avg,
             vacation_mode=vacation_mode,
             predicted_house_load_24h_kwh=predicted_house_load_24h,
-            solar_kwh_24h=solar_kwh,
-            solar_kwh_6h=solar_kwh_6h,
+            solar_kwh_24h=solar_kwh_raw,
+            solar_kwh_6h=solar_kwh_6h_raw,
+            solar_kwh_24h_adjusted=solar_kwh,
+            solar_kwh_6h_adjusted=solar_kwh_6h,
+            solar_accuracy_factor=solar_accuracy_factor,
             solar_will_fill=solar_will_fill,
             price_min=price_min,
             price_max=price_max,
@@ -336,9 +454,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         exportable_kwh: float,
         importable_kwh: float,
         solar_will_fill: bool,
-        ev_mode: str,
+        ev_charging_now: bool,
+        evcc_battery_mode: str,
+        evcc_managing_battery: bool,
     ) -> tuple[str, str]:
-        """Execute the decided mode and return (mode, reason)."""
         target_mode = MODE_NORMAL
         reason = "Conditions not met for export or grid charging"
 
@@ -356,10 +475,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 f"{importable_kwh:.1f} kWh room available"
             )
         else:
-            if ev_mode == EV_MODE_NOW:
-                reason = "EV fast-charging: holding battery reserve"
+            if ev_charging_now:
+                reason = "EV actively charging (now/minpv) — holding battery for EVCC"
+            elif evcc_managing_battery:
+                reason = f"EVCC managing battery ({evcc_battery_mode}) — not overriding"
             elif solar_will_fill:
-                reason = "Solar will fill battery: grid charging not needed"
+                reason = "Solar will fill battery — grid charging not needed"
 
         if target_mode != self._current_mode:
             await self._transition_to(target_mode)
@@ -377,40 +498,43 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         evcc_url = self.config["evcc_url"]
 
         if new_mode == MODE_EXPORTING:
-            # Set FoxESS to Force Discharge and open export gate
-            await self._set_work_mode(WORK_MODE_FORCE_DISCHARGE)
+            # Feed-in First: inverter pushes battery + solar to grid
+            await self._set_work_mode(WORK_MODE_EXPORT)
             await self._set_export_limit(inverter_id, 10000)
-            # Tell EVCC to hold battery (don't let it interfere)
-            await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/hold")
+            # Tell EVCC to hold so it doesn't fight our export
+            self._we_set_evcc_mode = True
+            await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
 
         elif new_mode == MODE_GRID_CHARGING:
-            # Set FoxESS to Self Use (solar still contributes)
-            await self._set_work_mode(WORK_MODE_SELF_USE)
-            # Keep export gate open for solar
-            await self._set_export_limit(inverter_id, 10000)
-            # Tell EVCC to force-charge battery from grid
-            await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_CHARGE}")
+            # Force Charge: inverter charges battery from grid at learned rate
+            await self._set_work_mode(WORK_MODE_FORCE_CHARGE)
+            await self._set_charge_power(inverter_id)
+            await self._set_export_limit(inverter_id, 0)   # Don't export while buying cheap power
+            self._we_set_evcc_mode = True
+            await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
 
         elif new_mode == MODE_NORMAL:
-            # Restore everything to defaults
             await self._set_work_mode(WORK_MODE_SELF_USE)
             await self._set_export_limit(inverter_id, 10000)
-            await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_NORMAL}")
+            # Release EVCC back to normal only if WE were the one who set it to hold
+            if self._we_set_evcc_mode:
+                self._we_set_evcc_mode = False
+                await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_NORMAL}")
 
     async def _set_work_mode(self, mode: str) -> None:
-        """Set FoxESS work mode via HA service."""
-        entity = self.config.get("foxess_work_mode_entity", FOXESS_WORK_MODE_ENTITY)
+        entity = self.config.get("foxess_work_mode_entity", "select.foxessmodbus_work_mode")
         try:
             await self.hass.services.async_call(
                 "select", "select_option",
                 {"entity_id": entity, "option": mode},
                 blocking=True,
             )
+            _LOGGER.debug("Battery Arbitrage: set work mode → %s", mode)
         except Exception as err:
             _LOGGER.error("Failed to set FoxESS work mode to %s: %s", mode, err)
 
     async def _set_export_limit(self, inverter_id: str, limit_watts: int) -> None:
-        """Write the FoxESS export limit register."""
+        """Write the FoxESS export limit register (46616)."""
         try:
             high = limit_watts // 65536
             low = limit_watts % 65536
@@ -423,11 +547,28 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 },
                 blocking=True,
             )
+            _LOGGER.debug("Battery Arbitrage: export limit → %dW", limit_watts)
         except Exception as err:
             _LOGGER.error("Failed to set export limit: %s", err)
 
+    async def _set_charge_power(self, inverter_id: str) -> None:
+        """Set the Force Charge power to the learned rate for current temperature."""
+        rate_kw = self.get_current_charge_rate()
+        if rate_kw <= 0:
+            return
+        rate_w = int(rate_kw * 1000)
+        entity = self.config.get("foxess_force_charge_entity", "number.foxessmodbus_force_charge_power")
+        try:
+            await self.hass.services.async_call(
+                "number", "set_value",
+                {"entity_id": entity, "value": rate_w},
+                blocking=True,
+            )
+            _LOGGER.debug("Battery Arbitrage: force charge power → %dW", rate_w)
+        except Exception as err:
+            _LOGGER.error("Failed to set force charge power: %s", err)
+
     async def _evcc_post(self, session: aiohttp.ClientSession, base_url: str, path: str) -> None:
-        """POST to EVCC API."""
         try:
             async with session.post(f"{base_url}{path}", timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 if resp.status >= 400:
@@ -436,62 +577,56 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             _LOGGER.error("EVCC POST %s failed: %s", path, err)
 
     # ------------------------------------------------------------------ #
-    # Learning model                                                        #
+    # Learning models                                                       #
     # ------------------------------------------------------------------ #
 
     def _update_load_history(self, base_load_kw: float) -> None:
-        """Append current base load to ring buffer."""
         history: list[float] = self._stored.setdefault("load_history", [])
         history.append(round(base_load_kw, 3))
         if len(history) > LOAD_HISTORY_MAX_SAMPLES:
             del history[: len(history) - LOAD_HISTORY_MAX_SAMPLES]
 
     def _update_vacation_mode(self, load_2h: float, load_28d: float) -> bool:
-        """Update vacation counter and return vacation_mode flag."""
         counter: int = self._stored.get("vacation_counter", 0)
-        baseline = load_28d if load_28d > 0.05 else 0.2  # guard against cold-start
-
+        baseline = load_28d if load_28d > 0.05 else 0.2
         if load_2h < baseline * VACATION_THRESHOLD:
             counter = min(counter + 1, VACATION_MIN_DURATION + 1)
         else:
             counter = max(counter - 1, 0)
-
         self._stored["vacation_counter"] = counter
         return counter >= VACATION_MIN_DURATION
 
     def _calibrate_charge_rate(
-        self,
-        cell_temp: float,
-        charge_kw: float,
-        soc: float,
-        work_mode: str,
+        self, cell_temp: float, charge_kw: float, soc: float, work_mode: str
     ) -> None:
-        """Update learned max charge rate for current temperature bucket."""
         if (
             work_mode != WORK_MODE_FORCE_CHARGE
             or charge_kw < CALIBRATION_MIN_CHARGE_KW
             or soc >= CALIBRATION_MAX_SOC
         ):
             return
-
         bucket = _temp_bucket(cell_temp)
         if bucket is None:
             return
-
         samples: list[float] = self._stored["charge_samples"].setdefault(bucket, [])
         samples.append(round(charge_kw, 3))
         if len(samples) > CALIBRATION_MAX_SAMPLES:
             del samples[: len(samples) - CALIBRATION_MAX_SAMPLES]
-
         if len(samples) >= 3:
-            # Use 90th percentile — robust to occasional low readings
             idx = int(0.90 * len(samples))
             learned = sorted(samples)[idx]
             self._stored["charge_rates"][bucket] = round(learned, 3)
             _LOGGER.debug(
-                "Calibrated charge rate for %s: %.2f kW (from %d samples)",
+                "Calibrated charge rate for %s: %.2f kW (%d samples)",
                 bucket, learned, len(samples)
             )
+
+    def _update_solar_accuracy(self, forecast_w: float, actual_w: float) -> None:
+        """Append a (forecast, actual) PV power pair to the rolling sample buffer."""
+        samples: list[dict] = self._stored.setdefault("solar_accuracy_samples", [])
+        samples.append({"f": round(forecast_w, 0), "a": round(actual_w, 0)})
+        if len(samples) > SOLAR_ACCURACY_MAX_SAMPLES:
+            del samples[: len(samples) - SOLAR_ACCURACY_MAX_SAMPLES]
 
     # ------------------------------------------------------------------ #
     # Helpers                                                               #
@@ -528,19 +663,25 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 # ------------------------------------------------------------------ #
 
 def _temp_bucket(temp_c: float) -> str | None:
-    """Return the temperature bucket key for a given temperature."""
     for key, min_c, max_c, _ in TEMP_BUCKETS:
         if (min_c is None or temp_c >= min_c) and (max_c is None or temp_c < max_c):
             return key
     return None
 
 
-def _forecast_values(
-    rates: list[dict],
-    now: datetime,
-    hours: float,
-) -> list[float]:
-    """Return rate values within the next `hours` hours from now."""
+def _current_slot_forecast(rates: list[dict], now: datetime) -> float | None:
+    """Return the Solcast forecasted watts for the current 15-min slot."""
+    for rate in rates:
+        start = datetime.fromisoformat(rate["start"])
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        end = start + timedelta(minutes=15)
+        if start <= now < end:
+            return float(rate["value"])
+    return None
+
+
+def _forecast_values(rates: list[dict], now: datetime, hours: float) -> list[float]:
     cutoff = now + timedelta(hours=hours)
     result = []
     for rate in rates:
@@ -552,16 +693,7 @@ def _forecast_values(
     return result
 
 
-def _sum_forecast(
-    rates: list[dict],
-    now: datetime,
-    hours: float,
-    watts: bool = False,
-) -> float:
-    """Sum forecast values over the next `hours` hours.
-
-    If watts=True, values are in W for 15-min slots → convert to kWh.
-    """
+def _sum_forecast(rates: list[dict], now: datetime, hours: float, watts: bool = False) -> float:
     cutoff = now + timedelta(hours=hours)
     total = 0.0
     for rate in rates:
@@ -578,26 +710,15 @@ def _sum_forecast(
 
 
 def _rolling_mean(history: list[float], window: int) -> float:
-    """Return the mean of the last `window` samples."""
     if not history:
         return 0.0
     relevant = history[-window:]
     return round(statistics.mean(relevant), 3) if relevant else 0.0
 
 
-def _predict_house_load(
-    load_2h: float,
-    load_28d: float,
-    vacation_mode: bool,
-    hours: float,
-) -> float:
-    """Predict total house load (kWh) over the next `hours` hours."""
+def _predict_house_load(load_2h: float, load_28d: float, vacation_mode: bool, hours: float) -> float:
     if vacation_mode:
-        # Minimal buffer — nobody home
         hourly_kw = max(load_2h * 1.5, 0.05)
     else:
-        # Use the higher of short-term and half the long-term baseline
-        # Short-term captures current activity; long-term captures full-day patterns
         hourly_kw = max(load_2h * 1.1, load_28d * 0.5)
-
     return round(hourly_kw * hours, 3)

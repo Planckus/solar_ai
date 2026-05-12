@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy, UnitOfPower, UnitOfTemperature, UnitOfTime
+from homeassistant.const import PERCENTAGE, UnitOfEnergy, UnitOfPower, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -193,6 +193,38 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:thermometer",
         value_fn=lambda d: d.get("cell_temp_low"),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="evcc_battery_mode",
+        translation_key="evcc_battery_mode",
+        icon="mdi:battery-sync",
+        value_fn=lambda d: d.get("evcc_battery_mode", "normal"),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="solar_accuracy_factor",
+        translation_key="solar_accuracy_factor",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:chart-bell-curve-cumulative",
+        value_fn=lambda d: round(d.get("solar_accuracy_factor", 1.0) * 100, 1),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="solar_forecast_24h_adjusted",
+        translation_key="solar_forecast_24h_adjusted",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:solar-power",
+        value_fn=lambda d: round(d.get("solar_kwh_24h_adjusted", 0.0), 2),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="solar_forecast_6h_adjusted",
+        translation_key="solar_forecast_6h_adjusted",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:solar-power-variant",
+        value_fn=lambda d: round(d.get("solar_kwh_6h_adjusted", 0.0), 2),
     ),
 )
 
