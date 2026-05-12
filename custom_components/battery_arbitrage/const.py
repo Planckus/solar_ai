@@ -111,6 +111,7 @@ CALIBRATION_MIN_CHARGE_KW = 0.3     # Minimum charge power to count as a calibra
 CALIBRATION_MAX_SOC = 95            # Don't calibrate near-full (BMS tapers naturally)
 CALIBRATION_MAX_SAMPLES = 200       # Per temp bucket
 LOAD_HISTORY_MAX_SAMPLES = 8064     # 4 weeks × 7 days × 24h × 12 per hour
+SAVINGS_LOG_MAX_DAYS = 90           # Keep 90 days of daily savings data
 VACATION_SHORT_WINDOW = 24          # Samples for short-term (2h) average
 VACATION_THRESHOLD = 0.25           # 25% of long-term baseline → vacation
 VACATION_MIN_DURATION = 48          # Must be below threshold for 4h (48 × 5min samples)

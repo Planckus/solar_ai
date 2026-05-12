@@ -112,7 +112,13 @@
       "evcc_battery_mode": { "name": "EVCC battery mode" },
       "solar_accuracy_factor": { "name": "Solar forecast accuracy" },
       "solar_forecast_24h_adjusted": { "name": "Solar forecast 24h (adjusted)" },
-      "solar_forecast_6h_adjusted": { "name": "Solar forecast 6h (adjusted)" }
+      "solar_forecast_6h_adjusted": { "name": "Solar forecast 6h (adjusted)" },
+      "savings_actual_today": { "name": "Actual savings today" },
+      "savings_missed_today": { "name": "Missed savings today" },
+      "savings_actual_week": { "name": "Actual savings 7 days" },
+      "savings_missed_week": { "name": "Missed savings 7 days" },
+      "savings_actual_month": { "name": "Actual savings 30 days" },
+      "savings_missed_month": { "name": "Missed savings 30 days" }
     },
     "binary_sensor": {
       "should_export": { "name": "Should export" },
