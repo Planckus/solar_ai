@@ -97,6 +97,27 @@ views:
           - entity: sensor.battery_arbitrage_evcc_batteritilstand
             name: EVCC mode
 
+      # ── Savings ────────────────────────────────────────────────────────────
+      - type: entities
+        title: Savings (DKK)
+        icon: mdi:cash
+        show_header_toggle: false
+        entities:
+          - entity: sensor.battery_arbitrage_faktisk_besparelse_i_dag
+            name: "Today — actual"
+          - entity: sensor.battery_arbitrage_forpasset_besparelse_i_dag
+            name: "Today — missed (disabled)"
+          - type: divider
+          - entity: sensor.battery_arbitrage_faktisk_besparelse_7_dage
+            name: "7 days — actual"
+          - entity: sensor.battery_arbitrage_forpasset_besparelse_7_dage
+            name: "7 days — missed (disabled)"
+          - type: divider
+          - entity: sensor.battery_arbitrage_faktisk_besparelse_30_dage
+            name: "30 days — actual"
+          - entity: sensor.battery_arbitrage_forpasset_besparelse_30_dage
+            name: "30 days — missed (disabled)"
+
       # ── Load Model ─────────────────────────────────────────────────────────
       - type: entities
         title: Load Model

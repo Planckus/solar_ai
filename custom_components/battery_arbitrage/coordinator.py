@@ -25,6 +25,7 @@ from .const import (
     EVCC_API_STATE,
     EV_MODE_NOW,
     FOXESS_BATTERY_CHARGE_POWER,
+    FOXESS_BATTERY_DISCHARGE_POWER,
     FOXESS_BATTERY_SOC,
     FOXESS_CELL_TEMP_LOW,
     FOXESS_FEED_IN,
@@ -36,6 +37,7 @@ from .const import (
     LEGACY_EXPORT_AUTOMATION,
     LOAD_HISTORY_MAX_SAMPLES,
     MIN_EXPORTABLE_KWH,
+    SAVINGS_LOG_MAX_DAYS,
     MIN_GRID_CHARGE_KWH,
     MODE_DISABLED,
     MODE_EXPORTING,
@@ -132,6 +134,32 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return 0.0
         return self.get_learned_rate(bucket)
 
+    def get_savings_summary(self) -> dict[str, float]:
+        """Aggregate savings_log into today / 7-day / 30-day totals."""
+        log: list[dict] = self._stored.get("savings_log", [])
+        today_str = datetime.now().date().isoformat()
+        week_ago = (datetime.now().date() - timedelta(days=7)).isoformat()
+        month_ago = (datetime.now().date() - timedelta(days=30)).isoformat()
+        totals = dict(
+            savings_actual_today=0.0, savings_missed_today=0.0,
+            savings_actual_week=0.0,  savings_missed_week=0.0,
+            savings_actual_month=0.0, savings_missed_month=0.0,
+        )
+        for entry in log:
+            d = entry["date"]
+            a = entry.get("actual_dkk", 0.0)
+            m = entry.get("missed_dkk", 0.0)
+            if d == today_str:
+                totals["savings_actual_today"] += a
+                totals["savings_missed_today"] += m
+            if d >= week_ago:
+                totals["savings_actual_week"] += a
+                totals["savings_missed_week"] += m
+            if d >= month_ago:
+                totals["savings_actual_month"] += a
+                totals["savings_missed_month"] += m
+        return {k: round(v, 2) for k, v in totals.items()}
+
     def get_solar_accuracy_factor(self) -> float:
         """Return the rolling median of actual/forecast ratio (clamped 0.3–1.5)."""
         samples = self._stored.get("solar_accuracy_samples", [])
@@ -171,6 +199,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "load_history": [],
                 "vacation_counter": 0,
                 "solar_accuracy_samples": [],
+                "savings_log": [],
             }
         else:
             self._stored = data
@@ -180,6 +209,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("load_history", [])
             self._stored.setdefault("vacation_counter", 0)
             self._stored.setdefault("solar_accuracy_samples", [])
+            self._stored.setdefault("savings_log", [])
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
 
@@ -305,6 +335,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         battery_soc = self._get_float_state(FOXESS_BATTERY_SOC, 0)
         cell_temp_low = self._get_float_state(FOXESS_CELL_TEMP_LOW)
         battery_charge_kw = self._get_float_state(FOXESS_BATTERY_CHARGE_POWER, 0)
+        battery_discharge_kw = self._get_float_state(FOXESS_BATTERY_DISCHARGE_POWER, 0)
         current_work_mode = self.hass.states.get(FOXESS_WORK_MODE_ENTITY)
         work_mode_str = current_work_mode.state if current_work_mode else WORK_MODE_SELF_USE
 
@@ -403,6 +434,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             else:
                 reason = "Disabled — monitoring only"
 
+        # ---- savings tracking ----
+        self._update_savings(
+            new_mode, should_export, should_grid_charge,
+            export_price, grid_arbitrage_spread,
+            battery_discharge_kw, battery_charge_kw,
+            learned_charge_rate, truly_exportable_kwh, importable_kwh,
+        )
+        savings = self.get_savings_summary()
+
         # ---- save storage periodically ----
         await self._store.async_save(self._stored)
 
@@ -444,6 +484,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             should_export=should_export,
             should_grid_charge=should_grid_charge,
             learned_rates=self.get_all_learned_rates(),
+            **savings,
         )
 
     # ------------------------------------------------------------------ #
@@ -628,6 +669,58 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "Calibrated charge rate for %s: %.2f kW (%d samples)",
                 bucket, learned, len(samples)
             )
+
+    def _update_savings(
+        self,
+        mode: str,
+        should_export: bool,
+        should_grid_charge: bool,
+        export_price: float,
+        grid_spread: float,
+        battery_discharge_kw: float,
+        battery_charge_kw: float,
+        learned_rate_kw: float,
+        exportable_kwh: float,
+        importable_kwh: float,
+    ) -> None:
+        """Accumulate actual and missed DKK savings into today's daily log entry."""
+        interval_h = UPDATE_INTERVAL_SECONDS / 3600  # 5/60 h
+
+        today = datetime.now().date().isoformat()
+        log: list[dict] = self._stored.setdefault("savings_log", [])
+
+        # Roll to a new day entry when needed
+        if not log or log[-1]["date"] != today:
+            log.append({"date": today, "actual_dkk": 0.0, "missed_dkk": 0.0})
+            if len(log) > SAVINGS_LOG_MAX_DAYS:
+                del log[: len(log) - SAVINGS_LOG_MAX_DAYS]
+
+        entry = log[-1]
+
+        if mode == MODE_EXPORTING and battery_discharge_kw > 0 and export_price > 0:
+            # Actual export revenue from the battery portion
+            entry["actual_dkk"] = round(
+                entry["actual_dkk"] + battery_discharge_kw * interval_h * export_price, 4
+            )
+        elif mode == MODE_GRID_CHARGING and battery_charge_kw > 0 and grid_spread > 0:
+            # Estimated future value: cheap kWh bought × arbitrage spread
+            entry["actual_dkk"] = round(
+                entry["actual_dkk"] + battery_charge_kw * interval_h * grid_spread, 4
+            )
+        elif mode == MODE_DISABLED:
+            # Estimate what we *would* have done — use learned rate as proxy for discharge/charge speed
+            fallback_kw = max(learned_rate_kw, 1.0)  # min 1 kW if not yet calibrated
+            if should_export and export_price > 0 and exportable_kwh > 0:
+                # Cap at what's physically available in this interval
+                rate_kw = min(fallback_kw, exportable_kwh / interval_h)
+                entry["missed_dkk"] = round(
+                    entry["missed_dkk"] + rate_kw * interval_h * export_price, 4
+                )
+            elif should_grid_charge and grid_spread > 0 and importable_kwh > 0:
+                rate_kw = min(fallback_kw, importable_kwh / interval_h)
+                entry["missed_dkk"] = round(
+                    entry["missed_dkk"] + rate_kw * interval_h * grid_spread, 4
+                )
 
     def _update_solar_accuracy(self, forecast_w: float, actual_w: float) -> None:
         """Append a (forecast, actual) PV power pair to the rolling sample buffer."""

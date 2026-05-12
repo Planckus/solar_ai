@@ -112,7 +112,13 @@
       "evcc_battery_mode": { "name": "EVCC batteritilstand" },
       "solar_accuracy_factor": { "name": "Solcelle-prognose nøjagtighed" },
       "solar_forecast_24h_adjusted": { "name": "Solcelle-prognose 24h (justeret)" },
-      "solar_forecast_6h_adjusted": { "name": "Solcelle-prognose 6h (justeret)" }
+      "solar_forecast_6h_adjusted": { "name": "Solcelle-prognose 6h (justeret)" },
+      "savings_actual_today": { "name": "Faktisk besparelse i dag" },
+      "savings_missed_today": { "name": "Forpasset besparelse i dag" },
+      "savings_actual_week": { "name": "Faktisk besparelse 7 dage" },
+      "savings_missed_week": { "name": "Forpasset besparelse 7 dage" },
+      "savings_actual_month": { "name": "Faktisk besparelse 30 dage" },
+      "savings_missed_month": { "name": "Forpasset besparelse 30 dage" }
     },
     "binary_sensor": {
       "should_export": { "name": "Bør eksportere" },
