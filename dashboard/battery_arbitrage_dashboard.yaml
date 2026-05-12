@@ -116,13 +116,15 @@ views:
         show_header_toggle: false
         entities:
           - entity: sensor.battery_arbitrage_laert_opladningshastighed_aktuel_temp
-            name: Current temperature bucket
+            name: Charge rate (current temp)
           - type: divider
           - entity: sensor.battery_arbitrage_laert_opladningshastighed_under_0degc
-          - entity: sensor.battery_arbitrage_laert_opladningshastighed_0_10degc
-          - entity: sensor.battery_arbitrage_laert_opladningshastighed_10_20degc
-          - entity: sensor.battery_arbitrage_laert_opladningshastighed_20_35degc
-          - entity: sensor.battery_arbitrage_laert_opladningshastighed_over_35degc
+          - entity: sensor.battery_arbitrage_laert_opladningshastighed_0_5degc
+          - entity: sensor.battery_arbitrage_laert_opladningshastighed_6_15degc
+          - entity: sensor.battery_arbitrage_laert_opladningshastighed_16_21degc
+          - entity: sensor.battery_arbitrage_laert_opladningshastighed_21_35degc
+          - entity: sensor.battery_arbitrage_laert_opladningshastighed_35_50degc
+          - entity: sensor.battery_arbitrage_laert_opladningshastighed_over_50degc
 
       # ── FoxESS Inverter ────────────────────────────────────────────────────
       - type: entities
