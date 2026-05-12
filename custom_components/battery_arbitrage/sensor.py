@@ -226,6 +226,55 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:solar-power-variant",
         value_fn=lambda d: round(d.get("solar_kwh_6h_adjusted", 0.0), 2),
     ),
+    # ── Savings tracking ──────────────────────────────────────────────────
+    BatteryArbitrageSensorDescription(
+        key="savings_actual_today",
+        translation_key="savings_actual_today",
+        native_unit_of_measurement="DKK",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:cash-plus",
+        value_fn=lambda d: d.get("savings_actual_today", 0.0),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="savings_missed_today",
+        translation_key="savings_missed_today",
+        native_unit_of_measurement="DKK",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:cash-remove",
+        value_fn=lambda d: d.get("savings_missed_today", 0.0),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="savings_actual_week",
+        translation_key="savings_actual_week",
+        native_unit_of_measurement="DKK",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:cash-plus",
+        value_fn=lambda d: d.get("savings_actual_week", 0.0),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="savings_missed_week",
+        translation_key="savings_missed_week",
+        native_unit_of_measurement="DKK",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:cash-remove",
+        value_fn=lambda d: d.get("savings_missed_week", 0.0),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="savings_actual_month",
+        translation_key="savings_actual_month",
+        native_unit_of_measurement="DKK",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:cash-plus",
+        value_fn=lambda d: d.get("savings_actual_month", 0.0),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="savings_missed_month",
+        translation_key="savings_missed_month",
+        native_unit_of_measurement="DKK",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:cash-remove",
+        value_fn=lambda d: d.get("savings_missed_month", 0.0),
+    ),
 )
 
 
