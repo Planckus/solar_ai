@@ -13,7 +13,7 @@
       },
       "foxess": {
         "title": "FoxESS Inverter Entities",
-        "description": "Battery Arbitrage needs to control three FoxESS Modbus entities. Auto-detected values are pre-filled.",
+        "description": "Solar AI needs to control three FoxESS Modbus entities. Auto-detected values are pre-filled.",
         "data": {
           "foxess_inverter_id": "Inverter ID",
           "foxess_work_mode_entity": "Work mode select entity",
@@ -62,13 +62,13 @@
       "entity_not_found": "One or more entities could not be found in Home Assistant"
     },
     "abort": {
-      "already_configured": "Battery Arbitrage is already configured"
+      "already_configured": "Solar AI is already configured"
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Battery Arbitrage Options",
+        "title": "Solar AI Options",
         "data": {
           "battery_floor_soc": "Minimum SoC during export (%)",
           "battery_max_soc": "Maximum SoC for grid charging (%)",

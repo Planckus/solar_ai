@@ -305,8 +305,8 @@ class BatteryArbitrageLearnedRateSensor(
 def _device_info(entry: ConfigEntry) -> dict:
     return {
         "identifiers": {(DOMAIN, entry.entry_id)},
-        "name": "Battery Arbitrage",
+        "name": "Solar AI",
         "manufacturer": "Community",
-        "model": "Battery Arbitrage v0.1",
+        "model": "Solar AI v0.1",
         "entry_type": "service",
     }
