@@ -19,6 +19,7 @@ from .const import (
     CALIBRATION_MIN_CHARGE_KW,
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
+    DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_EXPORT_DEDUCTION,
     EV_CHARGE_BLOCK_PROBABILITY,
     EV_CHARGE_THRESHOLD_W,
@@ -209,6 +210,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "savings_log": [],
                 "battery_floor_soc": int(self.config.get("battery_floor_soc", DEFAULT_BATTERY_FLOOR_SOC)),
                 "battery_max_soc": int(self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)),
+                "min_spread_arbitrage": float(self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE)),
                 "ev_charge_hourly": [0.0] * 24,
                 "solar_daily_kwh": [],
                 "solar_today_kwh": 0.0,
@@ -227,7 +229,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("solar_daily_kwh", [])
             self._stored.setdefault("solar_today_kwh", 0.0)
             self._stored.setdefault("solar_today_date", "")
-            # Seed SOC thresholds from config on first upgrade (slider takes over after)
+            # Seed thresholds from config on first upgrade (slider takes over after)
             self._stored.setdefault(
                 "battery_floor_soc",
                 int(self.config.get("battery_floor_soc", DEFAULT_BATTERY_FLOOR_SOC)),
@@ -235,6 +237,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault(
                 "battery_max_soc",
                 int(self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)),
+            )
+            self._stored.setdefault(
+                "min_spread_arbitrage",
+                float(self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE)),
             )
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
@@ -423,7 +429,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # ---- spread calculations ----
         grid_arbitrage_spread = export_price - price_min
-        grid_arbitrage_worthwhile = grid_arbitrage_spread >= self.config.get("min_spread_arbitrage", 1.0)
+        min_spread = float(self._stored.get("min_spread_arbitrage", self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE)))
+        grid_arbitrage_worthwhile = grid_arbitrage_spread >= min_spread
 
         # ---- decision logic ----
         # Battery export (Feed-in First) only at top-quartile prices — preserves energy

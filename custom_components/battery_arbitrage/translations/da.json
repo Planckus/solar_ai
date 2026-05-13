@@ -147,7 +147,8 @@
       "charge_rate_35_to_50": { "name": "Maks. opladning — 35–50°C" },
       "charge_rate_above_50": { "name": "Maks. opladning — over 50°C" },
       "floor_soc": { "name": "Minimum SoC (eksport)" },
-      "max_soc": { "name": "Maksimum SoC (netopladning)" }
+      "max_soc": { "name": "Maksimum SoC (netopladning)" },
+      "min_spread_arbitrage": { "name": "Minimum arbitrage-spread" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage aktiv" }
