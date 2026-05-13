@@ -34,6 +34,8 @@ views:
         entities:
           - entity: sensor.battery_arbitrage_eksportpris
           - entity: sensor.battery_arbitrage_net_arbitrage_spread
+          - entity: number.solar_ai_minimum_arbitrage_spread
+            name: "Spread threshold"
           - type: divider
           - entity: sensor.battery_arbitrage_24h_prisminimum
           - entity: sensor.battery_arbitrage_24h_prismaksimum
