@@ -7,14 +7,18 @@ from homeassistant.components.number import (
     NumberMode,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfPower
+from homeassistant.const import PERCENTAGE, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from homeassistant.const import PERCENTAGE
-
-from .const import DEFAULT_BATTERY_FLOOR_SOC, DEFAULT_BATTERY_MAX_SOC, DOMAIN, TEMP_BUCKETS
+from .const import (
+    DEFAULT_BATTERY_FLOOR_SOC,
+    DEFAULT_BATTERY_MAX_SOC,
+    DEFAULT_MIN_SPREAD_ARBITRAGE,
+    DOMAIN,
+    TEMP_BUCKETS,
+)
 from .coordinator import BatteryArbitrageCoordinator
 from .sensor import _device_info
 
@@ -32,19 +36,38 @@ async def async_setup_entry(
         for key, _, _, default in TEMP_BUCKETS
     ]
     entities += [
-        BatteryArbitrageSOCNumber(
+        BatteryArbitrageConfigNumber(
             coordinator, entry,
             storage_key="battery_floor_soc",
             translation_key="floor_soc",
             default=DEFAULT_BATTERY_FLOOR_SOC,
             icon="mdi:battery-arrow-down-outline",
+            unit=PERCENTAGE,
+            min_val=10,
+            max_val=100,
+            step=1,
         ),
-        BatteryArbitrageSOCNumber(
+        BatteryArbitrageConfigNumber(
             coordinator, entry,
             storage_key="battery_max_soc",
             translation_key="max_soc",
             default=DEFAULT_BATTERY_MAX_SOC,
             icon="mdi:battery-arrow-up-outline",
+            unit=PERCENTAGE,
+            min_val=10,
+            max_val=100,
+            step=1,
+        ),
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="min_spread_arbitrage",
+            translation_key="min_spread_arbitrage",
+            default=DEFAULT_MIN_SPREAD_ARBITRAGE,
+            icon="mdi:chart-bar",
+            unit="DKK/kWh",
+            min_val=0.10,
+            max_val=3.00,
+            step=0.05,
         ),
     ]
     async_add_entities(entities)
@@ -97,21 +120,17 @@ class BatteryArbitrageLearnedRateNumber(
         self.async_write_ha_state()
 
 
-class BatteryArbitrageSOCNumber(
+class BatteryArbitrageConfigNumber(
     CoordinatorEntity[BatteryArbitrageCoordinator], NumberEntity
 ):
-    """Slider for battery floor or max SoC threshold.
+    """Generic live-adjustable config slider for Battery Arbitrage settings.
 
-    Adjusting this takes effect on the next 5-minute coordinator tick
-    without requiring a restart.
+    Values are persisted in storage and take effect on the next coordinator
+    tick without requiring an HA restart.
     """
 
     _attr_has_entity_name = True
-    _attr_native_unit_of_measurement = PERCENTAGE
     _attr_mode = NumberMode.SLIDER
-    _attr_native_min_value = 10
-    _attr_native_max_value = 100
-    _attr_native_step = 1
 
     def __init__(
         self,
@@ -119,8 +138,12 @@ class BatteryArbitrageSOCNumber(
         entry: ConfigEntry,
         storage_key: str,
         translation_key: str,
-        default: int,
+        default: float,
         icon: str,
+        unit: str,
+        min_val: float,
+        max_val: float,
+        step: float,
     ) -> None:
         super().__init__(coordinator)
         self._storage_key = storage_key
@@ -128,13 +151,17 @@ class BatteryArbitrageSOCNumber(
         self._attr_unique_id = f"{entry.entry_id}_{storage_key}"
         self._attr_translation_key = translation_key
         self._attr_icon = icon
+        self._attr_native_unit_of_measurement = unit
+        self._attr_native_min_value = min_val
+        self._attr_native_max_value = max_val
+        self._attr_native_step = step
         self._attr_device_info = _device_info(entry)
 
     @property
-    def native_value(self) -> int:
-        return int(self.coordinator._stored.get(self._storage_key, self._default))
+    def native_value(self) -> float:
+        return self.coordinator._stored.get(self._storage_key, self._default)
 
     async def async_set_native_value(self, value: float) -> None:
-        self.coordinator._stored[self._storage_key] = int(value)
+        self.coordinator._stored[self._storage_key] = round(value, 3)
         await self.coordinator._store.async_save(self.coordinator._stored)
         self.async_write_ha_state()
