@@ -141,7 +141,9 @@
       "charge_rate_16_to_21": { "name": "Max charge rate — 16–21°C" },
       "charge_rate_21_to_35": { "name": "Max charge rate — 21–35°C" },
       "charge_rate_35_to_50": { "name": "Max charge rate — 35–50°C" },
-      "charge_rate_above_50": { "name": "Max charge rate — over 50°C" }
+      "charge_rate_above_50": { "name": "Max charge rate — over 50°C" },
+      "floor_soc": { "name": "Minimum SoC (export)" },
+      "max_soc": { "name": "Maximum SoC (grid charge)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage enabled" }
