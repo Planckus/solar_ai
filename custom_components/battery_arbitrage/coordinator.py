@@ -20,6 +20,11 @@ from .const import (
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
     DEFAULT_EXPORT_DEDUCTION,
+    EV_CHARGE_BLOCK_PROBABILITY,
+    EV_CHARGE_THRESHOLD_W,
+    EV_LEARNING_ALPHA,
+    SEASON_SOLAR_THRESHOLD_KWH,
+    SOLAR_DAILY_SAMPLES_MAX,
     DOMAIN,
     EVCC_API_BATTERY_MODE,
     EVCC_API_GRID,
@@ -204,6 +209,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "savings_log": [],
                 "battery_floor_soc": int(self.config.get("battery_floor_soc", DEFAULT_BATTERY_FLOOR_SOC)),
                 "battery_max_soc": int(self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)),
+                "ev_charge_hourly": [0.0] * 24,
+                "solar_daily_kwh": [],
+                "solar_today_kwh": 0.0,
+                "solar_today_date": "",
             }
         else:
             self._stored = data
@@ -214,6 +223,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("vacation_counter", 0)
             self._stored.setdefault("solar_accuracy_samples", [])
             self._stored.setdefault("savings_log", [])
+            self._stored.setdefault("ev_charge_hourly", [0.0] * 24)
+            self._stored.setdefault("solar_daily_kwh", [])
+            self._stored.setdefault("solar_today_kwh", 0.0)
+            self._stored.setdefault("solar_today_date", "")
             # Seed SOC thresholds from config on first upgrade (slider takes over after)
             self._stored.setdefault(
                 "battery_floor_soc",
@@ -380,6 +393,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
         learned_charge_rate = self.get_current_charge_rate()
 
+        # ---- EV charge pattern learning ----
+        self._update_ev_charge_learning(ev_charge_power_w)
+        ev_block_prob = self.get_ev_charge_probability()
+        ev_likely_charging = ev_block_prob >= EV_CHARGE_BLOCK_PROBABILITY
+
+        # ---- seasonal mode ----
+        self._update_daily_solar(pv_power_w)
+        is_summer_mode, solar_28d_avg = self.get_season_mode()
+
         # ---- battery capacity calcs ----
         floor_soc = int(self._stored.get("battery_floor_soc", self.config.get("battery_floor_soc", DEFAULT_BATTERY_FLOOR_SOC)))
         max_soc = int(self._stored.get("battery_max_soc", self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)))
@@ -401,12 +423,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # ---- spread calculations ----
         grid_arbitrage_spread = export_price - price_min
-        solar_export_worthwhile = export_price >= self.config.get("min_solar_export_price", 0.50)
         grid_arbitrage_worthwhile = grid_arbitrage_spread >= self.config.get("min_spread_arbitrage", 1.0)
 
         # ---- decision logic ----
+        # Battery export (Feed-in First) only at top-quartile prices — preserves energy
+        # for evening peak. Solar surplus already exports automatically in Self-Use mode.
+        battery_export_at_peak = price_p75 > 0 and export_price >= price_p75
         should_export = (
-            (solar_export_worthwhile or grid_arbitrage_worthwhile)
+            battery_export_at_peak
+            and grid_arbitrage_worthwhile
             and truly_exportable_kwh >= MIN_EXPORTABLE_KWH
             and battery_soc > floor_soc
             # Don't fight EVCC: if EV is fast/minpv-charging, hold the battery for it
@@ -428,15 +453,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and battery_soc < max_soc
             # Same EVCC respect: don't grid-charge if EVCC is managing battery
             and not evcc_managing_battery
+            # Skip if EV typically charges at this hour — avoid competing for cheap slots
+            and not ev_likely_charging
         )
 
         # ---- execute action (skipped when disabled — data still reported) ----
         if self._enabled:
             new_mode, reason = await self._execute_decision(
                 should_export, should_grid_charge, export_price,
-                grid_arbitrage_spread, price_min, price_next_slot, price_p25,
+                grid_arbitrage_spread, price_min, price_next_slot, price_p25, price_p75,
                 truly_exportable_kwh, importable_kwh, solar_will_fill,
-                ev_charging_now, evcc_battery_mode, evcc_managing_battery,
+                ev_charging_now, ev_likely_charging, ev_block_prob,
+                evcc_battery_mode, evcc_managing_battery,
             )
         else:
             new_mode = MODE_DISABLED
@@ -446,6 +474,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 reason = "Disabled — would export if enabled"
             elif should_grid_charge:
                 reason = "Disabled — would grid charge if enabled"
+            elif ev_likely_charging:
+                reason = f"Disabled — EV typically charges now ({ev_block_prob:.0%} learned)"
             else:
                 reason = "Disabled — monitoring only"
 
@@ -499,6 +529,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             should_export=should_export,
             should_grid_charge=should_grid_charge,
             net_solar_for_battery=net_solar_for_battery,
+            ev_block_prob=ev_block_prob,
+            is_summer_mode=is_summer_mode,
+            solar_28d_avg=solar_28d_avg,
             learned_rates=self.get_all_learned_rates(),
             **savings,
         )
@@ -516,10 +549,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         price_min: float,
         price_next_slot: float,
         price_p25: float,
+        price_p75: float,
         exportable_kwh: float,
         importable_kwh: float,
         solar_will_fill: bool,
         ev_charging_now: bool,
+        ev_likely_charging: bool,
+        ev_block_prob: float,
         evcc_battery_mode: str,
         evcc_managing_battery: bool,
     ) -> tuple[str, str]:
@@ -529,8 +565,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if should_export:
             target_mode = MODE_EXPORTING
             reason = (
-                f"Exporting: price {export_price:.2f} DKK/kWh, "
-                f"spread vs 24h min {spread:.2f} DKK/kWh, "
+                f"Exporting: price {export_price:.2f} ≥ p75 {price_p75:.2f} DKK/kWh, "
+                f"spread {spread:.2f} DKK/kWh, "
                 f"{exportable_kwh:.1f} kWh available"
             )
         elif should_grid_charge:
@@ -546,6 +582,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 reason = f"EVCC managing battery ({evcc_battery_mode}) — not overriding"
             elif solar_will_fill:
                 reason = "Solar will fill battery — grid charging not needed"
+            elif ev_likely_charging:
+                reason = f"EV typically charges now ({ev_block_prob:.0%} learned) — skipping grid charge"
 
         if target_mode != self._current_mode:
             await self._transition_to(target_mode)
@@ -644,6 +682,56 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     # ------------------------------------------------------------------ #
     # Learning models                                                       #
     # ------------------------------------------------------------------ #
+
+    def get_ev_charge_probability(self) -> float:
+        """Return the learned EV charging probability for the current hour (0–1)."""
+        hour = datetime.now().hour
+        hourly = self._stored.get("ev_charge_hourly", [0.0] * 24)
+        if len(hourly) < 24:
+            return 0.0
+        return hourly[hour]
+
+    def get_season_mode(self) -> tuple[bool, float]:
+        """Return (is_summer, solar_28d_avg_kwh_per_day).
+
+        is_summer = True when 28-day avg daily solar >= SEASON_SOLAR_THRESHOLD_KWH.
+        Defaults to winter (conservative) until 7 days of history are available.
+        """
+        daily = self._stored.get("solar_daily_kwh", [])
+        if len(daily) < 7:
+            return False, 0.0
+        avg = round(statistics.mean(daily[-SOLAR_DAILY_SAMPLES_MAX:]), 2)
+        return avg >= SEASON_SOLAR_THRESHOLD_KWH, avg
+
+    def _update_ev_charge_learning(self, ev_charge_power_w: float) -> None:
+        """Exponentially update the learned EV charging probability for the current hour."""
+        is_charging = ev_charge_power_w > EV_CHARGE_THRESHOLD_W
+        hour = datetime.now().hour
+        hourly: list[float] = self._stored.setdefault("ev_charge_hourly", [0.0] * 24)
+        while len(hourly) < 24:
+            hourly.append(0.0)
+        hourly[hour] = round(
+            (1 - EV_LEARNING_ALPHA) * hourly[hour]
+            + EV_LEARNING_ALPHA * (1.0 if is_charging else 0.0),
+            4,
+        )
+
+    def _update_daily_solar(self, pv_power_w: float) -> None:
+        """Accumulate today's solar production; push to daily log when day rolls over."""
+        today = datetime.now().date().isoformat()
+        prev_date = self._stored.get("solar_today_date", "")
+        if prev_date != today:
+            if prev_date:  # Don't push on very first run
+                daily: list[float] = self._stored.setdefault("solar_daily_kwh", [])
+                daily.append(round(self._stored.get("solar_today_kwh", 0.0), 3))
+                if len(daily) > SOLAR_DAILY_SAMPLES_MAX:
+                    del daily[: len(daily) - SOLAR_DAILY_SAMPLES_MAX]
+            self._stored["solar_today_date"] = today
+            self._stored["solar_today_kwh"] = 0.0
+        kwh_this_tick = pv_power_w / 1000 * (UPDATE_INTERVAL_SECONDS / 3600)
+        self._stored["solar_today_kwh"] = round(
+            self._stored.get("solar_today_kwh", 0.0) + kwh_this_tick, 4
+        )
 
     def _update_load_history(self, base_load_kw: float) -> None:
         history: list[float] = self._stored.setdefault("load_history", [])
