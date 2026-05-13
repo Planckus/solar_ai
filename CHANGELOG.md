@@ -1,0 +1,63 @@
+# Changelog
+
+All notable changes to **Solar AI** are documented here.  
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+---
+
+## [Unreleased]
+
+---
+
+## [0.4.0] — 2026-05-13
+
+### Added
+- **EV charge pattern learning** — Solar AI now learns, hour-by-hour, when your EV is actually charging (using real charge power > 3 000 W, not just "connected"). Grid charging is automatically skipped during hours where the EV typically charges, avoiding competition for cheap overnight electricity. The probability is learned via exponential smoothing (~8-day memory per hour of the day).
+- **Seasonal mode detection** — A 28-day rolling average of daily solar production determines whether the system is in *summer* or *winter* mode (threshold: 6 kWh/day). This gradually adapts without hard-coded calendar dates. Defaults to *winter* (conservative) until 7 days of data are available.
+- **Peak-price reservation for battery export** — The battery now only exports to the grid when the current export price is at or above the 75th-percentile price for the day. This reserves stored energy for true evening peak hours instead of selling too early at mediocre prices. Solar surplus still exports automatically in Self-Use mode.
+- **3 new sensors**: `season_mode` (summer/winter), `solar_28d_avg` (kWh/day), `ev_charge_probability` (% this hour).
+
+### Fixed
+- `solar_will_fill` logic was too optimistic — it previously used raw 6 h gross solar production. It now uses the full 24 h accuracy-corrected solar forecast *minus* the predicted house consumption, giving the true net surplus available for battery charging.
+
+---
+
+## [0.3.0] — 2026-05-12
+
+### Added
+- **Live SoC threshold sliders** — Two number entities (sliders) in the dashboard let you adjust the battery floor SoC (minimum during export, 10–100 %) and maximum SoC (grid-charge ceiling, 10–100 %) at any time without restarting HA. Changes take effect on the next 5-minute tick and are persisted across restarts.
+- **Actual & missed savings tracker** — Six new sensors track how much money Solar AI has saved (or would have saved if disabled):
+  - *Actual savings*: revenue from battery export + cheap grid charging, per day / 7 days / 30 days.
+  - *Missed savings*: estimated opportunity cost when the system is switched off, per day / 7 days / 30 days.
+  - Values are stored in a 90-day rolling log that survives HA restarts.
+
+---
+
+## [0.2.0] — 2026-05-09
+
+### Added
+- **7-bucket temperature-based charge rate control** — Learned charge rates are now tracked across seven temperature bands (< 0 °C, 0–5 °C, 6–15 °C, 16–21 °C, 21–35 °C, 35–50 °C, > 50 °C) instead of five. This gives finer control at the critical low-temperature range where lithium batteries charge significantly more slowly.
+- **Solar forecast accuracy factor** — Solar AI tracks actual PV production vs. Solcast forecasts over a 4-day rolling window (576 × 5-min samples) and applies a learned correction factor (0.3–1.5×) to all forecasts. This makes the self-use, export, and grid-charge decisions more realistic when Solcast consistently over- or under-estimates.
+- **Net solar for battery sensor** — Shows how many kWh of solar are available for the battery after the house load is subtracted (24 h horizon, accuracy-corrected).
+- **EVCC battery-mode awareness** — Solar AI now checks whether EVCC has independently taken control of the battery (hold/charge mode set by something other than Solar AI). If so, it does not override EVCC's decision. When Solar AI itself sets EVCC to hold/charge, it tracks that and restores *normal* mode when done.
+- **Vacation / low-load detection** — If house load drops below 25 % of the 28-day baseline for 4+ hours, Solar AI flags vacation mode. Predicted house load uses a more conservative (1.5× short-term average) estimate during vacation to avoid unnecessary grid charging.
+
+### Fixed
+- System now defaults to **OFF** on first install — the user must consciously enable the arbitrage switch after a learning period, rather than starting in an active state.
+- Metrics (prices, forecasts, learned rates) are always collected even when the switch is off, so data is ready when the user turns it on.
+
+---
+
+## [0.1.0] — 2026-05-07
+
+### Added
+- Initial release: **Battery Arbitrage** (later renamed Solar AI).
+- Core arbitrage engine: buy cheap grid electricity, sell at peak prices using FoxESS Force Charge / Feed-in First work modes.
+- Strømligning spot-price integration (excl. VAT) for sell-side pricing.
+- EVCC integration for grid charging via EV charger infrastructure.
+- 5-bucket temperature-based charge rate learning (calibrated during Force Charge cycles at 90th-percentile power).
+- 28-day rolling house load model with 2 h short-term average for load prediction.
+- Lovelace dashboard with price chart, battery status, load model, and arbitrage controls.
+- Config flow with auto-detection of FoxESS Modbus entities.
+- Services: `force_export`, `force_grid_charge`, `restore_normal`, `reset_learning`.
+- Full Danish (da) and English (en) translations.
