@@ -17,6 +17,8 @@ from .const import (
     CALIBRATION_MAX_SAMPLES,
     CALIBRATION_MAX_SOC,
     CALIBRATION_MIN_CHARGE_KW,
+    DEFAULT_BATTERY_FLOOR_SOC,
+    DEFAULT_BATTERY_MAX_SOC,
     DEFAULT_EXPORT_DEDUCTION,
     DOMAIN,
     EVCC_API_BATTERY_MODE,
@@ -200,6 +202,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "vacation_counter": 0,
                 "solar_accuracy_samples": [],
                 "savings_log": [],
+                "battery_floor_soc": int(self.config.get("battery_floor_soc", DEFAULT_BATTERY_FLOOR_SOC)),
+                "battery_max_soc": int(self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)),
             }
         else:
             self._stored = data
@@ -210,6 +214,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("vacation_counter", 0)
             self._stored.setdefault("solar_accuracy_samples", [])
             self._stored.setdefault("savings_log", [])
+            # Seed SOC thresholds from config on first upgrade (slider takes over after)
+            self._stored.setdefault(
+                "battery_floor_soc",
+                int(self.config.get("battery_floor_soc", DEFAULT_BATTERY_FLOOR_SOC)),
+            )
+            self._stored.setdefault(
+                "battery_max_soc",
+                int(self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)),
+            )
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
 
@@ -368,8 +381,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         learned_charge_rate = self.get_current_charge_rate()
 
         # ---- battery capacity calcs ----
-        floor_soc = self.config.get("battery_floor_soc", 50)
-        max_soc = self.config.get("battery_max_soc", 100)
+        floor_soc = int(self._stored.get("battery_floor_soc", self.config.get("battery_floor_soc", DEFAULT_BATTERY_FLOOR_SOC)))
+        max_soc = int(self._stored.get("battery_max_soc", self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)))
         capacity_kwh = self.config.get("battery_capacity", 11.52)
         efficiency = self.config.get("round_trip_efficiency", 0.92)
 

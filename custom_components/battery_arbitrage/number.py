@@ -12,7 +12,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, TEMP_BUCKETS
+from homeassistant.const import PERCENTAGE
+
+from .const import DEFAULT_BATTERY_FLOOR_SOC, DEFAULT_BATTERY_MAX_SOC, DOMAIN, TEMP_BUCKETS
 from .coordinator import BatteryArbitrageCoordinator
 from .sensor import _device_info
 
@@ -22,13 +24,30 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up learned charge rate number entities."""
+    """Set up learned charge rate and SOC threshold number entities."""
     coordinator: BatteryArbitrageCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    async_add_entities(
+    entities: list[NumberEntity] = [
         BatteryArbitrageLearnedRateNumber(coordinator, entry, key, default)
         for key, _, _, default in TEMP_BUCKETS
-    )
+    ]
+    entities += [
+        BatteryArbitrageSOCNumber(
+            coordinator, entry,
+            storage_key="battery_floor_soc",
+            translation_key="floor_soc",
+            default=DEFAULT_BATTERY_FLOOR_SOC,
+            icon="mdi:battery-arrow-down-outline",
+        ),
+        BatteryArbitrageSOCNumber(
+            coordinator, entry,
+            storage_key="battery_max_soc",
+            translation_key="max_soc",
+            default=DEFAULT_BATTERY_MAX_SOC,
+            icon="mdi:battery-arrow-up-outline",
+        ),
+    ]
+    async_add_entities(entities)
 
 
 class BatteryArbitrageLearnedRateNumber(
@@ -74,5 +93,48 @@ class BatteryArbitrageLearnedRateNumber(
         # Also clear the samples so manual override takes precedence
         samples = self.coordinator._stored.setdefault("charge_samples", {})
         samples[self._bucket_key] = []
+        await self.coordinator._store.async_save(self.coordinator._stored)
+        self.async_write_ha_state()
+
+
+class BatteryArbitrageSOCNumber(
+    CoordinatorEntity[BatteryArbitrageCoordinator], NumberEntity
+):
+    """Slider for battery floor or max SoC threshold.
+
+    Adjusting this takes effect on the next 5-minute coordinator tick
+    without requiring a restart.
+    """
+
+    _attr_has_entity_name = True
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_mode = NumberMode.SLIDER
+    _attr_native_min_value = 10
+    _attr_native_max_value = 100
+    _attr_native_step = 1
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+        storage_key: str,
+        translation_key: str,
+        default: int,
+        icon: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._storage_key = storage_key
+        self._default = default
+        self._attr_unique_id = f"{entry.entry_id}_{storage_key}"
+        self._attr_translation_key = translation_key
+        self._attr_icon = icon
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def native_value(self) -> int:
+        return int(self.coordinator._stored.get(self._storage_key, self._default))
+
+    async def async_set_native_value(self, value: float) -> None:
+        self.coordinator._stored[self._storage_key] = int(value)
         await self.coordinator._store.async_save(self.coordinator._stored)
         self.async_write_ha_state()

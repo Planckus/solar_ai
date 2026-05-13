@@ -69,6 +69,10 @@ views:
         entities:
           - entity: sensor.foxessmodbus_battery_soc_1
             name: State of charge
+          - entity: number.battery_arbitrage_minimum_soc_eksport
+            name: Min SoC (export)
+          - entity: number.battery_arbitrage_maksimum_soc_netopladning
+            name: Max SoC (grid charge)
           - entity: sensor.battery_arbitrage_eksporterbar_energi
           - entity: sensor.battery_arbitrage_importerbar_energi
           - entity: sensor.battery_arbitrage_tid_til_fuld_opladning
