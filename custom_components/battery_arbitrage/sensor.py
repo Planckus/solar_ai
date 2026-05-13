@@ -235,6 +235,30 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:solar-power-variant",
         value_fn=lambda d: round(d.get("solar_kwh_6h_adjusted", 0.0), 2),
     ),
+    # ── Seasonal & EV learning ────────────────────────────────────────────
+    BatteryArbitrageSensorDescription(
+        key="season_mode",
+        translation_key="season_mode",
+        icon="mdi:weather-sunny-off",
+        value_fn=lambda d: "summer" if d.get("is_summer_mode") else "winter",
+    ),
+    BatteryArbitrageSensorDescription(
+        key="solar_28d_avg",
+        translation_key="solar_28d_avg",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:calendar-month",
+        value_fn=lambda d: round(d.get("solar_28d_avg", 0.0), 2),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="ev_charge_probability",
+        translation_key="ev_charge_probability",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:car-electric",
+        value_fn=lambda d: round(d.get("ev_block_prob", 0.0) * 100, 1),
+    ),
     # ── Savings tracking ──────────────────────────────────────────────────
     BatteryArbitrageSensorDescription(
         key="savings_actual_today",

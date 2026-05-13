@@ -112,6 +112,15 @@ CALIBRATION_MAX_SOC = 95            # Don't calibrate near-full (BMS tapers natu
 CALIBRATION_MAX_SAMPLES = 200       # Per temp bucket
 LOAD_HISTORY_MAX_SAMPLES = 8064     # 4 weeks × 7 days × 24h × 12 per hour
 SAVINGS_LOG_MAX_DAYS = 90           # Keep 90 days of daily savings data
+
+# EV charge learning
+EV_CHARGE_THRESHOLD_W = 3000        # W — above this the EV is truly charging
+EV_CHARGE_BLOCK_PROBABILITY = 0.7   # Skip grid charge if EV charges >70% of time this hour
+EV_LEARNING_ALPHA = 0.01            # Exp. smoothing factor (~100 sample memory ≈ 8 days/hour)
+
+# Seasonal mode
+SEASON_SOLAR_THRESHOLD_KWH = 6.0    # kWh/day 28-day avg — below = winter mode
+SOLAR_DAILY_SAMPLES_MAX = 28        # Days of daily solar history to keep
 VACATION_SHORT_WINDOW = 24          # Samples for short-term (2h) average
 VACATION_THRESHOLD = 0.25           # 25% of long-term baseline → vacation
 VACATION_MIN_DURATION = 48          # Must be below threshold for 4h (48 × 5min samples)
