@@ -111,6 +111,7 @@
       "learned_rate_above_50": { "name": "Learned charge rate — over 50°C" },
       "evcc_battery_mode": { "name": "EVCC battery mode" },
       "solar_accuracy_factor": { "name": "Solar forecast accuracy" },
+      "net_solar_for_battery": { "name": "Net solar for battery (24h)" },
       "solar_forecast_24h_adjusted": { "name": "Solar forecast 24h (adjusted)" },
       "solar_forecast_6h_adjusted": { "name": "Solar forecast 6h (adjusted)" },
       "savings_actual_today": { "name": "Actual savings today" },

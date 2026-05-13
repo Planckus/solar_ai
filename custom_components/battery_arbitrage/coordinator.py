@@ -415,8 +415,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and not evcc_managing_battery
         )
 
-        # Don't grid-charge if corrected solar forecast will fill the battery anyway
-        solar_will_fill = solar_kwh_6h >= importable_kwh
+        # Net solar available for battery after house consumption (solar goes to house first)
+        # Uses full 24h accuracy-corrected forecast minus predicted house load
+        net_solar_for_battery = max(0.0, solar_kwh - predicted_house_load_24h)
+        solar_will_fill = net_solar_for_battery >= importable_kwh
         should_grid_charge = (
             not should_export
             and bool(grid_vals)
@@ -496,6 +498,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             time_to_charge_h=time_to_charge_h,
             should_export=should_export,
             should_grid_charge=should_grid_charge,
+            net_solar_for_battery=net_solar_for_battery,
             learned_rates=self.get_all_learned_rates(),
             **savings,
         )
