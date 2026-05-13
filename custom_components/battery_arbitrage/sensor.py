@@ -209,6 +209,15 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         value_fn=lambda d: round(d.get("solar_accuracy_factor", 1.0) * 100, 1),
     ),
     BatteryArbitrageSensorDescription(
+        key="net_solar_for_battery",
+        translation_key="net_solar_for_battery",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:solar-power-variant-outline",
+        value_fn=lambda d: round(d.get("net_solar_for_battery", 0.0), 2),
+    ),
+    BatteryArbitrageSensorDescription(
         key="solar_forecast_24h_adjusted",
         translation_key="solar_forecast_24h_adjusted",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
