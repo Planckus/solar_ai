@@ -111,6 +111,7 @@
       "learned_rate_above_50": { "name": "Lært opladningshastighed — over 50°C" },
       "evcc_battery_mode": { "name": "EVCC batteritilstand" },
       "solar_accuracy_factor": { "name": "Solcelle-prognose nøjagtighed" },
+      "net_solar_for_battery": { "name": "Netto sol til batteri (24h)" },
       "solar_forecast_24h_adjusted": { "name": "Solcelle-prognose 24h (justeret)" },
       "solar_forecast_6h_adjusted": { "name": "Solcelle-prognose 6h (justeret)" },
       "savings_actual_today": { "name": "Faktisk besparelse i dag" },
