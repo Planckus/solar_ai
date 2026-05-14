@@ -115,20 +115,25 @@ views:
             name: EVCC mode
 
       # ── EV Status ──────────────────────────────────────────────────────────
-      - type: horizontal-stack
+      - type: vertical-stack
         cards:
-          - type: tile
-            entity: binary_sensor.battery_arbitrage_ev_tilsluttet
-            name: EV connected
-            color: green
-          - type: tile
-            entity: binary_sensor.solar_ai_ev_oplader_solenergi
-            name: EV on Solar
-            color: green
-          - type: tile
-            entity: binary_sensor.battery_arbitrage_ev_oplader_now_minpv_tilstand
-            name: EV on grid power
-            color: green
+          - type: heading
+            heading: EV Status
+            icon: mdi:car-electric
+          - type: horizontal-stack
+            cards:
+              - type: tile
+                entity: binary_sensor.battery_arbitrage_ev_tilsluttet
+                name: EV connected
+                color: green
+              - type: tile
+                entity: binary_sensor.solar_ai_ev_oplader_solenergi
+                name: EV on Solar
+                color: green
+              - type: tile
+                entity: binary_sensor.battery_arbitrage_ev_oplader_now_minpv_tilstand
+                name: EV on grid power
+                color: green
 
       # ── Savings ────────────────────────────────────────────────────────────
       - type: entities
