@@ -17,9 +17,11 @@ from .const import (
     CALIBRATION_MAX_SAMPLES,
     CALIBRATION_MAX_SOC,
     CALIBRATION_MIN_CHARGE_KW,
+    DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
+    DEFAULT_ROUND_TRIP_EFFICIENCY,
     GRID_MAX_KW,
     GRID_SAFETY_MARGIN_KW,
     GRID_MIN_CHARGE_KW,
@@ -75,6 +77,15 @@ from .const import (
     EVCC_BATTERY_HOLD,
     EV_MODE_MIN_PV,
     DANISH_VAT,
+    FOXESS_BATTERY_CHARGE_TOTAL,
+    FOXESS_BATTERY_DISCHARGE_TOTAL,
+    CAPACITY_MIN_SOC,
+    CAPACITY_MAX_SOC,
+    CAPACITY_MIN_DELTA_SOC,
+    CAPACITY_MIN_CHARGE_KW,
+    CAPACITY_MIN_SAMPLES,
+    CAPACITY_MAX_SAMPLES,
+    EFFICIENCY_MIN_TOTAL_KWH,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -97,6 +108,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._mode_reason = ""
         self._enabled = False        # OFF by default — user enables after learning period
         self._we_set_evcc_mode = False  # True while WE have EVCC battery mode set non-normal
+        self._prev_soc: float | None = None  # Previous tick SoC for capacity learning
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -196,6 +208,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._stored["charge_samples"] = {key: [] for key, _, _, _ in TEMP_BUCKETS}
         self._stored["load_history"] = []
         self._stored["solar_accuracy_samples"] = []
+        self._stored["capacity_samples"] = []
+        self._prev_soc = None
         self.hass.async_create_task(self._store.async_save(self._stored))
 
     # ------------------------------------------------------------------ #
@@ -248,6 +262,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 float(self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE)),
             )
             self._stored.setdefault("grid_max_kw", float(GRID_MAX_KW))
+            self._stored.setdefault("capacity_samples", [])
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
 
@@ -421,11 +436,22 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._update_daily_solar(pv_power_w)
         is_summer_mode, solar_28d_avg = self.get_season_mode()
 
-        # ---- battery capacity calcs ----
+        # ---- capacity & efficiency: auto-detect, fall back to config ----
         floor_soc = int(self._stored.get("battery_floor_soc", self.config.get("battery_floor_soc", DEFAULT_BATTERY_FLOOR_SOC)))
         max_soc = int(self._stored.get("battery_max_soc", self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)))
-        capacity_kwh = self.config.get("battery_capacity", 11.52)
-        efficiency = self.config.get("round_trip_efficiency", 0.92)
+
+        # Capacity: use learned value once enough Force Charge samples exist
+        learned_capacity = self.get_learned_capacity()
+        capacity_kwh = learned_capacity if learned_capacity is not None \
+            else self.config.get("battery_capacity", DEFAULT_BATTERY_CAPACITY)
+
+        # Efficiency: use FoxESS lifetime totals if available
+        auto_efficiency = self.get_auto_efficiency()
+        efficiency = auto_efficiency if auto_efficiency is not None \
+            else self.config.get("round_trip_efficiency", DEFAULT_ROUND_TRIP_EFFICIENCY)
+
+        # Capacity learning: collect sample from this tick
+        self._learn_capacity(battery_soc, battery_charge_kw)
 
         exportable_kwh = max(0.0, (battery_soc - floor_soc) / 100 * capacity_kwh * efficiency)
         importable_kwh = max(0.0, (max_soc - battery_soc) / 100 * capacity_kwh)
@@ -574,6 +600,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             grid_max_kw=grid_max_kw,
             capped_charge_rate_kw=round(capped_charge_rate_kw, 3),
             learned_rates=self.get_all_learned_rates(),
+            learned_capacity=learned_capacity,
+            auto_efficiency=auto_efficiency,
+            capacity_source="learned" if learned_capacity is not None else "configured",
+            efficiency_source="auto" if auto_efficiency is not None else "configured",
+            capacity_sample_count=len(self._stored.get("capacity_samples", [])),
             **savings,
         )
 
@@ -819,6 +850,67 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "Calibrated charge rate for %s: %.2f kW (%d samples)",
                 bucket, learned, len(samples)
             )
+
+    def _learn_capacity(self, battery_soc: float, battery_charge_kw: float) -> None:
+        """Sample usable battery capacity from Force Charge ticks.
+
+        During each charging tick we know energy_in and delta_SoC, giving:
+            capacity = energy_in / (delta_SoC / 100)
+
+        Samples are collected only when SoC is in the mid-range to avoid BMS
+        edge effects near empty or full. The median of the rolling sample window
+        is used as the learned value, which is robust to occasional outliers.
+        """
+        if self._prev_soc is None:
+            self._prev_soc = battery_soc
+            return
+
+        delta_soc = battery_soc - self._prev_soc
+        self._prev_soc = battery_soc
+
+        if (
+            self._current_mode == MODE_GRID_CHARGING
+            and battery_charge_kw >= CAPACITY_MIN_CHARGE_KW
+            and CAPACITY_MIN_SOC <= battery_soc <= CAPACITY_MAX_SOC
+            and delta_soc >= CAPACITY_MIN_DELTA_SOC
+        ):
+            interval_h = UPDATE_INTERVAL_SECONDS / 3600
+            energy_in_kwh = battery_charge_kw * interval_h
+            capacity_sample = round(energy_in_kwh / (delta_soc / 100), 2)
+            # Sanity-check: plausible battery size 3–30 kWh
+            if 3.0 <= capacity_sample <= 30.0:
+                samples: list[float] = self._stored.setdefault("capacity_samples", [])
+                samples.append(capacity_sample)
+                if len(samples) > CAPACITY_MAX_SAMPLES:
+                    del samples[: len(samples) - CAPACITY_MAX_SAMPLES]
+
+    def get_learned_capacity(self) -> float | None:
+        """Return median of capacity samples, or None if not enough data yet."""
+        samples: list[float] = self._stored.get("capacity_samples", [])
+        if len(samples) < CAPACITY_MIN_SAMPLES:
+            return None
+        return round(statistics.median(samples), 2)
+
+    def get_auto_efficiency(self) -> float | None:
+        """Return round-trip efficiency from FoxESS lifetime energy totals.
+
+        Uses the inverter's own cumulative charge/discharge counters, which
+        are hardware-accurate and available immediately on any existing install.
+        Returns None if there isn't enough lifetime data yet.
+        """
+        charge_total = self._get_float_state(FOXESS_BATTERY_CHARGE_TOTAL)
+        discharge_total = self._get_float_state(FOXESS_BATTERY_DISCHARGE_TOTAL)
+        if (
+            charge_total is None
+            or discharge_total is None
+            or charge_total < EFFICIENCY_MIN_TOTAL_KWH
+        ):
+            return None
+        eff = discharge_total / charge_total
+        # Sanity check: round-trip efficiency should be between 70–99 %
+        if not 0.70 <= eff <= 0.99:
+            return None
+        return round(eff, 4)
 
     def _update_savings(
         self,

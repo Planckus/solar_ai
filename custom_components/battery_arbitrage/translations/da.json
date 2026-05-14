@@ -124,7 +124,10 @@
       "savings_actual_month": { "name": "Faktisk besparelse 30 dage" },
       "savings_missed_month": { "name": "Forpasset besparelse 30 dage" },
       "grid_power": { "name": "Net-importeffekt" },
-      "grid_headroom": { "name": "Net-råderum" }
+      "grid_headroom": { "name": "Net-råderum" },
+      "learned_capacity": { "name": "Lært batterikapacitet" },
+      "auto_efficiency": { "name": "Auto-detekteret effektivitet" },
+      "capacity_sample_count": { "name": "Kapacitets-læringseksempler" }
     },
     "binary_sensor": {
       "should_export": { "name": "Bør eksportere" },

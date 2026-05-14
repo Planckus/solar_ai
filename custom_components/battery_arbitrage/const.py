@@ -134,3 +134,16 @@ GRID_MIN_CHARGE_KW = 0.3            # Minimum useful battery charge rate under h
 
 # Pricing
 DANISH_VAT = 1.25                   # Danish VAT factor applied to buy-side prices
+
+# FoxESS lifetime energy totals (for auto-detecting round-trip efficiency)
+FOXESS_BATTERY_CHARGE_TOTAL = "sensor.foxessmodbus_battery_charge_total"
+FOXESS_BATTERY_DISCHARGE_TOTAL = "sensor.foxessmodbus_battery_discharge_total"
+
+# Battery capacity learning (from Force Charge cycles)
+CAPACITY_MIN_SOC = 15               # % — don't sample below this (BMS edge effects near empty)
+CAPACITY_MAX_SOC = 85               # % — don't sample above this (BMS tapers near full)
+CAPACITY_MIN_DELTA_SOC = 0.3        # % — minimum SoC rise per tick to count as a sample
+CAPACITY_MIN_CHARGE_KW = 0.5        # kW — minimum charge power to count as a valid sample
+CAPACITY_MIN_SAMPLES = 20           # Need this many samples before trusting the learned value
+CAPACITY_MAX_SAMPLES = 300          # Rolling window size
+EFFICIENCY_MIN_TOTAL_KWH = 100      # kWh — minimum lifetime charge before trusting auto-efficiency
