@@ -365,6 +365,15 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:solar-power",
         value_fn=lambda d: round(d.get("pv_power_kw", 0.0), 3),
     ),
+    # ── DSO tariff ───────────────────────────────────────────────────────
+    BatteryArbitrageSensorDescription(
+        key="tariff_this_hour",
+        translation_key="tariff_this_hour",
+        currency_unit_template="{}/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:transmission-tower",
+        value_fn=lambda d: round(d.get("tariff_this_hour", 0.0), 4),
+    ),
 )
 
 

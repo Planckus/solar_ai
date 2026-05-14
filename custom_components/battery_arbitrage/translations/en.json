@@ -40,14 +40,16 @@
           "min_solar_export_price": "Minimum solar export price (DKK/kWh)",
           "forecast_hours": "Forecast horizon (hours)",
           "currency": "Currency",
-          "fast_poll_interval": "Live data poll interval (seconds)"
+          "fast_poll_interval": "Live data poll interval (seconds)",
+          "dso_gln": "DSO GLN number (for tariff lookup)"
         },
         "data_description": {
           "battery_floor_soc": "Battery will not export below this state of charge",
           "battery_max_soc": "Battery will not grid-charge above this state of charge",
           "round_trip_efficiency": "Charge + discharge efficiency, typically 85–95%",
           "min_spread_arbitrage": "Minimum price difference (sell − cheapest-in-window) to trigger grid arbitrage",
-          "min_solar_export_price": "Minimum spot price to export solar surplus"
+          "min_solar_export_price": "Minimum spot price to export solar surplus",
+          "dso_gln": "Your grid operator's GLN number — used to fetch hourly network tariffs from Energi Data Service. Default: 5790000610976 (Dinel/Radius)."
         }
       },
       "dashboard": {
@@ -79,7 +81,8 @@
           "min_solar_export_price": "Minimum solar export price (DKK/kWh)",
           "forecast_hours": "Forecast horizon (hours)",
           "currency": "Currency",
-          "fast_poll_interval": "Live data poll interval (seconds)"
+          "fast_poll_interval": "Live data poll interval (seconds)",
+          "dso_gln": "DSO GLN number (for tariff lookup)"
         }
       }
     }
@@ -132,7 +135,8 @@
       "learned_capacity": { "name": "Learned battery capacity" },
       "auto_efficiency": { "name": "Auto-detected efficiency" },
       "capacity_sample_count": { "name": "Capacity learning samples" },
-      "pv_power": { "name": "Solar production (live)" }
+      "pv_power": { "name": "Solar production (live)" },
+      "tariff_this_hour": { "name": "Grid tariff this hour" }
     },
     "binary_sensor": {
       "should_export": { "name": "Should export" },
@@ -162,7 +166,8 @@
       "min_spread_arbitrage": { "name": "Minimum arbitrage spread" },
       "grid_max_kw": { "name": "Grid import limit" },
       "vat_pct": { "name": "Buy-side VAT (%)" },
-      "export_fee": { "name": "Sell-side fee (per kWh)" }
+      "export_fee": { "name": "Sell-side fee (per kWh)" },
+      "elafgift": { "name": "Electricity duty — elafgift (DKK/kWh)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage enabled" }
