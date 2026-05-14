@@ -308,6 +308,31 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:cash-remove",
         value_fn=lambda d: d.get("savings_missed_month", 0.0),
     ),
+    # ── Auto-detected battery parameters ─────────────────────────────────
+    BatteryArbitrageSensorDescription(
+        key="learned_capacity",
+        translation_key="learned_capacity",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:battery-heart-variant",
+        value_fn=lambda d: round(d["learned_capacity"], 2) if d.get("learned_capacity") is not None else None,
+    ),
+    BatteryArbitrageSensorDescription(
+        key="auto_efficiency",
+        translation_key="auto_efficiency",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:battery-sync-outline",
+        value_fn=lambda d: round(d["auto_efficiency"] * 100, 1) if d.get("auto_efficiency") is not None else None,
+    ),
+    BatteryArbitrageSensorDescription(
+        key="capacity_sample_count",
+        translation_key="capacity_sample_count",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:counter",
+        value_fn=lambda d: d.get("capacity_sample_count", 0),
+    ),
     # ── Grid overcurrent protection ───────────────────────────────────────
     BatteryArbitrageSensorDescription(
         key="grid_power",
