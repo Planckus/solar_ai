@@ -172,6 +172,56 @@ Every 5 minutes:
 
 ---
 
+## Setting up with Claude Code
+
+If you use [Claude Code](https://claude.ai/code), it can dramatically speed up the process of adapting Solar AI to your own Home Assistant installation. This section shows practical ways to use it as a hands-on configuration tool — not as a replacement for understanding the system, but as a fast assistant for the tedious parts.
+
+### Finding your entity IDs
+
+Solar AI needs to know the exact entity IDs for your FoxESS Modbus sensors, your spot price sensor, and your EVCC URL. Claude Code can query your live HA instance and find them for you:
+
+> *"List all entities from the foxess_modbus integration in my Home Assistant at 192.168.1.2:8123"*
+
+> *"Find the Strømligning or Nordpool spot price sensor in my HA entity registry"*
+
+> *"What entity IDs does the battery_arbitrage integration expose right now?"*
+
+Claude Code can call the Home Assistant REST API or WebSocket directly and return a filtered list — far faster than scrolling through Settings → Developer Tools → States.
+
+### Adapting for a different inverter
+
+Solar AI is built around FoxESS Modbus. If you have a different inverter (SolarEdge, Sungrow, Huawei, SMA, etc.) the work mode control is in `coordinator.py`. Point Claude Code at the file:
+
+> *"I have a SolarEdge inverter. Read coordinator.py and tell me what I need to change to replace the FoxESS work mode and force-charge logic with SolarEdge Modbus entities"*
+
+It will identify the three or four places where `select.foxessmodbus_work_mode`, `number.foxessmodbus_force_charge_power`, and `number.foxessmodbus_force_discharge_power` are called, and propose equivalents for your hardware.
+
+### Adapting for a different price source
+
+The integration currently reads spot prices from Strømligning (Denmark). For Nordpool, Tibber, Entsoe, or any other HA price sensor:
+
+> *"I use the Nordpool integration. Read coordinator.py and sensor.py and show me what to change so Solar AI reads prices from sensor.nordpool_kwh_dk2_dkk_3 instead of Strømligning"*
+
+The price array format may differ — Claude Code can inspect both integrations and write the adapter.
+
+### Debugging unexpected decisions
+
+If Solar AI does something unexpected (charges when it shouldn't, doesn't export when prices are high), Claude Code can pull the live decision state and explain it:
+
+> *"Read the current state of all battery_arbitrage sensors in my HA and explain why the system decided not to export right now"*
+
+> *"Show me the last 30 minutes of logbook entries for the battery_arbitrage integration"*
+
+The `sensor.*_begrundelse_for_tilstand` (Decision reason) sensor already gives a plain-language explanation, but Claude Code can cross-reference it with raw price data, SoC, and EV state to go deeper.
+
+### General tips
+
+- Always run in **monitoring mode** (switch off) for a few days first — Claude Code can help you read the decision reason sensor and explain what the system *would* have done before you let it act.
+- Use `battery_arbitrage.reset_learning` via Developer Tools → Services after any major configuration change, so the learned charge rates and load model restart from a clean slate.
+- The `coordinator.py` file is the single source of truth for all decision logic. If something doesn't make sense, that's the file to read and the file to change.
+
+---
+
 ## Sensors reference
 
 ### Decision & control
