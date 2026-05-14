@@ -18,6 +18,7 @@ from .const import (
     CALIBRATION_MAX_SOC,
     CALIBRATION_MIN_CHARGE_KW,
     CONF_DSO_GLN,
+    ENERGINET_TARIFF_CODES,
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
@@ -93,6 +94,7 @@ from .const import (
     CAPACITY_MIN_CHARGE_KW,
     CAPACITY_MIN_SAMPLES,
     CAPACITY_MAX_SAMPLES,
+    DEFAULT_SPOT_MARKUP,
     EFFICIENCY_MIN_TOTAL_KWH,
 )
 
@@ -252,6 +254,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "vat_pct": DEFAULT_VAT_PCT,
                 "export_fee": DEFAULT_EXPORT_FEE,
                 "elafgift": DEFAULT_ELAFGIFT_DKK_KWH,
+                "spot_markup": DEFAULT_SPOT_MARKUP,
                 "ev_charge_hourly": [0.0] * 24,
                 "solar_daily_kwh": [],
                 "solar_today_kwh": 0.0,
@@ -288,6 +291,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("vat_pct", DEFAULT_VAT_PCT)
             self._stored.setdefault("export_fee", DEFAULT_EXPORT_FEE)
             self._stored.setdefault("elafgift", DEFAULT_ELAFGIFT_DKK_KWH)
+            self._stored.setdefault("spot_markup", DEFAULT_SPOT_MARKUP)
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
 
@@ -383,8 +387,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             dso_gln = self.config.get(CONF_DSO_GLN, DEFAULT_DSO_GLN)
             try:
                 dso_sched, energinet_sched = await asyncio.gather(
-                    fetch_tariff_schedule(session, dso_gln, now),
-                    fetch_tariff_schedule(session, ENERGINET_GLN, now),
+                    # DSO: 24 hourly prices + genuinely varying hours → nettarif C time only
+                    # (excludes Effektbetaling capacity charges and flat samplaceret band tariffs)
+                    fetch_tariff_schedule(
+                        session, dso_gln, now,
+                        require_all_prices=True,
+                        require_varying_prices=True,
+                    ),
+                    # Energinet: only code 40000 (Transmissions nettarif, residential consumers)
+                    # excludes 40010 (Indfødningstarif produktion) and 40020 (HV 132/150 kV)
+                    fetch_tariff_schedule(
+                        session, ENERGINET_GLN, now,
+                        allowed_codes=ENERGINET_TARIFF_CODES,
+                    ),
                 )
                 self._tariff_schedule = [
                     round(d + e, 4) for d, e in zip(dso_sched, energinet_sched)
@@ -477,12 +492,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         else:
             price_min = price_max = price_mean = price_p25 = price_p75 = price_next_slot = 0.0
 
-        # ---- buy-side prices: spot + DSO/Energinet tariff + elafgift + VAT ----
-        # The true cost of buying electricity includes network tariffs (varying hourly)
-        # and elafgift (government electricity duty), all multiplied by VAT.
-        # Each forecast slot gets the tariff for its own local hour of day.
+        # ---- buy-side prices: spot + markup + DSO/Energinet tariff + elafgift + VAT ----
+        # The true cost of buying electricity includes the retailer's spot markup,
+        # network tariffs (varying hourly), elafgift (government electricity duty),
+        # and VAT.  Each forecast slot gets the tariff for its own local hour of day.
         vat_factor = 1 + self._stored.get("vat_pct", DEFAULT_VAT_PCT) / 100
         elafgift = self._stored.get("elafgift", DEFAULT_ELAFGIFT_DKK_KWH)
+        spot_markup = self._stored.get("spot_markup", DEFAULT_SPOT_MARKUP)
         tariff_sched = self._tariff_schedule
 
         current_local_hour = now.astimezone().hour
@@ -491,7 +507,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         grid_slots = _forecast_values_with_hours(grid_rates.get("rates", []), now, forecast_hours)
         if grid_slots:
             buy_vals_sorted = sorted(
-                (spot + tariff_sched[h] + elafgift) * vat_factor
+                (spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor
                 for h, spot in grid_slots
             )
             n_buy = len(buy_vals_sorted)
@@ -500,7 +516,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             next_slot_slots = _forecast_values_with_hours(grid_rates.get("rates", []), now, 0.5)
             if next_slot_slots:
                 h_next, spot_next = next_slot_slots[0]
-                buy_price_next_slot = (spot_next + tariff_sched[h_next] + elafgift) * vat_factor
+                buy_price_next_slot = (spot_next + spot_markup + tariff_sched[h_next] + elafgift) * vat_factor
             else:
                 buy_price_next_slot = buy_price_min
         else:
