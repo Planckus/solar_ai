@@ -295,11 +295,11 @@ All settings are available in **Settings → Devices & Services → Solar AI →
 | Battery capacity | 11.52 kWh | Fallback usable capacity — replaced automatically by the learned value after ~20 Force Charge samples |
 | Round-trip efficiency | 92 % | Fallback efficiency — replaced automatically by the FoxESS lifetime totals once 100+ kWh have been cycled |
 | Forecast horizon | 24 h | Hours of price data to analyse |
-| Min SoC during export | 50 % | Battery will not export below this SoC |
-| Max SoC for grid charge | 100 % | Battery will not grid-charge above this SoC (configurabel)|
-| Min arbitrage spread | 1.00 DKK/kWh | Minimum sell−buy spread to trigger arbitrage |
+| Min SoC during export | 50 % | Battery will not export below this SoC — configurable live via dashboard slider |
+| Max SoC for grid charge | 100 % | Battery will not grid-charge above this SoC — configurable live via dashboard slider |
+| Min arbitrage spread | 1.00 DKK/kWh | Minimum sell−buy spread to trigger arbitrage — configurable live via dashboard slider |
 | Min solar export price | 0.50 DKK/kWh | Minimum price to export solar surplus |
-| Grid import limit | 17 kW | Circuit breaker capacity |
+| Grid import limit | 17 kW | Circuit breaker capacity — configurable live via dashboard input |
 
 ---
 
