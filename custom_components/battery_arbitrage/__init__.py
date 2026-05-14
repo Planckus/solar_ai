@@ -7,7 +7,23 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    CONF_BATTERY_CAPACITY,
+    CONF_BATTERY_FLOOR_SOC,
+    CONF_BATTERY_MAX_SOC,
+    CONF_FORECAST_HOURS,
+    CONF_MIN_SOLAR_EXPORT_PRICE,
+    CONF_MIN_SPREAD_ARBITRAGE,
+    CONF_ROUND_TRIP_EFFICIENCY,
+    DEFAULT_BATTERY_CAPACITY,
+    DEFAULT_BATTERY_FLOOR_SOC,
+    DEFAULT_BATTERY_MAX_SOC,
+    DEFAULT_FORECAST_HOURS,
+    DEFAULT_MIN_SOLAR_EXPORT_PRICE,
+    DEFAULT_MIN_SPREAD_ARBITRAGE,
+    DEFAULT_ROUND_TRIP_EFFICIENCY,
+)
 from .coordinator import BatteryArbitrageCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -18,6 +34,45 @@ PLATFORMS = [
     Platform.NUMBER,
     Platform.SWITCH,
 ]
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate config entry to the current schema version.
+
+    Called automatically by HA whenever entry.version < ConfigFlow.VERSION.
+    Each version block migrates one step and falls through to the next, so
+    upgrading multiple versions in a single restart works correctly.
+
+    To add a new migration in future:
+      1. Bump VERSION in config_flow.py (e.g. 2 → 3)
+      2. Add an `if entry.version < 3:` block below that fills in / renames fields
+    """
+    _LOGGER.info("Battery Arbitrage: migrating config entry v%s → v%s",
+                 entry.version, entry.domain)
+
+    new_data = dict(entry.data)
+
+    if entry.version < 2:
+        # v1 → v2: establish a clean baseline with all known fields present.
+        # Users who installed at v0.1.0 already had all of these, but any
+        # edge-case partial install will be made whole here.
+        new_data.setdefault(CONF_BATTERY_CAPACITY,       DEFAULT_BATTERY_CAPACITY)
+        new_data.setdefault(CONF_BATTERY_FLOOR_SOC,      DEFAULT_BATTERY_FLOOR_SOC)
+        new_data.setdefault(CONF_BATTERY_MAX_SOC,         DEFAULT_BATTERY_MAX_SOC)
+        new_data.setdefault(CONF_ROUND_TRIP_EFFICIENCY,   DEFAULT_ROUND_TRIP_EFFICIENCY)
+        new_data.setdefault(CONF_MIN_SPREAD_ARBITRAGE,    DEFAULT_MIN_SPREAD_ARBITRAGE)
+        new_data.setdefault(CONF_MIN_SOLAR_EXPORT_PRICE,  DEFAULT_MIN_SOLAR_EXPORT_PRICE)
+        new_data.setdefault(CONF_FORECAST_HOURS,          DEFAULT_FORECAST_HOURS)
+
+        hass.config_entries.async_update_entry(entry, data=new_data, version=2)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v2")
+
+    # Add future migrations here:
+    # if entry.version < 3:
+    #     new_data["new_field"] = default_value
+    #     hass.config_entries.async_update_entry(entry, data=new_data, version=3)
+
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
