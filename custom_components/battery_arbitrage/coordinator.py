@@ -20,13 +20,17 @@ from .const import (
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
+    DEFAULT_FAST_POLL_SECONDS,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_ROUND_TRIP_EFFICIENCY,
+    CONF_FAST_POLL_INTERVAL,
     GRID_MAX_KW,
     GRID_SAFETY_MARGIN_KW,
     GRID_MIN_CHARGE_KW,
     DEFAULT_VAT_PCT,
     DEFAULT_EXPORT_FEE,
+    LEARNING_TICK_INTERVAL_SECONDS,
+    TARIFF_REFRESH_INTERVAL_SECONDS,
     EV_CHARGE_BLOCK_PROBABILITY,
     EV_CHARGE_THRESHOLD_W,
     EV_LEARNING_ALPHA,
@@ -66,7 +70,6 @@ from .const import (
     STORAGE_VERSION,
     STROMLIGNING_SPOTPRICE_EX_VAT,
     TEMP_BUCKETS,
-    UPDATE_INTERVAL_SECONDS,
     VACATION_MIN_DURATION,
     VACATION_SHORT_WINDOW,
     VACATION_THRESHOLD,
@@ -95,11 +98,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     """Coordinator: fetches data, runs model, executes decisions."""
 
     def __init__(self, hass: HomeAssistant, config: dict[str, Any]) -> None:
+        fast_poll = int(config.get(CONF_FAST_POLL_INTERVAL, DEFAULT_FAST_POLL_SECONDS))
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=UPDATE_INTERVAL_SECONDS),
+            update_interval=timedelta(seconds=fast_poll),
         )
         self.config = config
         self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
@@ -109,6 +113,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._enabled = False        # OFF by default — user enables after learning period
         self._we_set_evcc_mode = False  # True while WE have EVCC battery mode set non-normal
         self._prev_soc: float | None = None  # Previous tick SoC for capacity learning
+        # Split-poll cache: tariff data refreshed hourly, live state refreshed every tick
+        self._cached_solar_rates: dict[str, Any] = {}
+        self._cached_grid_rates: dict[str, Any] = {}
+        self._last_tariff_refresh: datetime | None = None
+        # Learning tick gate: storage-write operations run every 5 min, not every fast tick
+        self._last_learning_tick: datetime | None = None
+        self._vacation_mode: bool = False  # Cached between learning ticks
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -319,18 +330,36 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         session = async_get_clientsession(self.hass)
         evcc_url = self.config["evcc_url"]
+        now = datetime.now(timezone.utc)
+        forecast_hours = self.config.get("forecast_hours", 24)
 
+        # ── Fast: fetch live EVCC state every tick ───────────────────────
         try:
-            evcc_state, solar_rates, grid_rates = await asyncio.gather(
-                self._fetch_json(session, f"{evcc_url}{EVCC_API_STATE}"),
-                self._fetch_json(session, f"{evcc_url}{EVCC_API_SOLAR}"),
-                self._fetch_json(session, f"{evcc_url}{EVCC_API_GRID}"),
-            )
+            evcc_state = await self._fetch_json(session, f"{evcc_url}{EVCC_API_STATE}")
         except Exception as err:
             raise UpdateFailed(f"EVCC unreachable: {err}") from err
 
-        now = datetime.now(timezone.utc)
-        forecast_hours = self.config.get("forecast_hours", 24)
+        # ── Hourly: refresh tariff / price data ──────────────────────────
+        tariff_stale = (
+            self._last_tariff_refresh is None
+            or (now - self._last_tariff_refresh).total_seconds() >= TARIFF_REFRESH_INTERVAL_SECONDS
+        )
+        if tariff_stale:
+            try:
+                solar_data, grid_data = await asyncio.gather(
+                    self._fetch_json(session, f"{evcc_url}{EVCC_API_SOLAR}"),
+                    self._fetch_json(session, f"{evcc_url}{EVCC_API_GRID}"),
+                )
+                self._cached_solar_rates = solar_data
+                self._cached_grid_rates = grid_data
+                self._last_tariff_refresh = now
+            except Exception as err:
+                if self._last_tariff_refresh is None:
+                    raise UpdateFailed(f"Could not fetch initial tariff data: {err}") from err
+                _LOGGER.warning("Tariff refresh failed, using cached data: %s", err)
+
+        solar_rates = self._cached_solar_rates
+        grid_rates = self._cached_grid_rates
 
         # ---- parse EVCC ----
         home_power_w = evcc_state.get("homePower", 0)
@@ -369,12 +398,25 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         solar_kwh_raw = _sum_forecast(solar_rates.get("rates", []), now, forecast_hours, watts=True)
         solar_kwh_6h_raw = _sum_forecast(solar_rates.get("rates", []), now, 6, watts=True)
 
-        # ---- solar accuracy: sample current slot ----
+        # ── 5-min learning tick: update all storage-backed models ────────
+        # These operations use sample-count windows tuned for 5-min granularity.
+        # Running them every fast tick would overflow buffers and bias the models.
         current_forecast_w = _current_slot_forecast(solar_rates.get("rates", []), now)
-        if current_forecast_w is not None and (
-            current_forecast_w >= SOLAR_ACCURACY_MIN_FORECAST_W or pv_power_w >= SOLAR_ACCURACY_MIN_FORECAST_W
-        ):
-            self._update_solar_accuracy(current_forecast_w, pv_power_w)
+        is_learning_tick = (
+            self._last_learning_tick is None
+            or (now - self._last_learning_tick).total_seconds() >= LEARNING_TICK_INTERVAL_SECONDS
+        )
+        if is_learning_tick:
+            if current_forecast_w is not None and (
+                current_forecast_w >= SOLAR_ACCURACY_MIN_FORECAST_W
+                or pv_power_w >= SOLAR_ACCURACY_MIN_FORECAST_W
+            ):
+                self._update_solar_accuracy(current_forecast_w, pv_power_w)
+            self._update_load_history(base_load_kw)
+            self._update_ev_charge_learning(ev_charge_power_w)
+            self._update_daily_solar(pv_power_w)
+            self._last_learning_tick = now
+
         solar_accuracy_factor = self.get_solar_accuracy_factor()
 
         # Apply the learned correction to get realistic forecasts
@@ -423,30 +465,30 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         export_fee = self._stored.get("export_fee", DEFAULT_EXPORT_FEE)
         export_price = max(0.0, spot_ex_vat - export_fee)
 
-        # ---- load model ----
-        self._update_load_history(base_load_kw)
+        # ---- load model (reads from storage, always fresh) ----
         load_history = self._stored.get("load_history", [])
         load_2h_avg = _rolling_mean(load_history, VACATION_SHORT_WINDOW)
         load_28d_avg = _rolling_mean(load_history, LOAD_HISTORY_MAX_SAMPLES)
-        vacation_mode = self._update_vacation_mode(load_2h_avg, load_28d_avg)
+        # vacation_mode writes to storage — update cached value on learning ticks only
+        if is_learning_tick:
+            self._vacation_mode = self._update_vacation_mode(load_2h_avg, load_28d_avg)
+        vacation_mode = self._vacation_mode
         predicted_house_load_24h = _predict_house_load(
             load_2h_avg, load_28d_avg, vacation_mode, forecast_hours
         )
 
-        # ---- temperature learning ----
-        if cell_temp_low is not None:
+        # ---- temperature learning (gated) ----
+        if is_learning_tick and cell_temp_low is not None:
             self._calibrate_charge_rate(
                 cell_temp_low, battery_charge_kw, battery_soc, work_mode_str
             )
         learned_charge_rate = self.get_current_charge_rate()
 
-        # ---- EV charge pattern learning ----
-        self._update_ev_charge_learning(ev_charge_power_w)
+        # ---- EV charge pattern ----
         ev_block_prob = self.get_ev_charge_probability()
         ev_likely_charging = ev_block_prob >= EV_CHARGE_BLOCK_PROBABILITY
 
         # ---- seasonal mode ----
-        self._update_daily_solar(pv_power_w)
         is_summer_mode, solar_28d_avg = self.get_season_mode()
 
         # ---- capacity & efficiency: auto-detect, fall back to config ----
@@ -463,8 +505,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         efficiency = auto_efficiency if auto_efficiency is not None \
             else self.config.get("round_trip_efficiency", DEFAULT_ROUND_TRIP_EFFICIENCY)
 
-        # Capacity learning: collect sample from this tick
-        self._learn_capacity(battery_soc, battery_charge_kw)
+        # Capacity learning: gate to 5-min ticks (energy calculation needs correct interval_h)
+        if is_learning_tick:
+            self._learn_capacity(battery_soc, battery_charge_kw)
 
         exportable_kwh = max(0.0, (battery_soc - floor_soc) / 100 * capacity_kwh * efficiency)
         importable_kwh = max(0.0, (max_soc - battery_soc) / 100 * capacity_kwh)
@@ -555,17 +598,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             else:
                 reason = "Disabled — monitoring only"
 
-        # ---- savings tracking ----
-        self._update_savings(
-            new_mode, should_export, should_grid_charge,
-            export_price, grid_arbitrage_spread,
-            battery_discharge_kw, battery_charge_kw,
-            learned_charge_rate, truly_exportable_kwh, importable_kwh,
-        )
+        # ---- savings tracking (learning tick only — accumulates per interval_h) ----
+        if is_learning_tick:
+            self._update_savings(
+                new_mode, should_export, should_grid_charge,
+                export_price, grid_arbitrage_spread,
+                battery_discharge_kw, battery_charge_kw,
+                learned_charge_rate, truly_exportable_kwh, importable_kwh,
+            )
         savings = self.get_savings_summary()
 
-        # ---- save storage periodically ----
-        await self._store.async_save(self._stored)
+        # ---- save storage (learning tick only — avoids flash wear on fast ticks) ----
+        if is_learning_tick:
+            await self._store.async_save(self._stored)
 
         return self._make_result(
             mode=new_mode,
@@ -820,7 +865,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     del daily[: len(daily) - SOLAR_DAILY_SAMPLES_MAX]
             self._stored["solar_today_date"] = today
             self._stored["solar_today_kwh"] = 0.0
-        kwh_this_tick = pv_power_w / 1000 * (UPDATE_INTERVAL_SECONDS / 3600)
+        kwh_this_tick = pv_power_w / 1000 * (LEARNING_TICK_INTERVAL_SECONDS / 3600)
         self._stored["solar_today_kwh"] = round(
             self._stored.get("solar_today_kwh", 0.0) + kwh_this_tick, 4
         )
@@ -889,7 +934,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and CAPACITY_MIN_SOC <= battery_soc <= CAPACITY_MAX_SOC
             and delta_soc >= CAPACITY_MIN_DELTA_SOC
         ):
-            interval_h = UPDATE_INTERVAL_SECONDS / 3600
+            interval_h = LEARNING_TICK_INTERVAL_SECONDS / 3600
             energy_in_kwh = battery_charge_kw * interval_h
             capacity_sample = round(energy_in_kwh / (delta_soc / 100), 2)
             # Sanity-check: plausible battery size 3–30 kWh
@@ -941,7 +986,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         importable_kwh: float,
     ) -> None:
         """Accumulate actual and missed DKK savings into today's daily log entry."""
-        interval_h = UPDATE_INTERVAL_SECONDS / 3600  # 5/60 h
+        interval_h = LEARNING_TICK_INTERVAL_SECONDS / 3600  # 5/60 h
 
         today = datetime.now().date().isoformat()
         log: list[dict] = self._stored.setdefault("savings_log", [])

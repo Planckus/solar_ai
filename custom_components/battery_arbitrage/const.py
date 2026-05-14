@@ -109,7 +109,10 @@ SOLAR_ACCURACY_COMPARISON_W = 100    # Min forecast to include in ratio calculat
 SOLAR_ACCURACY_WINDOW = 576          # Use last 4 days (576 × 5 min) for the ratio
 
 # Coordinator update intervals
-UPDATE_INTERVAL_SECONDS = 300        # 5 min — normal polling
+DEFAULT_FAST_POLL_SECONDS = 30       # Live EVCC data poll (configurable)
+CONF_FAST_POLL_INTERVAL = "fast_poll_interval"
+TARIFF_REFRESH_INTERVAL_SECONDS = 3600   # Hourly tariff/price refresh (not configurable)
+LEARNING_TICK_INTERVAL_SECONDS = 300     # Learning model write cadence (5 min)
 CALIBRATION_MIN_CHARGE_KW = 0.3     # Minimum charge power to count as a calibration sample
 CALIBRATION_MAX_SOC = 95            # Don't calibrate near-full (BMS tapers naturally)
 CALIBRATION_MAX_SAMPLES = 200       # Per temp bucket

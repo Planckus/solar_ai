@@ -39,7 +39,8 @@
           "min_spread_arbitrage": "Minimum spread for grid arbitrage (DKK/kWh)",
           "min_solar_export_price": "Minimum solar export price (DKK/kWh)",
           "forecast_hours": "Forecast horizon (hours)",
-          "currency": "Currency"
+          "currency": "Currency",
+          "fast_poll_interval": "Live data poll interval (seconds)"
         },
         "data_description": {
           "battery_floor_soc": "Battery will not export below this state of charge",
@@ -77,7 +78,8 @@
           "min_spread_arbitrage": "Minimum spread for grid arbitrage (DKK/kWh)",
           "min_solar_export_price": "Minimum solar export price (DKK/kWh)",
           "forecast_hours": "Forecast horizon (hours)",
-          "currency": "Currency"
+          "currency": "Currency",
+          "fast_poll_interval": "Live data poll interval (seconds)"
         }
       }
     }
