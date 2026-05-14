@@ -141,7 +141,8 @@
       },
       "solar_will_fill": { "name": "Sol fylder batteri" },
       "ev_connected": { "name": "EV tilsluttet" },
-      "ev_charging_now": { "name": "EV oplader (now/minpv tilstand)" }
+      "ev_charging_now": { "name": "EV oplader (now/minpv tilstand)" },
+      "ev_charging_solar": { "name": "EV oplader (solenergi)" }
     },
     "number": {
       "charge_rate_below_0": { "name": "Maks. opladning — under 0°C" },

@@ -141,7 +141,8 @@
       },
       "solar_will_fill": { "name": "Solar will fill battery" },
       "ev_connected": { "name": "EV connected" },
-      "ev_charging_now": { "name": "EV charging (now/minpv mode)" }
+      "ev_charging_now": { "name": "EV charging (now/minpv mode)" },
+      "ev_charging_solar": { "name": "EV on Solar" }
     },
     "number": {
       "charge_rate_below_0": { "name": "Max charge rate — under 0°C" },
