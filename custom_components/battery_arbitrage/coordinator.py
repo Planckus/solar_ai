@@ -20,6 +20,9 @@ from .const import (
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
+    GRID_MAX_KW,
+    GRID_SAFETY_MARGIN_KW,
+    GRID_MIN_CHARGE_KW,
     DEFAULT_EXPORT_DEDUCTION,
     EV_CHARGE_BLOCK_PROBABILITY,
     EV_CHARGE_THRESHOLD_W,
@@ -211,6 +214,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "battery_floor_soc": int(self.config.get("battery_floor_soc", DEFAULT_BATTERY_FLOOR_SOC)),
                 "battery_max_soc": int(self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)),
                 "min_spread_arbitrage": float(self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE)),
+                "grid_max_kw": float(GRID_MAX_KW),
                 "ev_charge_hourly": [0.0] * 24,
                 "solar_daily_kwh": [],
                 "solar_today_kwh": 0.0,
@@ -242,6 +246,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "min_spread_arbitrage",
                 float(self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE)),
             )
+            self._stored.setdefault("grid_max_kw", float(GRID_MAX_KW))
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
 
@@ -310,6 +315,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # ---- parse EVCC ----
         home_power_w = evcc_state.get("homePower", 0)
         pv_power_w = evcc_state.get("pvPower", 0)
+        grid_power_w = evcc_state.get("gridPower", 0)   # positive = import, negative = export
         loadpoints = evcc_state.get("loadpoints", [{}])
         lp = loadpoints[0] if loadpoints else {}
         ev_charge_power_w = lp.get("chargePower", 0)
@@ -427,6 +433,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         else:
             time_to_charge_h = 999.0
 
+        # ---- grid headroom (overcurrent protection) ----
+        grid_max_kw = float(self._stored.get("grid_max_kw", GRID_MAX_KW))
+        # If we're already grid-charging, battery charge power is inside gridPower —
+        # subtract it so headroom reflects non-battery load only
+        grid_import_kw = max(0.0, grid_power_w / 1000)
+        if self._current_mode == MODE_GRID_CHARGING:
+            base_grid_kw = max(0.0, grid_import_kw - battery_charge_kw)
+        else:
+            base_grid_kw = grid_import_kw
+        grid_headroom_kw = max(0.0, grid_max_kw - GRID_SAFETY_MARGIN_KW - base_grid_kw)
+        # Cap the charge rate to what the grid can safely supply
+        capped_charge_rate_kw = min(learned_charge_rate if learned_charge_rate > 0 else GRID_MAX_KW, grid_headroom_kw)
+
         # ---- spread calculations ----
         grid_arbitrage_spread = export_price - price_min
         min_spread = float(self._stored.get("min_spread_arbitrage", self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE)))
@@ -462,6 +481,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and not evcc_managing_battery
             # Skip if EV typically charges at this hour — avoid competing for cheap slots
             and not ev_likely_charging
+            # Grid overcurrent protection: only charge if there is useful headroom
+            and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
         )
 
         # ---- execute action (skipped when disabled — data still reported) ----
@@ -472,6 +493,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 truly_exportable_kwh, importable_kwh, solar_will_fill,
                 ev_charging_now, ev_likely_charging, ev_block_prob,
                 evcc_battery_mode, evcc_managing_battery,
+                capped_charge_rate_kw,
             )
         else:
             new_mode = MODE_DISABLED
@@ -539,6 +561,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             ev_block_prob=ev_block_prob,
             is_summer_mode=is_summer_mode,
             solar_28d_avg=solar_28d_avg,
+            grid_power_kw=round(grid_import_kw, 3),
+            grid_headroom_kw=round(grid_headroom_kw, 3),
+            grid_max_kw=grid_max_kw,
+            capped_charge_rate_kw=round(capped_charge_rate_kw, 3),
             learned_rates=self.get_all_learned_rates(),
             **savings,
         )
@@ -565,6 +591,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ev_block_prob: float,
         evcc_battery_mode: str,
         evcc_managing_battery: bool,
+        capped_charge_rate_kw: float = 0.0,
     ) -> tuple[str, str]:
         target_mode = MODE_NORMAL
         reason = "Conditions not met for export or grid charging"
@@ -593,13 +620,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 reason = f"EV typically charges now ({ev_block_prob:.0%} learned) — skipping grid charge"
 
         if target_mode != self._current_mode:
-            await self._transition_to(target_mode)
+            await self._transition_to(target_mode, capped_charge_rate_kw)
 
         self._current_mode = target_mode
         self._mode_reason = reason
         return target_mode, reason
 
-    async def _transition_to(self, new_mode: str) -> None:
+    async def _transition_to(self, new_mode: str, capped_charge_rate_kw: float = 0.0) -> None:
         """Handle transition between operating modes."""
         _LOGGER.info("Battery Arbitrage: transitioning %s → %s", self._current_mode, new_mode)
 
@@ -616,9 +643,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
 
         elif new_mode == MODE_GRID_CHARGING:
-            # Force Charge: inverter charges battery from grid at learned rate
+            # Force Charge: inverter charges battery from grid at grid-headroom-capped rate
             await self._set_work_mode(WORK_MODE_FORCE_CHARGE)
-            await self._set_charge_power(inverter_id)
+            await self._set_charge_power(inverter_id, max_kw=capped_charge_rate_kw)
             await self._set_export_limit(inverter_id, 0)   # Don't export while buying cheap power
             self._we_set_evcc_mode = True
             await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
@@ -661,10 +688,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.error("Failed to set export limit: %s", err)
 
-    async def _set_charge_power(self, inverter_id: str) -> None:
-        """Set the Force Charge power to the learned rate for current temperature."""
+    async def _set_charge_power(self, inverter_id: str, max_kw: float = 0.0) -> None:
+        """Set the Force Charge power to the learned rate, capped to grid headroom."""
         rate_kw = self.get_current_charge_rate()
         if rate_kw <= 0:
+            rate_kw = 1.0   # fallback if not yet calibrated
+        if max_kw > 0:
+            rate_kw = min(rate_kw, max_kw)
+        if rate_kw < GRID_MIN_CHARGE_KW:
+            _LOGGER.warning("Battery Arbitrage: charge rate %.2f kW below minimum — skipping", rate_kw)
             return
         rate_w = int(rate_kw * 1000)
         entity = self.config.get("foxess_force_charge_entity", "number.foxessmodbus_force_charge_power")

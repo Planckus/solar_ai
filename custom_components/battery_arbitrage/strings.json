@@ -122,7 +122,9 @@
       "savings_actual_week": { "name": "Actual savings 7 days" },
       "savings_missed_week": { "name": "Missed savings 7 days" },
       "savings_actual_month": { "name": "Actual savings 30 days" },
-      "savings_missed_month": { "name": "Missed savings 30 days" }
+      "savings_missed_month": { "name": "Missed savings 30 days" },
+      "grid_power": { "name": "Grid import power" },
+      "grid_headroom": { "name": "Grid headroom" }
     },
     "binary_sensor": {
       "should_export": { "name": "Should export" },
@@ -148,7 +150,8 @@
       "charge_rate_above_50": { "name": "Max charge rate — over 50°C" },
       "floor_soc": { "name": "Minimum SoC (export)" },
       "max_soc": { "name": "Maximum SoC (grid charge)" },
-      "min_spread_arbitrage": { "name": "Minimum arbitrage spread" }
+      "min_spread_arbitrage": { "name": "Minimum arbitrage spread" },
+      "grid_max_kw": { "name": "Grid import limit" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage enabled" }

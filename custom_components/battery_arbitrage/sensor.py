@@ -308,6 +308,25 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:cash-remove",
         value_fn=lambda d: d.get("savings_missed_month", 0.0),
     ),
+    # ── Grid overcurrent protection ───────────────────────────────────────
+    BatteryArbitrageSensorDescription(
+        key="grid_power",
+        translation_key="grid_power",
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:transmission-tower-import",
+        value_fn=lambda d: round(d.get("grid_power_kw", 0.0), 3),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="grid_headroom",
+        translation_key="grid_headroom",
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:transmission-tower-export",
+        value_fn=lambda d: round(d.get("grid_headroom_kw", 0.0), 3),
+    ),
 )
 
 
