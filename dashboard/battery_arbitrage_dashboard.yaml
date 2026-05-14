@@ -44,6 +44,21 @@ views:
           - entity: sensor.battery_arbitrage_24h_pris_75_percentil
           - entity: sensor.battery_arbitrage_naeste_slots_pris
 
+
+      # ── Grid ───────────────────────────────────────────────────────────────
+      - type: entities
+        title: Grid
+        icon: mdi:transmission-tower
+        show_header_toggle: false
+        entities:
+          - entity: number.solar_ai_net_importgraense
+            name: Circuit breaker limit
+          - type: divider
+          - entity: sensor.solar_ai_net_importeffekt
+            name: Current grid import
+          - entity: sensor.solar_ai_net_raderum
+            name: Headroom before limit
+
       # ── Solar Forecast ─────────────────────────────────────────────────────
       - type: entities
         title: Solar Forecast
