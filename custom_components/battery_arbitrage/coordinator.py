@@ -343,6 +343,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             lp_.get("charging", False) and lp_.get("mode") in (EV_MODE_NOW, EV_MODE_MIN_PV)
             for lp_ in loadpoints
         )
+        # EV charging purely on solar surplus (pv mode, real charge power flowing)
+        ev_charging_solar = any(
+            lp_.get("charging", False)
+            and lp_.get("mode") == "pv"
+            and lp_.get("chargePower", 0) > EV_CHARGE_THRESHOLD_W
+            for lp_ in loadpoints
+        )
 
         # EVCC battery mode: "normal", "hold", or "charge"
         # If EVCC (not us) has set it to hold/charge, we must not override it
@@ -563,6 +570,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             ev_mode=ev_mode,
             ev_connected=ev_connected,
             ev_charging_now=ev_charging_now,
+            ev_charging_solar=ev_charging_solar,
             evcc_battery_mode=evcc_battery_mode,
             base_load_kw=base_load_kw,
             load_2h_avg_kw=load_2h_avg,
