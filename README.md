@@ -1,7 +1,6 @@
 # Solar AI for FoxESS
 
 [![HACS Custom Repository](https://img.shields.io/badge/HACS-Custom-orange?logo=home-assistant-community-store)](https://hacs.xyz)
-[![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-blueviolet?logo=anthropic)](https://claude.ai/claude-code)
 
 > **An intelligent Home Assistant integration that autonomously manages your FoxESS battery — buying cheap grid electricity, selling at peak prices, protecting your circuit breakers, and learning your household's patterns over time.**
 
@@ -173,77 +172,6 @@ Every 5 minutes:
 
 ---
 
-## Adapting this to your own installation with Claude Code
-
-Solar AI was built entirely with [Claude Code](https://claude.ai/claude-code) — Anthropic's AI coding assistant that runs in your terminal, reads your codebase, and can connect directly to your Home Assistant instance.
-
-If you want to install, debug, or adapt this integration to your own setup, Claude Code can do the heavy lifting. Here's how.
-
-### Step 1 — Set up Claude Code
-
-```bash
-# Install
-npm install -g @anthropic-ai/claude-code
-
-# Open a session in your project directory
-cd ha-battery-arbitrage
-claude
-```
-
-For direct HA access, connect the [MCP Home Assistant server](https://github.com/allenporter/mcp-server-homeassistant). This lets Claude Code query entity states, read logs, deploy files, and restart HA from the same session.
-
-### Step 2 — Find your entity IDs
-
-The trickiest part of any HA integration is matching entity IDs. Just ask:
-
-> *"List all entities in my Home Assistant that contain 'battery', 'soc', or 'inverter' in their name or ID"*
-
-Claude Code queries your HA instance directly and returns a filtered list. Feed the correct IDs into the config flow or paste them into `const.py`.
-
-### Step 3 — Common customisations
-
-**Different inverter brand (SolarEdge, Sungrow, Huawei, etc.)**
-
-The inverter-specific logic is isolated in three methods in `coordinator.py`:
-`_set_work_mode()`, `_set_charge_power()`, `_set_export_limit()`
-
-Tell Claude Code:
-> *"Rewrite the three inverter control methods in coordinator.py for a Sungrow SH10RT. The work modes are X, Y, Z and charge power is set via entity sensor.sungrow_..."*
-
-**Different price source (Nordpool, Tibber, Octopus Energy, etc.)**
-
-The price logic reads from a single HA entity. Tell Claude Code:
-> *"Replace the Strømligning price entity in coordinator.py with Nordpool. My entity is sensor.nordpool_kwh_se3_sek_3_10_025 and the unit is SEK/kWh — also update all the DKK references to SEK"*
-
-**Different currency or country**
-
-> *"Update all DKK/kWh references in const.py, sensor.py, strings.json, en.json and da.json to EUR/kWh"*
-
-### Step 4 — Debugging unexpected behaviour
-
-If Solar AI isn't doing what you expect:
-
-> *"Solar AI didn't grid-charge last night even though prices were cheap at 3am. Check the HA logbook for battery_arbitrage warnings, read the current state of all decision sensors, and explain why it didn't charge"*
-
-Claude Code reads the HA logbook and entity states, then explains the decision in plain language.
-
-### Step 5 — Adding new features
-
-The codebase is structured so new sensors, controls, and decision factors can be added without touching unrelated code. Describe what you want:
-
-> *"Add a feature that sends an HA notification when Solar AI starts or stops grid charging, including the current price and how many kWh it plans to charge"*
-
-> *"Add a time-window constraint so grid charging only happens between 00:00 and 06:00, even if prices are cheap during the day"*
-
-### Tips for working with Claude Code on this project
-
-- **Always let it check entity IDs before touching the dashboard** — HA slugifies translated names unpredictably. Let Claude Code query `ha_get_state` or `ha_list_entity_registry` first.
-- **Deploy in two steps** — code deploy + HA restart first, then dashboard update after verifying the new entity IDs.
-- **Start with monitoring mode** — keep the arbitrage switch off while you verify the sensors look correct, then enable.
-- **Use the savings tracker** — the missed savings sensors show exactly what Solar AI *would* have done while disabled, making it easy to verify the logic before going live.
-
----
-
 ## Sensors reference
 
 ### Decision & control
@@ -334,7 +262,7 @@ All settings are available in **Settings → Devices & Services → Solar AI →
 ## Known limitations
 
 - **Denmark-focused** — built around DKK/kWh spot prices from Strømligning. Other markets need a different price entity and currency unit.
-- **FoxESS Modbus required** — work mode control uses FoxESS-specific entities. Other inverters need code changes in `coordinator.py` (see Claude Code section above).
+- **FoxESS Modbus required** — work mode control uses FoxESS-specific entities. Other inverters need code changes in `coordinator.py`.
 - **EVCC required** — solar forecasts and grid power readings come from EVCC's API.
 - **Learning period** — the system works best after 1–2 weeks of data. During the first few days it uses conservative defaults for charge rates and EV patterns.
 - **Buy-side pricing** — currently uses the excl. VAT spot price for both buy and sell sides. For accurate spread calculations, the buy side should include grid tariffs and taxes — a planned future improvement.
@@ -350,5 +278,3 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 ## License
 
 MIT — use freely, adapt for your own setup.
-
-Built with ❤️ and [Claude Code](https://claude.ai/claude-code).
