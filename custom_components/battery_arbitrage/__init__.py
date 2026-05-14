@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 
 from .const import (
     CONF_CURRENCY,
+    CONF_FAST_POLL_INTERVAL,
     DOMAIN,
     CONF_BATTERY_CAPACITY,
     CONF_BATTERY_FLOOR_SOC,
@@ -21,6 +22,7 @@ from .const import (
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
     DEFAULT_CURRENCY,
+    DEFAULT_FAST_POLL_SECONDS,
     DEFAULT_FORECAST_HOURS,
     DEFAULT_MIN_SOLAR_EXPORT_PRICE,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
@@ -74,6 +76,12 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data.setdefault(CONF_CURRENCY, DEFAULT_CURRENCY)
         hass.config_entries.async_update_entry(entry, data=new_data, version=3)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v3")
+
+    if entry.version < 4:
+        # v3 → v4: add configurable fast poll interval (defaults to 30 s)
+        new_data.setdefault(CONF_FAST_POLL_INTERVAL, DEFAULT_FAST_POLL_SECONDS)
+        hass.config_entries.async_update_entry(entry, data=new_data, version=4)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v4")
 
     return True
 

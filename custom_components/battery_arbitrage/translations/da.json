@@ -39,7 +39,8 @@
           "min_spread_arbitrage": "Minimum spread for netarbitrage (DKK/kWh)",
           "min_solar_export_price": "Minimum solcelleeksportpris (DKK/kWh)",
           "forecast_hours": "Prognosehorisont (timer)",
-          "currency": "Valuta"
+          "currency": "Valuta",
+          "fast_poll_interval": "Opdateringsinterval for live-data (sekunder)"
         },
         "data_description": {
           "battery_floor_soc": "Batteriet eksporterer ikke under denne ladetilstand",
@@ -77,7 +78,8 @@
           "min_spread_arbitrage": "Minimum spread for netarbitrage (DKK/kWh)",
           "min_solar_export_price": "Minimum solcelleeksportpris (DKK/kWh)",
           "forecast_hours": "Prognosehorisont (timer)",
-          "currency": "Valuta"
+          "currency": "Valuta",
+          "fast_poll_interval": "Opdateringsinterval for live-data (sekunder)"
         }
       }
     }
