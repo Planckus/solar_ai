@@ -17,6 +17,7 @@ from .const import (
     DEFAULT_BATTERY_MAX_SOC,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DOMAIN,
+    GRID_MAX_KW,
     TEMP_BUCKETS,
 )
 from .coordinator import BatteryArbitrageCoordinator
@@ -68,6 +69,18 @@ async def async_setup_entry(
             min_val=0.10,
             max_val=3.00,
             step=0.05,
+        ),
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="grid_max_kw",
+            translation_key="grid_max_kw",
+            default=GRID_MAX_KW,
+            icon="mdi:transmission-tower",
+            unit=UnitOfPower.KILO_WATT,
+            min_val=5.0,
+            max_val=63.0,
+            step=0.5,
+            mode=NumberMode.BOX,
         ),
     ]
     async_add_entities(entities)
@@ -123,14 +136,13 @@ class BatteryArbitrageLearnedRateNumber(
 class BatteryArbitrageConfigNumber(
     CoordinatorEntity[BatteryArbitrageCoordinator], NumberEntity
 ):
-    """Generic live-adjustable config slider for Battery Arbitrage settings.
+    """Generic live-adjustable config number for Battery Arbitrage settings.
 
     Values are persisted in storage and take effect on the next coordinator
     tick without requiring an HA restart.
     """
 
     _attr_has_entity_name = True
-    _attr_mode = NumberMode.SLIDER
 
     def __init__(
         self,
@@ -144,6 +156,7 @@ class BatteryArbitrageConfigNumber(
         min_val: float,
         max_val: float,
         step: float,
+        mode: NumberMode = NumberMode.SLIDER,
     ) -> None:
         super().__init__(coordinator)
         self._storage_key = storage_key
@@ -151,6 +164,7 @@ class BatteryArbitrageConfigNumber(
         self._attr_unique_id = f"{entry.entry_id}_{storage_key}"
         self._attr_translation_key = translation_key
         self._attr_icon = icon
+        self._attr_mode = mode
         self._attr_native_unit_of_measurement = unit
         self._attr_native_min_value = min_val
         self._attr_native_max_value = max_val
