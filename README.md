@@ -262,6 +262,7 @@ All settings are available in **Settings → Devices & Services → Solar AI →
 ## Known limitations
 
 - **Denmark-focused** — built around DKK/kWh spot prices from Strømligning. Other markets need a different price entity and currency unit.
+- **FoxESS Modbus required** — work mode control uses FoxESS-specific entities. Other inverters need code changes in `coordinator.py`.
 - **EVCC required** — solar forecasts and grid power readings come from EVCC's API.
 - **Learning period** — the system works best after 1–2 weeks of data. During the first few days it uses conservative defaults for charge rates and EV patterns.
 - **Buy-side pricing** — currently uses the excl. VAT spot price for both buy and sell sides. For accurate spread calculations, the buy side should include grid tariffs and taxes — a planned future improvement.
@@ -277,4 +278,3 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 ## License
 
 MIT — use freely, adapt for your own setup.
-
