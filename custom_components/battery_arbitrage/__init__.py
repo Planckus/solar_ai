@@ -11,6 +11,7 @@ from .const import (
     CONF_CURRENCY,
     CONF_DSO_GLN,
     CONF_FAST_POLL_INTERVAL,
+    CONF_SPOT_MARKUP,
     DOMAIN,
     CONF_BATTERY_CAPACITY,
     CONF_BATTERY_FLOOR_SOC,
@@ -29,6 +30,7 @@ from .const import (
     DEFAULT_MIN_SOLAR_EXPORT_PRICE,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_ROUND_TRIP_EFFICIENCY,
+    DEFAULT_SPOT_MARKUP,
 )
 from .coordinator import BatteryArbitrageCoordinator
 
@@ -90,6 +92,20 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data.setdefault(CONF_DSO_GLN, DEFAULT_DSO_GLN)
         hass.config_entries.async_update_entry(entry, data=new_data, version=5)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v5")
+
+    if entry.version < 6:
+        # v5 → v6: fix old Dinel capacity-charges GLN → correct nettarif C time GLN;
+        # also seed the new spot_markup field (retailer's per-kWh margin).
+        _OLD_DINEL_CAPACITY_GLN = "5790000610976"
+        if new_data.get(CONF_DSO_GLN) == _OLD_DINEL_CAPACITY_GLN:
+            new_data[CONF_DSO_GLN] = DEFAULT_DSO_GLN
+            _LOGGER.info(
+                "Battery Arbitrage: corrected Dinel DSO GLN from %s to %s",
+                _OLD_DINEL_CAPACITY_GLN, DEFAULT_DSO_GLN,
+            )
+        new_data.setdefault(CONF_SPOT_MARKUP, DEFAULT_SPOT_MARKUP)
+        hass.config_entries.async_update_entry(entry, data=new_data, version=6)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v6")
 
     return True
 

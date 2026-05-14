@@ -140,11 +140,23 @@ GRID_MIN_CHARGE_KW = 0.3            # Minimum useful battery charge rate under h
 
 # Pricing (VAT % and export fee are now live-configurable via number entities)
 
+# Spot price markup (retailer's per-kWh margin on top of raw spot price)
+CONF_SPOT_MARKUP = "spot_markup"
+DEFAULT_SPOT_MARKUP = 0.0               # DKK/kWh — user-adjustable via number entity
+
 # DSO tariff integration — DatahubPricelist API
 CONF_DSO_GLN = "dso_gln"
-DEFAULT_DSO_GLN = "5790000610976"        # Dinel / Radius — most common Danish DSO
-ENERGINET_GLN = "5790001102620"          # Energinet system/transmission/balance tariffs
-DEFAULT_ELAFGIFT_DKK_KWH = 0.977        # Danish electricity duty (elafgift), DKK/kWh
+DEFAULT_DSO_GLN = "5790000610099"        # Dinel nettarif C time — change to your DSO's GLN if different
+
+# Known DSOs with confirmed GLN numbers.  Presented as a dropdown in the config /
+# options flow.  Add new entries here as more DSOs are verified.
+DSO_OPTIONS: list[dict[str, str]] = [
+    {"value": "5790000610099", "label": "Dinel (Jutland/Fyn)"},
+]
+
+ENERGINET_GLN = "5790000432752"          # Energinet — transmission/system tariffs
+ENERGINET_TARIFF_CODES = frozenset({"40000"})  # Transmissions nettarif only (residential; excludes indfødningstarif)
+DEFAULT_ELAFGIFT_DKK_KWH = 0.01         # Danish electricity duty (elafgift) — user-adjustable
 TARIFF_SCHEDULE_REFRESH_SECONDS = 86400  # Refresh tariff schedule daily (tariffs are stable within a day)
 DATAHUB_API_URL = "https://api.energidataservice.dk/dataset/DatahubPricelist"
 

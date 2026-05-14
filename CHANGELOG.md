@@ -9,6 +9,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.11.2] — 2026-05-14
+
+### Fixed
+- **DSO tariff double-counted** — Dinel publishes the same nettarif C time under two codes: `TCL<100_02` (residential, < 100 kWh/h) and `TCL>100_02` (large consumer, > 100 kWh/h) with identical 24-hour prices. Both passed the varying-prices filter and were summed, doubling the tariff (e.g. 2 × 0.24 = 0.48 DKK/kWh at peak instead of 0.24). Tariff records with identical 24-hour price profiles are now deduplicated — only the first match is included.
+
+---
+
+## [0.11.1] — 2026-05-14
+
+### Fixed
+- **Nettarif C time still showed 0 after 0.10.2 fix** — Dinel (and similar DSOs) pre-publish hundreds of future daily records.  The API returns results sorted alphabetically by `ChargeTypeCode`, so codes like `TAH`, `TAL`, `TBH` fill the first 500 positions and push `TCL<100_02` (the nettarif C time) beyond the fetch limit.  Both queries now include `end=tomorrow` which trims all future pre-published records from the response.  With that filter the daily `start=today&end=tomorrow` query returns only 7 records — and the correct nettarif C time is among them.
+
+---
+
+## [0.11.0] — 2026-05-14
+
+### Added
+- **DSO dropdown** — the DSO GLN field in *Settings → Integrations → Solar AI → Configure* is now a dropdown menu showing your grid operator by name instead of a raw GLN number. Dinel (Jutland/Fyn) is the first entry; more DSOs will be added over time.
+- **Spot price markup entity** — new live box-input entity (0–0.50 DKK/kWh) for the per-kWh add-on that your electricity retailer charges on top of the raw spot price (handelstillæg / abonnementstillæg). Defaults to 0.00. Takes effect immediately on the next 5-minute tick. Added to the buy-side price formula: `(spot + markup + network tariff + elafgift) × VAT`.
+
+### Fixed
+- Config entry migrated to v6: existing installs with the old Dinel capacity-charge GLN (`5790000610976`) are automatically corrected to the nettarif C time GLN (`5790000610099`) on restart.
+
+---
+
+## [0.10.2] — 2026-05-14
+
+### Fixed
+- **Daily-updated DSO records now found** — DSOs like Dinel publish one tariff record per day (`ValidFrom=today`, `ValidTo=tomorrow`). The previous `start=2022-01-01&limit=500` query sorted oldest-first and never reached today's record (1 278+ records exist for Dinel going back to 2022). The tariff fetch now issues **two parallel queries**: one from today (catches daily records at position 0) and one from 2022 (catches seasonal/annual records from Energinet and other DSOs), then merges and deduplicates the results.
+- **Default DSO GLN corrected** — changed from `5790000610976` (Dinel capacity/power charges only — no hourly nettarif) to `5790000610099` (Dinel nettarif C time — the correct hourly time-of-use tariff). Existing installs: update the **DSO GLN** field in *Settings → Integrations → Solar AI → Configure* to `5790000610099` if you are on Dinel.
+
+---
+
+## [0.10.1] — 2026-05-14
+
+### Fixed
+- **Tariff API query returned zero results** — the `start=today` date filter in the DatahubPricelist query meant only tariffs starting *in the future* were returned. Changed to a fixed lookback of 2022-01-01 so all currently-valid tariff records are captured.
+- **Wrong Energinet GLN** — GLN `5790001102620` has no records in the datahub; corrected to `5790000432752` (Energinet transmission/system tariffs).
+- **Energinet tariff over-counted non-residential charges** — the query now only includes charge code `40000` (Transmissions nettarif, 0.043 DKK/kWh), excluding `40010` (Indfødningstarif produktion — applies to large producers, not residential), `40020` (132/150 kV HV tariff), and TSO-connected industrial tariffs. No indfødningstarif is included on either the buy or sell side.
+- **DSO query included capacity charges** — added a `require_all_prices` filter so only D03 records with a full 24-hour price profile are summed. This correctly excludes Effektbetaling (power/capacity charges that store only Price1) and keeps only the hourly time-variable nettarif C.
+- **Default elafgift corrected** — changed default from 0.977 to 0.01 DKK/kWh. Existing installs: update the **Elafgift** entity value in the dashboard to match your actual electricity duty.
+
+---
+
 ## [0.10.0] — 2026-05-14
 
 ### Added
