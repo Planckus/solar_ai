@@ -1,130 +1,322 @@
-# Solar AI for Home Assistant
+# Solar AI for FoxESS
 
 [![HACS Custom Repository](https://img.shields.io/badge/HACS-Custom-orange?logo=home-assistant-community-store)](https://hacs.xyz)
+[![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-blueviolet?logo=anthropic)](https://claude.ai/claude-code)
 
-Automatically decide **when to export** stored energy from your solar + battery system and **when to grid-charge** your battery — all driven by a 24-hour price forecast, a self-calibrating solar production forecast, and a self-learning household-load model.
+> **An intelligent Home Assistant integration that autonomously manages your FoxESS battery — buying cheap grid electricity, selling at peak prices, protecting your circuit breakers, and learning your household's patterns over time.**
 
-Built for a **FoxESS H3 inverter** controlled via [foxess_modbus](https://github.com/nathanmarlor/foxess_modbus) and **EVCC** for EV charging coordination, with electricity prices from [Strømligning](https://www.stromligning.dk/) via the HA integration.
+---
+
+## What it does
+
+Solar AI sits between your FoxESS inverter, your EV charger (EVCC), and the electricity spot market. Every 5 minutes it:
+
+1. Reads live spot prices, solar forecasts, battery state, grid draw, and EV charge power
+2. Runs its decision model — export? grid-charge? do nothing?
+3. Acts — setting the FoxESS work mode, force-charge power, and EVCC battery mode
+4. Learns — refining its understanding of charge rates, solar accuracy, EV habits, and house load
+
+All thresholds are adjustable via live dashboard sliders. No YAML editing, no restarts needed.
 
 ---
 
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| 📈 **Price-aware export** | Exports to grid only when the spot price clears your minimum threshold |
-| ⚡ **Grid arbitrage** | Buys cheap grid electricity into the battery when the price is in the lowest 25th percentile of the next 24 hours |
-| ☀️ **Self-calibrating solar forecast** | Compares Solcast predictions with actual EVCC PV production every 5 minutes; builds a rolling correction factor so decisions use realistic numbers |
-| 🏠 **Load prediction** | 2-hour rolling average + 28-day baseline; vacation detection prevents over-exporting when nobody is home |
-| 🌡️ **Temperature learning** | Learns real-world charge rates for 5 battery temperature buckets; improves time-to-charge estimates over time |
-| 🚗 **EVCC co-existence** | Detects when EVCC is managing the battery for EV charging and steps aside; never fights EVCC over battery control |
-| 🔒 **Safe by default** | Arbitrage switch is OFF on first install — turn it on after the system has had a few days to learn |
-| 🇩🇰 **Danish & English UI** | Full translations for both languages |
+### ⚡ Core Arbitrage Engine
+- **Grid charging** — charges the battery when the spot price is in the cheapest 25th percentile of the next 24 hours, then uses or exports that energy when prices rise
+- **Battery export** — activates FoxESS *Feed-in First* mode to push battery energy to the grid, but **only when the current price is at or above the 75th percentile** of the day — reserving stored energy for true evening peaks, not mediocre mid-day prices
+- **Minimum spread threshold** — configurable minimum price difference (sell − cheapest buy) before arbitrage triggers. Live slider on the dashboard (0.10–3.00 DKK/kWh)
+
+### 🌞 Solar-Aware Decision Making
+- **Solcast integration** (via EVCC) — uses your roof's 24-hour solar forecast
+- **Solar accuracy learning** — compares actual PV output to Solcast forecasts over a rolling 4-day window and applies a learned correction factor (0.3–1.5×), so decisions use realistic rather than optimistic numbers
+- **Net solar for battery** — subtracts predicted house load from the solar forecast to compute the true surplus available for the battery. Grid charging is automatically skipped when solar will fill the battery anyway
+
+### 🏠 House Load Model
+- **2-hour rolling average** — captures current consumption trends
+- **28-day rolling average** — establishes a long-term baseline
+- **Vacation / low-load detection** — if consumption drops below 25% of the 28-day baseline for 4+ hours, Solar AI enters vacation mode and applies a more conservative load estimate
+
+### 🚗 EV-Aware Scheduling (EVCC)
+- **Real charging detection** — uses actual EV charge power (> 3 000 W) rather than "connected" state, so scheduled or idle sessions don't block battery operations
+- **Hourly EV pattern learning** — exponential smoothing learns when your EV typically charges, hour by hour (~8-day memory). Grid charging is skipped during hours where the EV charges ≥ 70% of the time
+- **EVCC battery mode coordination** — sets EVCC battery mode to *hold* during export/charging and restores *normal* when done. Respects EVCC if it has independently taken control of the battery
+
+### 🌡️ Temperature-Adaptive Charging
+- **7 temperature buckets** — learned charge rates across `< 0 °C`, `0–5 °C`, `6–15 °C`, `16–21 °C`, `21–35 °C`, `35–50 °C`, `> 50 °C`
+- **Automatic calibration** — during Force Charge cycles the system records actual charge power and updates the learned rate at the 90th percentile (neither noisy max nor underestimating average)
+- **Manual override** — each bucket is exposed as an editable number entity
+
+### 🗓️ Seasonal Mode
+- **28-day rolling daily solar average** — switches between *summer* and *winter* mode based on observed production (threshold: 6 kWh/day)
+- Defaults to *winter* (conservative) until 7+ days of data are in
+- Adapts gradually — no hard-coded calendar dates
+
+### 🔌 Grid Overcurrent Protection
+- Reads live grid import power from EVCC every 5 minutes
+- Calculates available headroom: `limit − 0.5 kW safety margin − current grid draw`
+- Automatically caps the battery charge rate to stay within your circuit breaker limit
+- Grid charging is skipped entirely if headroom drops below 0.3 kW
+- **Configurable limit** — enter your breaker capacity directly on the dashboard (5–63 kW, default 17 kW)
+
+### 💰 Savings Tracker
+- **Actual savings** — revenue from battery export + estimated value of cheap grid charging
+- **Missed savings** — estimated opportunity cost when the system is switched off
+- Available for: today / 7 days / 30 days
+- Stored in a 90-day rolling log that survives HA restarts
+
+### 🎛️ Live Dashboard Controls
+All key thresholds are adjustable from the dashboard without restarting HA:
+
+| Control | Range | Default |
+|---------|-------|---------|
+| Battery floor SoC (export minimum) | 10–100 % | 50 % |
+| Battery max SoC (grid charge ceiling) | 10–100 % | 100 % |
+| Minimum arbitrage spread | 0.10–3.00 DKK/kWh | 1.00 |
+| Grid import limit | 5–63 kW | 17 kW |
 
 ---
 
 ## Prerequisites
 
-- **[foxess_modbus](https://github.com/nathanmarlor/foxess_modbus)** — Modbus integration for FoxESS inverters
-- **[EVCC](https://evcc.io/)** running locally (tested on v0.130+)
-- **[Strømligning](https://stromligning.dk/)** HA integration — provides `sensor.stromligning_spotprice_ex_vat`
-- Home Assistant **2024.1** or newer
+You need all of the following already working in Home Assistant:
+
+| Component | Purpose | Link |
+|-----------|---------|------|
+| FoxESS Modbus integration | Read battery SoC, temperature, power; set work mode and charge power | [GitHub](https://github.com/nathanmarlor/foxess_modbus) |
+| EVCC | Solar forecast (Solcast), live grid power, EV charge power, battery mode API | [evcc.io](https://evcc.io) |
+| Strømligning | Electricity spot prices (Denmark) | [stromligning.dk](https://www.stromligning.dk) |
+| Solcast | Solar production forecast — connected to EVCC | [solcast.com](https://solcast.com) |
+
+### Default FoxESS Modbus entity IDs
+
+Solar AI auto-detects these during setup. If your names differ, you can override them in the config flow:
+
+```
+sensor.foxessmodbus_battery_soc_1
+sensor.foxessmodbus_bms_cell_temp_low_1
+sensor.foxessmodbus_battery_charge
+sensor.foxessmodbus_battery_discharge
+sensor.foxessmodbus_load_power
+sensor.foxessmodbus_feed_in
+select.foxessmodbus_work_mode
+number.foxessmodbus_force_charge_power
+number.foxessmodbus_force_discharge_power
+```
 
 ---
 
 ## Installation
 
-### Option A — deploy script (recommended)
+### 1. Copy the integration
 
-```bash
-git clone https://github.com/Planckus/solar_ai.git
-cd solar_ai
+Copy the `custom_components/battery_arbitrage` folder into your HA config directory:
 
-pip install websockets PyYAML
-
-# Edit INSTALL_DEFAULTS at the top of deploy.py if your entity IDs differ, then:
-python3 deploy.py --install
+```
+/homeassistant/custom_components/battery_arbitrage/
 ```
 
-The script deploys the files, restarts HA, runs the config flow automatically, and creates the dashboard.
+Via HACS: add this repository as a custom repository and install from there.
 
-### Option B — HACS manual repository
+### 2. Restart Home Assistant
 
-1. Open HACS → **Integrations** → three-dot menu → **Custom repositories**
-2. Add `https://github.com/Planckus/solar_ai` as an **Integration**
-3. Search for *Solar AI* and click **Download**
-4. Restart Home Assistant
-5. Go to **Settings → Devices & Services → Add Integration** → search *Solar AI*
-6. Follow the 5-step setup wizard
+### 3. Add the integration
 
-### Option C — manual copy
+**Settings → Devices & Services → Add Integration → Solar AI**
 
-```bash
-cp -r custom_components/battery_arbitrage /config/custom_components/
-# Restart Home Assistant, then add the integration via the UI
+The setup wizard walks you through:
+1. **EVCC URL** — e.g. `http://192.168.1.2:7070`
+2. **FoxESS entities** — auto-detected; override if your names differ
+3. **Strømligning entity** — select your spot price sensor (excl. VAT)
+4. **Battery & trading parameters** — capacity, efficiency, initial thresholds
+5. **Dashboard** — optionally link an existing Lovelace dashboard
+
+### 4. Import the dashboard
+
+Import `dashboard/battery_arbitrage_dashboard.yaml` via **Settings → Dashboards → Add Dashboard → From YAML**.
+
+### 5. Start monitoring, then enable
+
+The system starts in **monitoring-only mode** (switch off). Watch the *Decision reason* sensor for a few days to see what Solar AI *would* do. When you're satisfied, flip the **Arbitrage enabled** switch.
+
+---
+
+## How the decision loop works
+
+```
+Every 5 minutes:
+
+1. Fetch EVCC state     → grid power, solar forecast, EV charge power, battery mode
+2. Fetch grid tariff    → 24h spot price array → min, max, mean, p25, p75
+3. Read FoxESS          → SoC, cell temp, charge/discharge power, work mode
+4. Update models        → load history, solar accuracy, EV hourly probability, daily solar kWh
+5. Compute headroom     → grid limit − 0.5 kW − current grid import
+6. Make decision:
+
+   EXPORT?       price ≥ p75
+             AND spread ≥ threshold
+             AND exportable kWh ≥ 0.5
+             AND SoC > floor
+             AND no EV charging (now/minpv mode)
+             AND EVCC not managing battery
+
+   GRID CHARGE?  next-slot price ≤ p25
+             AND solar won't fill battery
+             AND importable kWh ≥ 0.5
+             AND headroom ≥ 0.3 kW
+             AND EV unlikely to charge this hour
+
+7. Act if enabled       → set FoxESS work mode, capped charge power, EVCC mode
+8. Track savings        → accumulate actual/missed DKK into daily log
+9. Save to storage      → learned rates, load history, EV probabilities, solar history
 ```
 
 ---
 
-## Setup Wizard
+## Adapting this to your own installation with Claude Code
 
-The config flow walks through five steps:
+Solar AI was built entirely with [Claude Code](https://claude.ai/claude-code) — Anthropic's AI coding assistant that runs in your terminal, reads your codebase, and can connect directly to your Home Assistant instance.
 
-1. **EVCC connection** — URL tested live; battery capacity auto-filled
-2. **FoxESS entities** — work-mode select, force-charge and force-discharge numbers; auto-detected
-3. **Electricity price** — Strømligning spot-price entity (excl. VAT)
-4. **Battery & trading parameters** — capacity, floor/ceiling SoC, efficiency, spread thresholds
-5. **Dashboard** — links the Solar AI Lovelace dashboard
+If you want to install, debug, or adapt this integration to your own setup, Claude Code can do the heavy lifting. Here's how.
 
----
-
-## How It Works
-
-Every 5 minutes the coordinator:
-
-1. Fetches EVCC state (home power, PV power, EV charging mode, battery mode) and the solar + grid price forecasts
-2. Updates the solar accuracy tracker, load history and vacation detection
-3. Checks EVCC co-existence — steps aside if EVCC is managing the battery for EV charging
-4. Checks **export** conditions: price threshold met, enough exportable kWh, EV not fast-charging
-5. Checks **grid charge** conditions: cheap next-slot price, room in battery, solar won't fill it
-6. Executes: sets FoxESS work mode + export limit register + EVCC battery mode
-
-### Mode Transitions
-
-| Mode | FoxESS work mode | Export limit | EVCC battery mode |
-|------|-----------------|-------------|-------------------|
-| Normal | Self Use | 10 000 W | normal |
-| Exporting | Feed-in First | 10 000 W | hold |
-| Grid charging | Force Charge | 0 W | hold |
-
-### Solar Accuracy Calibration
-
-Every 5-minute tick the integration records `(Solcast forecast W, actual EVCC pvPower W)` for the current slot. After 12+ daytime samples it calculates a rolling median ratio and applies it as a correction factor (clamped 0.30–1.50) to all forecast values used in decisions. The raw and adjusted forecasts are both exposed as sensors.
-
----
-
-## Dashboard
-
-A full Lovelace dashboard is deployed automatically at `/battery-arbitrage`, showing:
-- On/off control + current mode + decision reason
-- Live electricity prices
-- Solar forecast (raw vs adjusted) + accuracy factor
-- Battery state, exportable/importable energy
-- EVCC battery mode + EV charging status
-- Load model (2h avg, 28d avg, predicted 24h)
-- Learned charge rates per temperature bucket
-- FoxESS live state (work mode, feed-in, load power)
-
----
-
-## Deploy Script
+### Step 1 — Set up Claude Code
 
 ```bash
-python3 deploy.py                  # redeploy files + restart + push dashboard
-python3 deploy.py --install        # full fresh install (files + config flow + dashboard)
-python3 deploy.py --uninstall      # remove everything, restore HA to original state
-python3 deploy.py --dashboard-only # push dashboard changes only (no restart)
+# Install
+npm install -g @anthropic-ai/claude-code
+
+# Open a session in your project directory
+cd ha-battery-arbitrage
+claude
 ```
+
+For direct HA access, connect the [MCP Home Assistant server](https://github.com/allenporter/mcp-server-homeassistant). This lets Claude Code query entity states, read logs, deploy files, and restart HA from the same session.
+
+### Step 2 — Find your entity IDs
+
+The trickiest part of any HA integration is matching entity IDs. Just ask:
+
+> *"List all entities in my Home Assistant that contain 'battery', 'soc', or 'inverter' in their name or ID"*
+
+Claude Code queries your HA instance directly and returns a filtered list. Feed the correct IDs into the config flow or paste them into `const.py`.
+
+### Step 3 — Common customisations
+
+**Different inverter brand (SolarEdge, Sungrow, Huawei, etc.)**
+
+The inverter-specific logic is isolated in three methods in `coordinator.py`:
+`_set_work_mode()`, `_set_charge_power()`, `_set_export_limit()`
+
+Tell Claude Code:
+> *"Rewrite the three inverter control methods in coordinator.py for a Sungrow SH10RT. The work modes are X, Y, Z and charge power is set via entity sensor.sungrow_..."*
+
+**Different price source (Nordpool, Tibber, Octopus Energy, etc.)**
+
+The price logic reads from a single HA entity. Tell Claude Code:
+> *"Replace the Strømligning price entity in coordinator.py with Nordpool. My entity is sensor.nordpool_kwh_se3_sek_3_10_025 and the unit is SEK/kWh — also update all the DKK references to SEK"*
+
+**Different currency or country**
+
+> *"Update all DKK/kWh references in const.py, sensor.py, strings.json, en.json and da.json to EUR/kWh"*
+
+### Step 4 — Debugging unexpected behaviour
+
+If Solar AI isn't doing what you expect:
+
+> *"Solar AI didn't grid-charge last night even though prices were cheap at 3am. Check the HA logbook for battery_arbitrage warnings, read the current state of all decision sensors, and explain why it didn't charge"*
+
+Claude Code reads the HA logbook and entity states, then explains the decision in plain language.
+
+### Step 5 — Adding new features
+
+The codebase is structured so new sensors, controls, and decision factors can be added without touching unrelated code. Describe what you want:
+
+> *"Add a feature that sends an HA notification when Solar AI starts or stops grid charging, including the current price and how many kWh it plans to charge"*
+
+> *"Add a time-window constraint so grid charging only happens between 00:00 and 06:00, even if prices are cheap during the day"*
+
+### Tips for working with Claude Code on this project
+
+- **Always let it check entity IDs before touching the dashboard** — HA slugifies translated names unpredictably. Let Claude Code query `ha_get_state` or `ha_list_entity_registry` first.
+- **Deploy in two steps** — code deploy + HA restart first, then dashboard update after verifying the new entity IDs.
+- **Start with monitoring mode** — keep the arbitrage switch off while you verify the sensors look correct, then enable.
+- **Use the savings tracker** — the missed savings sensors show exactly what Solar AI *would* have done while disabled, making it easy to verify the logic before going live.
+
+---
+
+## Sensors reference
+
+### Decision & control
+| Entity | Description |
+|--------|-------------|
+| `switch.*_arbitrage_aktiv` | Master on/off switch |
+| `sensor.*_driftstilstand` | Current mode: `normal` / `exporting` / `grid_charging` / `disabled` |
+| `sensor.*_begrundelse_for_tilstand` | Plain-language reason for the current decision |
+
+### Price sensors
+| Entity | Description |
+|--------|-------------|
+| `sensor.*_eksportpris` | Current export price (DKK/kWh) |
+| `sensor.*_net_arbitrage_spread` | Spread: export price − 24 h minimum |
+| `sensor.*_24h_prisminimum/maksimum/gennemsnit` | 24 h price statistics |
+| `sensor.*_24h_pris_25/75_percentil` | Quartile thresholds used for decisions |
+| `sensor.*_naeste_slots_pris` | Price for the next 30-minute slot |
+
+### Solar sensors
+| Entity | Description |
+|--------|-------------|
+| `sensor.*_solcelle_prognose_24h/6h` | Raw Solcast forecast (kWh) |
+| `sensor.*_solcelle_prognose_24h/6h_justeret` | Accuracy-corrected forecast |
+| `sensor.*_solcelle_prognose_nojagtighed` | Rolling accuracy factor (%) |
+| `sensor.*_netto_sol_til_batteri_24h` | Net solar surplus after house load (kWh) |
+| `sensor.*_sol_gennemsnit_28_dage` | 28-day average daily solar production (kWh) |
+| `sensor.*_saesontilstand` | `summer` or `winter` |
+
+### Battery sensors
+| Entity | Description |
+|--------|-------------|
+| `sensor.*_eksporterbar_energi` | kWh available for export above floor SoC |
+| `sensor.*_importerbar_energi` | kWh room to charge below max SoC |
+| `sensor.*_tid_til_fuld_opladning` | Hours to reach max SoC at current rate |
+| `sensor.*_batteritemperatur_laveste_celle` | Lowest cell temperature |
+| `sensor.*_laert_opladningshastighed_*` | Learned charge rate per temperature bucket (kW) |
+
+### Grid sensors
+| Entity | Description |
+|--------|-------------|
+| `sensor.*_net_importeffekt` | Live grid import power (kW) |
+| `sensor.*_net_raaderum` | Headroom before breaker limit (kW) |
+
+### EV & load sensors
+| Entity | Description |
+|--------|-------------|
+| `sensor.*_ev_opladningssandsynlighed_denne_time` | Learned EV charge probability this hour (%) |
+| `sensor.*_husstand_forbrug_2h_gennemsnit` | 2 h average house load (kW) |
+| `sensor.*_husstand_forbrug_28_dages_gennemsnit` | 28-day average house load (kW) |
+| `sensor.*_forudsagt_husstand_forbrug_24h` | Predicted house consumption today (kWh) |
+
+### Savings sensors
+| Entity | Description |
+|--------|-------------|
+| `sensor.*_faktisk_besparelse_i_dag/7_dage/30_dage` | Actual savings earned (DKK) |
+| `sensor.*_forpasset_besparelse_i_dag/7_dage/30_dage` | Missed savings while disabled (DKK) |
+
+---
+
+## Configuration reference
+
+All settings are available in **Settings → Devices & Services → Solar AI → Configure**, or live via dashboard number entities:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| Battery capacity | 11.52 kWh | Usable battery capacity |
+| Round-trip efficiency | 92 % | Charge + discharge round-trip efficiency |
+| Forecast horizon | 24 h | Hours of price data to analyse |
+| Min SoC during export | 50 % | Battery will not export below this SoC |
+| Max SoC for grid charge | 100 % | Battery will not grid-charge above this SoC |
+| Min arbitrage spread | 1.00 DKK/kWh | Minimum sell−buy spread to trigger arbitrage |
+| Min solar export price | 0.50 DKK/kWh | Minimum price to export solar surplus |
+| Grid import limit | 17 kW | Circuit breaker capacity |
 
 ---
 
@@ -132,37 +324,31 @@ python3 deploy.py --dashboard-only # push dashboard changes only (no restart)
 
 | Service | Description |
 |---------|-------------|
-| `battery_arbitrage.force_export` | Immediately activate Feed-in First export |
-| `battery_arbitrage.force_grid_charge` | Immediately activate Force Charge |
-| `battery_arbitrage.restore_normal` | Cancel and restore Self-Use mode |
-| `battery_arbitrage.reset_learning` | Clear all learned data and solar accuracy samples |
+| `battery_arbitrage.force_export` | Immediately activate Feed-in First regardless of prices |
+| `battery_arbitrage.force_grid_charge` | Immediately start grid charging |
+| `battery_arbitrage.restore_normal` | Cancel active export or charging, return to Self-Use |
+| `battery_arbitrage.reset_learning` | Clear all learned rates, load history, and solar samples |
 
 ---
 
-## Configuration Defaults
+## Known limitations
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| Battery floor SoC | 50% | Never export below this |
-| Battery max SoC | 100% | Grid-charge ceiling |
-| Round-trip efficiency | 92% | Used to calculate exportable kWh |
-| Min spread (arbitrage) | 1.0 DKK/kWh | Min sell-vs-buy spread to trigger grid arbitrage |
-| Min solar export price | 0.50 DKK/kWh | Min price to export solar surplus |
-| Forecast horizon | 24 hours | Price and solar window |
-| Export deduction | 0.01 DKK/kWh | Network fee deducted by electricity company |
+- **Denmark-focused** — built around DKK/kWh spot prices from Strømligning. Other markets need a different price entity and currency unit.
+- **FoxESS Modbus required** — work mode control uses FoxESS-specific entities. Other inverters need code changes in `coordinator.py` (see Claude Code section above).
+- **EVCC required** — solar forecasts and grid power readings come from EVCC's API.
+- **Learning period** — the system works best after 1–2 weeks of data. During the first few days it uses conservative defaults for charge rates and EV patterns.
+- **Buy-side pricing** — currently uses the excl. VAT spot price for both buy and sell sides. For accurate spread calculations, the buy side should include grid tariffs and taxes — a planned future improvement.
 
 ---
 
-## Uninstall
+## Changelog
 
-```bash
-python3 deploy.py --uninstall
-```
-
-Or manually: **Settings → Devices & Services → Solar AI → Delete**. The integration restores the FoxESS inverter to Self-Use mode, EVCC to normal, and re-enables any previously disabled automations before removing itself.
+See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT — use freely, adapt for your own setup.
+
+Built with ❤️ and [Claude Code](https://claude.ai/claude-code).
