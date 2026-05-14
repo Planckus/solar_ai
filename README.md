@@ -159,7 +159,7 @@ Every 5 minutes:
              AND no EV charging (now/minpv mode)
              AND EVCC not managing battery
 
-   GRID CHARGE?  next-slot price ≤ p25
+   GRID CHARGE?  next-slot price (incl. VAT) ≤ p25 (incl. VAT)
              AND solar won't fill battery
              AND importable kWh ≥ 0.5
              AND headroom ≥ 0.3 kW
@@ -315,7 +315,7 @@ All settings are available in **Settings → Devices & Services → Solar AI →
 - **FoxESS Modbus required** — work mode control uses FoxESS-specific entities. Other inverters need code changes in `coordinator.py`.
 - **EVCC required** — solar forecasts and grid power readings come from EVCC's API.
 - **Learning period** — the system works best after 1–2 weeks of data. During the first few days it uses conservative defaults for charge rates and EV patterns.
-- **Buy-side pricing** — currently uses the excl. VAT spot price for both buy and sell sides. For accurate spread calculations, the buy side should include grid tariffs and taxes — a planned future improvement.
+- **Buy-side pricing** — sell side uses the excl. VAT spot price (what you receive from the grid). Buy side applies 25% Danish VAT on top, so spread calculations reflect what you actually pay vs. what you receive. Grid tariffs beyond VAT are not yet modelled separately.
 
 ---
 
