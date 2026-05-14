@@ -124,7 +124,10 @@
       "savings_actual_month": { "name": "Actual savings 30 days" },
       "savings_missed_month": { "name": "Missed savings 30 days" },
       "grid_power": { "name": "Grid import power" },
-      "grid_headroom": { "name": "Grid headroom" }
+      "grid_headroom": { "name": "Grid headroom" },
+      "learned_capacity": { "name": "Learned battery capacity" },
+      "auto_efficiency": { "name": "Auto-detected efficiency" },
+      "capacity_sample_count": { "name": "Capacity learning samples" }
     },
     "binary_sensor": {
       "should_export": { "name": "Should export" },
