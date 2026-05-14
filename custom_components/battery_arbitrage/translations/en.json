@@ -41,7 +41,7 @@
           "forecast_hours": "Forecast horizon (hours)",
           "currency": "Currency",
           "fast_poll_interval": "Live data poll interval (seconds)",
-          "dso_gln": "DSO GLN number (for tariff lookup)"
+          "dso_gln": "Grid operator (DSO)"
         },
         "data_description": {
           "battery_floor_soc": "Battery will not export below this state of charge",
@@ -49,7 +49,7 @@
           "round_trip_efficiency": "Charge + discharge efficiency, typically 85–95%",
           "min_spread_arbitrage": "Minimum price difference (sell − cheapest-in-window) to trigger grid arbitrage",
           "min_solar_export_price": "Minimum spot price to export solar surplus",
-          "dso_gln": "Your grid operator's GLN number — used to fetch hourly network tariffs from Energi Data Service. Default: 5790000610976 (Dinel/Radius)."
+          "dso_gln": "Select your distribution grid operator. Used to fetch hourly network tariffs from Energi Data Service."
         }
       },
       "dashboard": {
@@ -82,7 +82,7 @@
           "forecast_hours": "Forecast horizon (hours)",
           "currency": "Currency",
           "fast_poll_interval": "Live data poll interval (seconds)",
-          "dso_gln": "DSO GLN number (for tariff lookup)"
+          "dso_gln": "Grid operator (DSO)"
         }
       }
     }
@@ -167,7 +167,8 @@
       "grid_max_kw": { "name": "Grid import limit" },
       "vat_pct": { "name": "Buy-side VAT (%)" },
       "export_fee": { "name": "Sell-side fee (per kWh)" },
-      "elafgift": { "name": "Electricity duty — elafgift (DKK/kWh)" }
+      "elafgift": { "name": "Electricity duty — elafgift (DKK/kWh)" },
+      "spot_markup": { "name": "Spot price markup (retailer add-on)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage enabled" }

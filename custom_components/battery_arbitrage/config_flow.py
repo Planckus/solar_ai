@@ -41,6 +41,7 @@ from .const import (
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_ROUND_TRIP_EFFICIENCY,
     DOMAIN,
+    DSO_OPTIONS,
     EVCC_API_STATE,
     FOXESS_FORCE_CHARGE_ENTITY,
     FOXESS_FORCE_DISCHARGE_ENTITY,
@@ -54,7 +55,7 @@ _LOGGER = logging.getLogger(__name__)
 class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the setup wizard."""
 
-    VERSION = 5
+    VERSION = 6
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -193,7 +194,15 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                 ),
                 vol.Required(CONF_FAST_POLL_INTERVAL, default=DEFAULT_FAST_POLL_SECONDS):
                     vol.All(int, vol.Range(min=10, max=300)),
-                vol.Optional(CONF_DSO_GLN, default=DEFAULT_DSO_GLN): str,
+                vol.Required(CONF_DSO_GLN, default=DEFAULT_DSO_GLN): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            {"value": dso["value"], "label": dso["label"]}
+                            for dso in DSO_OPTIONS
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
             }),
         )
 
@@ -328,7 +337,16 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                 vol.Required(CONF_FAST_POLL_INTERVAL,
                              default=data.get(CONF_FAST_POLL_INTERVAL, DEFAULT_FAST_POLL_SECONDS)):
                     vol.All(int, vol.Range(min=10, max=300)),
-                vol.Optional(CONF_DSO_GLN,
-                             default=data.get(CONF_DSO_GLN, DEFAULT_DSO_GLN)): str,
+                vol.Required(CONF_DSO_GLN,
+                             default=data.get(CONF_DSO_GLN, DEFAULT_DSO_GLN)):
+                    selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                {"value": dso["value"], "label": dso["label"]}
+                                for dso in DSO_OPTIONS
+                            ],
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
             }),
         )
