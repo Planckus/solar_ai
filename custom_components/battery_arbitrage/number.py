@@ -15,6 +15,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
+    DEFAULT_ELAFGIFT_DKK_KWH,
     DEFAULT_EXPORT_FEE,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_VAT_PCT,
@@ -106,6 +107,18 @@ async def async_setup_entry(
             min_val=0.0,
             max_val=0.50,
             step=0.005,
+        ),
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="elafgift",
+            translation_key="elafgift",
+            default=DEFAULT_ELAFGIFT_DKK_KWH,
+            icon="mdi:bank-outline",
+            unit="DKK/kWh",
+            min_val=0.0,
+            max_val=3.0,
+            step=0.001,
+            mode=NumberMode.BOX,
         ),
     ]
     async_add_entities(entities)

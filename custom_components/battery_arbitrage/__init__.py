@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 
 from .const import (
     CONF_CURRENCY,
+    CONF_DSO_GLN,
     CONF_FAST_POLL_INTERVAL,
     DOMAIN,
     CONF_BATTERY_CAPACITY,
@@ -22,6 +23,7 @@ from .const import (
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
     DEFAULT_CURRENCY,
+    DEFAULT_DSO_GLN,
     DEFAULT_FAST_POLL_SECONDS,
     DEFAULT_FORECAST_HOURS,
     DEFAULT_MIN_SOLAR_EXPORT_PRICE,
@@ -82,6 +84,12 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data.setdefault(CONF_FAST_POLL_INTERVAL, DEFAULT_FAST_POLL_SECONDS)
         hass.config_entries.async_update_entry(entry, data=new_data, version=4)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v4")
+
+    if entry.version < 5:
+        # v4 → v5: add DSO GLN for tariff schedule fetching (defaults to Dinel)
+        new_data.setdefault(CONF_DSO_GLN, DEFAULT_DSO_GLN)
+        hass.config_entries.async_update_entry(entry, data=new_data, version=5)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v5")
 
     return True
 

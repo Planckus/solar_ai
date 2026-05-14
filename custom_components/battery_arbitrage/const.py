@@ -140,6 +140,14 @@ GRID_MIN_CHARGE_KW = 0.3            # Minimum useful battery charge rate under h
 
 # Pricing (VAT % and export fee are now live-configurable via number entities)
 
+# DSO tariff integration — DatahubPricelist API
+CONF_DSO_GLN = "dso_gln"
+DEFAULT_DSO_GLN = "5790000610976"        # Dinel / Radius — most common Danish DSO
+ENERGINET_GLN = "5790001102620"          # Energinet system/transmission/balance tariffs
+DEFAULT_ELAFGIFT_DKK_KWH = 0.977        # Danish electricity duty (elafgift), DKK/kWh
+TARIFF_SCHEDULE_REFRESH_SECONDS = 86400  # Refresh tariff schedule daily (tariffs are stable within a day)
+DATAHUB_API_URL = "https://api.energidataservice.dk/dataset/DatahubPricelist"
+
 # FoxESS lifetime energy totals (for auto-detecting round-trip efficiency)
 FOXESS_BATTERY_CHARGE_TOTAL = "sensor.foxessmodbus_battery_charge_total"
 FOXESS_BATTERY_DISCHARGE_TOTAL = "sensor.foxessmodbus_battery_discharge_total"
