@@ -122,7 +122,9 @@
       "savings_actual_week": { "name": "Faktisk besparelse 7 dage" },
       "savings_missed_week": { "name": "Forpasset besparelse 7 dage" },
       "savings_actual_month": { "name": "Faktisk besparelse 30 dage" },
-      "savings_missed_month": { "name": "Forpasset besparelse 30 dage" }
+      "savings_missed_month": { "name": "Forpasset besparelse 30 dage" },
+      "grid_power": { "name": "Net-importeffekt" },
+      "grid_headroom": { "name": "Net-råderum" }
     },
     "binary_sensor": {
       "should_export": { "name": "Bør eksportere" },
@@ -148,7 +150,8 @@
       "charge_rate_above_50": { "name": "Maks. opladning — over 50°C" },
       "floor_soc": { "name": "Minimum SoC (eksport)" },
       "max_soc": { "name": "Maksimum SoC (netopladning)" },
-      "min_spread_arbitrage": { "name": "Minimum arbitrage-spread" }
+      "min_spread_arbitrage": { "name": "Minimum arbitrage-spread" },
+      "grid_max_kw": { "name": "Net-importgrænse" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage aktiv" }

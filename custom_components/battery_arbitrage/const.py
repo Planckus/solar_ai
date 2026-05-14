@@ -126,3 +126,8 @@ VACATION_THRESHOLD = 0.25           # 25% of long-term baseline → vacation
 VACATION_MIN_DURATION = 48          # Must be below threshold for 4h (48 × 5min samples)
 MIN_EXPORTABLE_KWH = 0.5            # Don't bother exporting less than this
 MIN_GRID_CHARGE_KWH = 0.5           # Don't bother grid-charging less than this
+
+# Grid overcurrent protection
+GRID_MAX_KW = 17.0                  # Default circuit breaker limit (kW) — user-adjustable via number entity
+GRID_SAFETY_MARGIN_KW = 0.5         # Buffer below the breaker limit to avoid nuisance trips
+GRID_MIN_CHARGE_KW = 0.3            # Minimum useful battery charge rate under headroom constraint
