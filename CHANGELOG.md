@@ -14,6 +14,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Minimum arbitrage spread slider** — Live number entity (0.10–3.00 DKK/kWh, step 0.05) lets you tune the spread threshold without going through the config flow. Persisted in storage and takes effect on the next 5-minute tick.
 - Refactored internal config-number class to be generic (supports both slider and box input modes), shared by all live-adjustable settings.
 
+### Fixed
+- **Buy-side VAT correction** — Grid charging decisions and spread calculations now use the electricity price including 25% Danish VAT (what you actually pay), while the sell side correctly continues to use the excl. VAT spot price (what you receive). Previously both sides used the excl. VAT price, which made the spread appear wider than it really is and could trigger grid charging that wasn't truly profitable.
+
 ---
 
 ## [0.4.0] — 2026-05-13

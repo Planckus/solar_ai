@@ -131,3 +131,6 @@ MIN_GRID_CHARGE_KWH = 0.5           # Don't bother grid-charging less than this
 GRID_MAX_KW = 17.0                  # Default circuit breaker limit (kW) — user-adjustable via number entity
 GRID_SAFETY_MARGIN_KW = 0.5         # Buffer below the breaker limit to avoid nuisance trips
 GRID_MIN_CHARGE_KW = 0.3            # Minimum useful battery charge rate under headroom constraint
+
+# Pricing
+DANISH_VAT = 1.25                   # Danish VAT factor applied to buy-side prices
