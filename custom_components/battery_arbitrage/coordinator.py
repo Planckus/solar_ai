@@ -25,7 +25,8 @@ from .const import (
     GRID_MAX_KW,
     GRID_SAFETY_MARGIN_KW,
     GRID_MIN_CHARGE_KW,
-    DEFAULT_EXPORT_DEDUCTION,
+    DEFAULT_VAT_PCT,
+    DEFAULT_EXPORT_FEE,
     EV_CHARGE_BLOCK_PROBABILITY,
     EV_CHARGE_THRESHOLD_W,
     EV_LEARNING_ALPHA,
@@ -76,7 +77,6 @@ from .const import (
     EVCC_BATTERY_NORMAL,
     EVCC_BATTERY_HOLD,
     EV_MODE_MIN_PV,
-    DANISH_VAT,
     FOXESS_BATTERY_CHARGE_TOTAL,
     FOXESS_BATTERY_DISCHARGE_TOTAL,
     CAPACITY_MIN_SOC,
@@ -230,6 +230,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "battery_max_soc": int(self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)),
                 "min_spread_arbitrage": float(self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE)),
                 "grid_max_kw": float(GRID_MAX_KW),
+                "vat_pct": DEFAULT_VAT_PCT,
+                "export_fee": DEFAULT_EXPORT_FEE,
                 "ev_charge_hourly": [0.0] * 24,
                 "solar_daily_kwh": [],
                 "solar_today_kwh": 0.0,
@@ -263,6 +265,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
             self._stored.setdefault("grid_max_kw", float(GRID_MAX_KW))
             self._stored.setdefault("capacity_samples", [])
+            self._stored.setdefault("vat_pct", DEFAULT_VAT_PCT)
+            self._stored.setdefault("export_fee", DEFAULT_EXPORT_FEE)
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
 
@@ -394,9 +398,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # ---- buy-side prices: spot price + VAT (what we actually pay per kWh) ----
         # Sell side (export revenue) uses ex-VAT. Buy side (grid charging cost) uses incl. VAT.
-        buy_price_min = price_min * DANISH_VAT
-        buy_price_p25 = price_p25 * DANISH_VAT
-        buy_price_next_slot = price_next_slot * DANISH_VAT
+        vat_factor = 1 + self._stored.get("vat_pct", DEFAULT_VAT_PCT) / 100
+        buy_price_min = price_min * vat_factor
+        buy_price_p25 = price_p25 * vat_factor
+        buy_price_next_slot = price_next_slot * vat_factor
 
         # ---- FoxESS state ----
         battery_soc = self._get_float_state(FOXESS_BATTERY_SOC, 0)
@@ -415,7 +420,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             if spot_state and spot_state.state not in ("unknown", "unavailable")
             else 0.0
         )
-        export_price = max(0.0, spot_ex_vat - DEFAULT_EXPORT_DEDUCTION)
+        export_fee = self._stored.get("export_fee", DEFAULT_EXPORT_FEE)
+        export_price = max(0.0, spot_ex_vat - export_fee)
 
         # ---- load model ----
         self._update_load_history(base_load_kw)
@@ -566,6 +572,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             reason=reason,
             home_power_w=home_power_w,
             pv_power_w=pv_power_w,
+            pv_power_kw=round(pv_power_w / 1000, 3),
             ev_charge_power_w=ev_charge_power_w,
             ev_mode=ev_mode,
             ev_connected=ev_connected,
