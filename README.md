@@ -180,7 +180,7 @@ If you use [Claude Code](https://claude.ai/code), it can dramatically speed up t
 
 Solar AI needs to know the exact entity IDs for your FoxESS Modbus sensors, your spot price sensor, and your EVCC URL. Claude Code can query your live HA instance and find them for you:
 
-> *"List all entities from the foxess_modbus integration in my Home Assistant at 192.168.1.2:8123"*
+> *"List all entities from the foxess_modbus integration in my Home Assistant at xxx.xxx.x.x:8123"*
 
 > *"Find the Strømligning or Nordpool spot price sensor in my HA entity registry"*
 
