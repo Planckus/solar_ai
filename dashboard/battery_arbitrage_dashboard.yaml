@@ -130,10 +130,12 @@ views:
                 entity: binary_sensor.solar_ai_ev_oplader_solenergi
                 name: EV on Solar
                 color: green
+                state_content: charge_kw
               - type: tile
                 entity: binary_sensor.battery_arbitrage_ev_oplader_now_minpv_tilstand
                 name: EV on grid power
                 color: green
+                state_content: charge_kw
 
       # ── Savings ────────────────────────────────────────────────────────────
       - type: entities

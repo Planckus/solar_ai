@@ -25,6 +25,7 @@ class BatteryArbitrageBinarySensorDescription(BinarySensorEntityDescription):
     """Binary sensor description with a value extractor."""
 
     value_fn: Callable[[dict[str, Any]], bool | None] = lambda _: None
+    attr_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
 
 BINARY_SENSORS: tuple[BatteryArbitrageBinarySensorDescription, ...] = (
@@ -69,6 +70,7 @@ BINARY_SENSORS: tuple[BatteryArbitrageBinarySensorDescription, ...] = (
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
         icon="mdi:car-electric",
         value_fn=lambda d: d.get("ev_charging_now", False),
+        attr_fn=lambda d: {"charge_kw": f"{round(d.get('ev_charge_power_w', 0) / 1000, 1)} kW" if d.get("ev_charging_now") else "—"},
     ),
     BatteryArbitrageBinarySensorDescription(
         key="ev_charging_solar",
@@ -76,6 +78,7 @@ BINARY_SENSORS: tuple[BatteryArbitrageBinarySensorDescription, ...] = (
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
         icon="mdi:solar-power",
         value_fn=lambda d: d.get("ev_charging_solar", False),
+        attr_fn=lambda d: {"charge_kw": f"{round(d.get('ev_charge_power_w', 0) / 1000, 1)} kW" if d.get("ev_charging_solar") else "—"},
     ),
 )
 
@@ -118,3 +121,9 @@ class BatteryArbitrageBinarySensor(
         if self.coordinator.data is None:
             return None
         return self.entity_description.value_fn(self.coordinator.data)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        if self.entity_description.attr_fn is None or self.coordinator.data is None:
+            return None
+        return self.entity_description.attr_fn(self.coordinator.data)
