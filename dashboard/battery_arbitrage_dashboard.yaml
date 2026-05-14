@@ -111,20 +111,23 @@ views:
             name: Should charge
           - entity: binary_sensor.battery_arbitrage_tilstedevaerelse
             name: Home
-          - entity: binary_sensor.battery_arbitrage_ev_tilsluttet
-            name: EV
           - entity: sensor.battery_arbitrage_evcc_batteritilstand
             name: EVCC mode
 
+      # ── EV Status ──────────────────────────────────────────────────────────
       - type: horizontal-stack
         cards:
           - type: tile
-            entity: binary_sensor.battery_arbitrage_ev_oplader_now_minpv_tilstand
-            name: EV on grid power
+            entity: binary_sensor.battery_arbitrage_ev_tilsluttet
+            name: EV connected
             color: green
           - type: tile
             entity: binary_sensor.solar_ai_ev_oplader_solenergi
             name: EV on Solar
+            color: green
+          - type: tile
+            entity: binary_sensor.battery_arbitrage_ev_oplader_now_minpv_tilstand
+            name: EV on grid power
             color: green
 
       # ── Savings ────────────────────────────────────────────────────────────
