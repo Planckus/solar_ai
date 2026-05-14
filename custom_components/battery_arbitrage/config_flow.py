@@ -17,6 +17,7 @@ from .const import (
     CONF_BATTERY_MAX_SOC,
     CONF_CURRENCY,
     CONF_DASHBOARD_URL_PATH,
+    CONF_DSO_GLN,
     CONF_EVCC_URL,
     CONF_FAST_POLL_INTERVAL,
     CONF_FORECAST_HOURS,
@@ -32,6 +33,7 @@ from .const import (
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
     DEFAULT_CURRENCY,
+    DEFAULT_DSO_GLN,
     DEFAULT_EVCC_URL,
     DEFAULT_FAST_POLL_SECONDS,
     DEFAULT_FORECAST_HOURS,
@@ -52,7 +54,7 @@ _LOGGER = logging.getLogger(__name__)
 class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the setup wizard."""
 
-    VERSION = 4
+    VERSION = 5
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -191,6 +193,7 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                 ),
                 vol.Required(CONF_FAST_POLL_INTERVAL, default=DEFAULT_FAST_POLL_SECONDS):
                     vol.All(int, vol.Range(min=10, max=300)),
+                vol.Optional(CONF_DSO_GLN, default=DEFAULT_DSO_GLN): str,
             }),
         )
 
@@ -325,5 +328,7 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                 vol.Required(CONF_FAST_POLL_INTERVAL,
                              default=data.get(CONF_FAST_POLL_INTERVAL, DEFAULT_FAST_POLL_SECONDS)):
                     vol.All(int, vol.Range(min=10, max=300)),
+                vol.Optional(CONF_DSO_GLN,
+                             default=data.get(CONF_DSO_GLN, DEFAULT_DSO_GLN)): str,
             }),
         )

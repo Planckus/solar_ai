@@ -40,14 +40,16 @@
           "min_solar_export_price": "Minimum solcelleeksportpris (DKK/kWh)",
           "forecast_hours": "Prognosehorisont (timer)",
           "currency": "Valuta",
-          "fast_poll_interval": "Opdateringsinterval for live-data (sekunder)"
+          "fast_poll_interval": "Opdateringsinterval for live-data (sekunder)",
+          "dso_gln": "DSO GLN-nummer (til tarifopcslag)"
         },
         "data_description": {
           "battery_floor_soc": "Batteriet eksporterer ikke under denne ladetilstand",
           "battery_max_soc": "Batteriet net-oplades ikke over denne ladetilstand",
           "round_trip_efficiency": "Opladnings- og afladningseffektivitet, typisk 85–95%",
           "min_spread_arbitrage": "Mindste prisforskel (sælg − billigste i vindue) for netarbitrage",
-          "min_solar_export_price": "Mindste spotpris for at eksportere solcelleoverskud"
+          "min_solar_export_price": "Mindste spotpris for at eksportere solcelleoverskud",
+          "dso_gln": "Dit netselskabs GLN-nummer — bruges til at hente timevise nettariffer fra Energi Data Service. Standard: 5790000610976 (Dinel/Radius)."
         }
       },
       "dashboard": {
@@ -79,7 +81,8 @@
           "min_solar_export_price": "Minimum solcelleeksportpris (DKK/kWh)",
           "forecast_hours": "Prognosehorisont (timer)",
           "currency": "Valuta",
-          "fast_poll_interval": "Opdateringsinterval for live-data (sekunder)"
+          "fast_poll_interval": "Opdateringsinterval for live-data (sekunder)",
+          "dso_gln": "DSO GLN-nummer (til tarifopcslag)"
         }
       }
     }
@@ -132,7 +135,8 @@
       "learned_capacity": { "name": "Lært batterikapacitet" },
       "auto_efficiency": { "name": "Auto-detekteret effektivitet" },
       "capacity_sample_count": { "name": "Kapacitets-læringseksempler" },
-      "pv_power": { "name": "Solcelleproduktion (live)" }
+      "pv_power": { "name": "Solcelleproduktion (live)" },
+      "tariff_this_hour": { "name": "Nettarif denne time" }
     },
     "binary_sensor": {
       "should_export": { "name": "Bør eksportere" },
@@ -162,7 +166,8 @@
       "min_spread_arbitrage": { "name": "Minimum arbitrage-spread" },
       "grid_max_kw": { "name": "Net-importgrænse" },
       "vat_pct": { "name": "Moms på køb (%)" },
-      "export_fee": { "name": "Salgsgebyr (pr. kWh)" }
+      "export_fee": { "name": "Salgsgebyr (pr. kWh)" },
+      "elafgift": { "name": "Elafgift (DKK/kWh)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage aktiv" }

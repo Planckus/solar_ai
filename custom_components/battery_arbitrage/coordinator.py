@@ -17,13 +17,17 @@ from .const import (
     CALIBRATION_MAX_SAMPLES,
     CALIBRATION_MAX_SOC,
     CALIBRATION_MIN_CHARGE_KW,
+    CONF_DSO_GLN,
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
+    DEFAULT_ELAFGIFT_DKK_KWH,
     DEFAULT_FAST_POLL_SECONDS,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_ROUND_TRIP_EFFICIENCY,
     CONF_FAST_POLL_INTERVAL,
+    DEFAULT_DSO_GLN,
+    ENERGINET_GLN,
     GRID_MAX_KW,
     GRID_SAFETY_MARGIN_KW,
     GRID_MIN_CHARGE_KW,
@@ -31,6 +35,7 @@ from .const import (
     DEFAULT_EXPORT_FEE,
     LEARNING_TICK_INTERVAL_SECONDS,
     TARIFF_REFRESH_INTERVAL_SECONDS,
+    TARIFF_SCHEDULE_REFRESH_SECONDS,
     EV_CHARGE_BLOCK_PROBABILITY,
     EV_CHARGE_THRESHOLD_W,
     EV_LEARNING_ALPHA,
@@ -117,6 +122,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._cached_solar_rates: dict[str, Any] = {}
         self._cached_grid_rates: dict[str, Any] = {}
         self._last_tariff_refresh: datetime | None = None
+        # DSO tariff schedule: 24-entry list (index = local hour), refreshed daily
+        self._tariff_schedule: list[float] = [0.0] * 24
+        self._last_tariff_schedule_refresh: datetime | None = None
         # Learning tick gate: storage-write operations run every 5 min, not every fast tick
         self._last_learning_tick: datetime | None = None
         self._vacation_mode: bool = False  # Cached between learning ticks
@@ -243,6 +251,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "grid_max_kw": float(GRID_MAX_KW),
                 "vat_pct": DEFAULT_VAT_PCT,
                 "export_fee": DEFAULT_EXPORT_FEE,
+                "elafgift": DEFAULT_ELAFGIFT_DKK_KWH,
                 "ev_charge_hourly": [0.0] * 24,
                 "solar_daily_kwh": [],
                 "solar_today_kwh": 0.0,
@@ -278,6 +287,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("capacity_samples", [])
             self._stored.setdefault("vat_pct", DEFAULT_VAT_PCT)
             self._stored.setdefault("export_fee", DEFAULT_EXPORT_FEE)
+            self._stored.setdefault("elafgift", DEFAULT_ELAFGIFT_DKK_KWH)
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
 
@@ -361,6 +371,35 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         solar_rates = self._cached_solar_rates
         grid_rates = self._cached_grid_rates
 
+        # ── Daily: refresh DSO + Energinet tariff schedule ───────────────────
+        # Tariff schedules are stable within a day — refresh once every 24 h.
+        tariff_schedule_stale = (
+            self._last_tariff_schedule_refresh is None
+            or (now - self._last_tariff_schedule_refresh).total_seconds()
+            >= TARIFF_SCHEDULE_REFRESH_SECONDS
+        )
+        if tariff_schedule_stale:
+            from .tariffs import fetch_tariff_schedule  # avoid circular import at module level
+            dso_gln = self.config.get(CONF_DSO_GLN, DEFAULT_DSO_GLN)
+            try:
+                dso_sched, energinet_sched = await asyncio.gather(
+                    fetch_tariff_schedule(session, dso_gln, now),
+                    fetch_tariff_schedule(session, ENERGINET_GLN, now),
+                )
+                self._tariff_schedule = [
+                    round(d + e, 4) for d, e in zip(dso_sched, energinet_sched)
+                ]
+                self._last_tariff_schedule_refresh = now
+                _LOGGER.debug(
+                    "Tariff schedule refreshed (GLN %s + Energinet). "
+                    "Hour 0: %.4f, Hour 12: %.4f DKK/kWh",
+                    dso_gln,
+                    self._tariff_schedule[0],
+                    self._tariff_schedule[12],
+                )
+            except Exception as err:
+                _LOGGER.warning("Tariff schedule refresh failed, keeping existing: %s", err)
+
         # ---- parse EVCC ----
         home_power_w = evcc_state.get("homePower", 0)
         pv_power_w = evcc_state.get("pvPower", 0)
@@ -438,12 +477,34 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         else:
             price_min = price_max = price_mean = price_p25 = price_p75 = price_next_slot = 0.0
 
-        # ---- buy-side prices: spot price + VAT (what we actually pay per kWh) ----
-        # Sell side (export revenue) uses ex-VAT. Buy side (grid charging cost) uses incl. VAT.
+        # ---- buy-side prices: spot + DSO/Energinet tariff + elafgift + VAT ----
+        # The true cost of buying electricity includes network tariffs (varying hourly)
+        # and elafgift (government electricity duty), all multiplied by VAT.
+        # Each forecast slot gets the tariff for its own local hour of day.
         vat_factor = 1 + self._stored.get("vat_pct", DEFAULT_VAT_PCT) / 100
-        buy_price_min = price_min * vat_factor
-        buy_price_p25 = price_p25 * vat_factor
-        buy_price_next_slot = price_next_slot * vat_factor
+        elafgift = self._stored.get("elafgift", DEFAULT_ELAFGIFT_DKK_KWH)
+        tariff_sched = self._tariff_schedule
+
+        current_local_hour = now.astimezone().hour
+        tariff_this_hour = round(tariff_sched[current_local_hour] + elafgift, 4)
+
+        grid_slots = _forecast_values_with_hours(grid_rates.get("rates", []), now, forecast_hours)
+        if grid_slots:
+            buy_vals_sorted = sorted(
+                (spot + tariff_sched[h] + elafgift) * vat_factor
+                for h, spot in grid_slots
+            )
+            n_buy = len(buy_vals_sorted)
+            buy_price_min = buy_vals_sorted[0]
+            buy_price_p25 = buy_vals_sorted[max(0, n_buy // 4 - 1)]
+            next_slot_slots = _forecast_values_with_hours(grid_rates.get("rates", []), now, 0.5)
+            if next_slot_slots:
+                h_next, spot_next = next_slot_slots[0]
+                buy_price_next_slot = (spot_next + tariff_sched[h_next] + elafgift) * vat_factor
+            else:
+                buy_price_next_slot = buy_price_min
+        else:
+            buy_price_min = buy_price_p25 = buy_price_next_slot = 0.0
 
         # ---- FoxESS state ----
         battery_soc = self._get_float_state(FOXESS_BATTERY_SOC, 0)
@@ -658,6 +719,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             grid_power_kw=round(grid_import_kw, 3),
             grid_headroom_kw=round(grid_headroom_kw, 3),
             grid_max_kw=grid_max_kw,
+            tariff_this_hour=tariff_this_hour,
             capped_charge_rate_kw=round(capped_charge_rate_kw, 3),
             learned_rates=self.get_all_learned_rates(),
             learned_capacity=learned_capacity,
@@ -704,7 +766,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         elif should_grid_charge:
             target_mode = MODE_GRID_CHARGING
             reason = (
-                f"Grid charging: buy price {buy_price_next_slot:.2f} ≤ p25 {buy_price_p25:.2f} DKK/kWh (incl. VAT), "
+                f"Grid charging: buy price {buy_price_next_slot:.2f} ≤ p25 {buy_price_p25:.2f} DKK/kWh (incl. tariffs + VAT), "
                 f"{importable_kwh:.1f} kWh room available"
             )
         else:
@@ -1093,6 +1155,27 @@ def _forecast_values(rates: list[dict], now: datetime, hours: float) -> list[flo
             start = start.replace(tzinfo=timezone.utc)
         if now <= start < cutoff:
             result.append(rate["value"])
+    return result
+
+
+def _forecast_values_with_hours(
+    rates: list[dict], now: datetime, hours: float
+) -> list[tuple[int, float]]:
+    """Return (local_hour_of_day, spot_value) pairs for slots within the forecast window.
+
+    Used to pair each forecast slot with its correct hourly DSO tariff before
+    computing buy-side price percentiles. Timestamps are converted to local time
+    so the hour index matches the DatahubPricelist Price1..Price24 fields.
+    """
+    cutoff = now + timedelta(hours=hours)
+    result: list[tuple[int, float]] = []
+    for rate in rates:
+        start = datetime.fromisoformat(rate["start"])
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if now <= start < cutoff:
+            local_hour = start.astimezone().hour
+            result.append((local_hour, rate["value"]))
     return result
 
 
