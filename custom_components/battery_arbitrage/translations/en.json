@@ -38,7 +38,8 @@
           "round_trip_efficiency": "Round-trip efficiency (%)",
           "min_spread_arbitrage": "Minimum spread for grid arbitrage (DKK/kWh)",
           "min_solar_export_price": "Minimum solar export price (DKK/kWh)",
-          "forecast_hours": "Forecast horizon (hours)"
+          "forecast_hours": "Forecast horizon (hours)",
+          "currency": "Currency"
         },
         "data_description": {
           "battery_floor_soc": "Battery will not export below this state of charge",
@@ -75,7 +76,8 @@
           "round_trip_efficiency": "Round-trip efficiency (%)",
           "min_spread_arbitrage": "Minimum spread for grid arbitrage (DKK/kWh)",
           "min_solar_export_price": "Minimum solar export price (DKK/kWh)",
-          "forecast_hours": "Forecast horizon (hours)"
+          "forecast_hours": "Forecast horizon (hours)",
+          "currency": "Currency"
         }
       }
     }
@@ -127,7 +129,8 @@
       "grid_headroom": { "name": "Grid headroom" },
       "learned_capacity": { "name": "Learned battery capacity" },
       "auto_efficiency": { "name": "Auto-detected efficiency" },
-      "capacity_sample_count": { "name": "Capacity learning samples" }
+      "capacity_sample_count": { "name": "Capacity learning samples" },
+      "pv_power": { "name": "Solar production (live)" }
     },
     "binary_sensor": {
       "should_export": { "name": "Should export" },
@@ -155,7 +158,9 @@
       "floor_soc": { "name": "Minimum SoC (export)" },
       "max_soc": { "name": "Maximum SoC (grid charge)" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage spread" },
-      "grid_max_kw": { "name": "Grid import limit" }
+      "grid_max_kw": { "name": "Grid import limit" },
+      "vat_pct": { "name": "Buy-side VAT (%)" },
+      "export_fee": { "name": "Sell-side fee (per kWh)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage enabled" }

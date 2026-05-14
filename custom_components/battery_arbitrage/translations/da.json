@@ -38,7 +38,8 @@
           "round_trip_efficiency": "Rundt-tur-effektivitet (%)",
           "min_spread_arbitrage": "Minimum spread for netarbitrage (DKK/kWh)",
           "min_solar_export_price": "Minimum solcelleeksportpris (DKK/kWh)",
-          "forecast_hours": "Prognosehorisont (timer)"
+          "forecast_hours": "Prognosehorisont (timer)",
+          "currency": "Valuta"
         },
         "data_description": {
           "battery_floor_soc": "Batteriet eksporterer ikke under denne ladetilstand",
@@ -75,7 +76,8 @@
           "round_trip_efficiency": "Rundt-tur-effektivitet (%)",
           "min_spread_arbitrage": "Minimum spread for netarbitrage (DKK/kWh)",
           "min_solar_export_price": "Minimum solcelleeksportpris (DKK/kWh)",
-          "forecast_hours": "Prognosehorisont (timer)"
+          "forecast_hours": "Prognosehorisont (timer)",
+          "currency": "Valuta"
         }
       }
     }
@@ -127,7 +129,8 @@
       "grid_headroom": { "name": "Net-råderum" },
       "learned_capacity": { "name": "Lært batterikapacitet" },
       "auto_efficiency": { "name": "Auto-detekteret effektivitet" },
-      "capacity_sample_count": { "name": "Kapacitets-læringseksempler" }
+      "capacity_sample_count": { "name": "Kapacitets-læringseksempler" },
+      "pv_power": { "name": "Solcelleproduktion (live)" }
     },
     "binary_sensor": {
       "should_export": { "name": "Bør eksportere" },
@@ -155,7 +158,9 @@
       "floor_soc": { "name": "Minimum SoC (eksport)" },
       "max_soc": { "name": "Maksimum SoC (netopladning)" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage-spread" },
-      "grid_max_kw": { "name": "Net-importgrænse" }
+      "grid_max_kw": { "name": "Net-importgrænse" },
+      "vat_pct": { "name": "Moms på køb (%)" },
+      "export_fee": { "name": "Salgsgebyr (pr. kWh)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage aktiv" }
