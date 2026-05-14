@@ -315,7 +315,7 @@ All settings are available in **Settings → Devices & Services → Solar AI →
 - **FoxESS Modbus required** — work mode control uses FoxESS-specific entities. Other inverters need code changes in `coordinator.py`.
 - **EVCC required** — solar forecasts and grid power readings come from EVCC's API.
 - **Learning period** — the system works best after 1–2 weeks of data. During the first few days it uses conservative defaults for charge rates and EV patterns.
-- **Buy-side pricing** — sell side uses the excl. VAT spot price (what you receive from the grid). Buy side applies 25% Danish VAT on top, so spread calculations reflect what you actually pay vs. what you receive. Grid tariffs beyond VAT are not yet modelled separately.
+- **Buy-side pricing** ✅ — sell side uses the excl. VAT spot price (what you receive from the grid). Buy side applies 25% Danish VAT on top, so spread calculations reflect what you actually pay vs. what you receive. Grid tariffs beyond VAT are not yet modelled separately.
 
 ---
 
