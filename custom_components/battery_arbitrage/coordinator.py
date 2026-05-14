@@ -74,6 +74,7 @@ from .const import (
     EVCC_BATTERY_NORMAL,
     EVCC_BATTERY_HOLD,
     EV_MODE_MIN_PV,
+    DANISH_VAT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -369,6 +370,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         else:
             price_min = price_max = price_mean = price_p25 = price_p75 = price_next_slot = 0.0
 
+        # ---- buy-side prices: spot price + VAT (what we actually pay per kWh) ----
+        # Sell side (export revenue) uses ex-VAT. Buy side (grid charging cost) uses incl. VAT.
+        buy_price_min = price_min * DANISH_VAT
+        buy_price_p25 = price_p25 * DANISH_VAT
+        buy_price_next_slot = price_next_slot * DANISH_VAT
+
         # ---- FoxESS state ----
         battery_soc = self._get_float_state(FOXESS_BATTERY_SOC, 0)
         cell_temp_low = self._get_float_state(FOXESS_CELL_TEMP_LOW)
@@ -447,7 +454,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         capped_charge_rate_kw = min(learned_charge_rate if learned_charge_rate > 0 else GRID_MAX_KW, grid_headroom_kw)
 
         # ---- spread calculations ----
-        grid_arbitrage_spread = export_price - price_min
+        # Spread = what we receive when selling (ex-VAT) minus what we pay when buying (incl. VAT)
+        grid_arbitrage_spread = export_price - buy_price_min
         min_spread = float(self._stored.get("min_spread_arbitrage", self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE)))
         grid_arbitrage_worthwhile = grid_arbitrage_spread >= min_spread
 
@@ -473,7 +481,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         should_grid_charge = (
             not should_export
             and bool(grid_vals)
-            and price_next_slot <= price_p25
+            and buy_price_next_slot <= buy_price_p25
             and importable_kwh >= MIN_GRID_CHARGE_KWH
             and not solar_will_fill
             and battery_soc < max_soc
@@ -489,7 +497,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if self._enabled:
             new_mode, reason = await self._execute_decision(
                 should_export, should_grid_charge, export_price,
-                grid_arbitrage_spread, price_min, price_next_slot, price_p25, price_p75,
+                grid_arbitrage_spread, buy_price_next_slot, buy_price_p25, price_p75,
                 truly_exportable_kwh, importable_kwh, solar_will_fill,
                 ev_charging_now, ev_likely_charging, ev_block_prob,
                 evcc_battery_mode, evcc_managing_battery,
@@ -579,9 +587,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         should_grid_charge: bool,
         export_price: float,
         spread: float,
-        price_min: float,
-        price_next_slot: float,
-        price_p25: float,
+        buy_price_next_slot: float,
+        buy_price_p25: float,
         price_p75: float,
         exportable_kwh: float,
         importable_kwh: float,
@@ -606,7 +613,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         elif should_grid_charge:
             target_mode = MODE_GRID_CHARGING
             reason = (
-                f"Grid charging: price {price_next_slot:.2f} ≤ p25 {price_p25:.2f} DKK/kWh, "
+                f"Grid charging: buy price {buy_price_next_slot:.2f} ≤ p25 {buy_price_p25:.2f} DKK/kWh (incl. VAT), "
                 f"{importable_kwh:.1f} kWh room available"
             )
         else:
