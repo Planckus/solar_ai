@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, TEMP_BUCKETS
+from .const import CONF_CURRENCY, DEFAULT_CURRENCY, DOMAIN, TEMP_BUCKETS
 from .coordinator import BatteryArbitrageCoordinator
 
 
@@ -26,6 +26,9 @@ class BatteryArbitrageSensorDescription(SensorEntityDescription):
     """Sensor description with a value extractor."""
 
     value_fn: Callable[[dict[str, Any]], Any] = lambda _: None
+    # If set, overrides native_unit_of_measurement with the currency substituted in.
+    # Use "{}/kWh" for price-per-energy sensors or "{}" for plain currency sensors.
+    currency_unit_template: str | None = None
 
 
 SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
@@ -44,7 +47,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="export_price",
         translation_key="export_price",
-        native_unit_of_measurement="DKK/kWh",
+        currency_unit_template="{}/kWh",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:currency-usd",
         value_fn=lambda d: round(d.get("export_price", 0.0), 4),
@@ -52,7 +55,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="grid_spread",
         translation_key="grid_spread",
-        native_unit_of_measurement="DKK/kWh",
+        currency_unit_template="{}/kWh",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:chart-bar",
         value_fn=lambda d: round(d.get("grid_arbitrage_spread", 0.0), 4),
@@ -60,7 +63,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="price_min",
         translation_key="price_min",
-        native_unit_of_measurement="DKK/kWh",
+        currency_unit_template="{}/kWh",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:arrow-down-bold",
         value_fn=lambda d: round(d.get("price_min", 0.0), 4),
@@ -68,7 +71,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="price_max",
         translation_key="price_max",
-        native_unit_of_measurement="DKK/kWh",
+        currency_unit_template="{}/kWh",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:arrow-up-bold",
         value_fn=lambda d: round(d.get("price_max", 0.0), 4),
@@ -76,7 +79,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="price_mean",
         translation_key="price_mean",
-        native_unit_of_measurement="DKK/kWh",
+        currency_unit_template="{}/kWh",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:approximately-equal",
         value_fn=lambda d: round(d.get("price_mean", 0.0), 4),
@@ -84,7 +87,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="price_p25",
         translation_key="price_p25",
-        native_unit_of_measurement="DKK/kWh",
+        currency_unit_template="{}/kWh",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:percent",
         value_fn=lambda d: round(d.get("price_p25", 0.0), 4),
@@ -92,7 +95,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="price_p75",
         translation_key="price_p75",
-        native_unit_of_measurement="DKK/kWh",
+        currency_unit_template="{}/kWh",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:percent",
         value_fn=lambda d: round(d.get("price_p75", 0.0), 4),
@@ -100,7 +103,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="price_next_slot",
         translation_key="price_next_slot",
-        native_unit_of_measurement="DKK/kWh",
+        currency_unit_template="{}/kWh",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:clock-outline",
         value_fn=lambda d: round(d.get("price_next_slot", 0.0), 4),
@@ -263,7 +266,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="savings_actual_today",
         translation_key="savings_actual_today",
-        native_unit_of_measurement="DKK",
+        currency_unit_template="{}",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:cash-plus",
         value_fn=lambda d: d.get("savings_actual_today", 0.0),
@@ -271,7 +274,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="savings_missed_today",
         translation_key="savings_missed_today",
-        native_unit_of_measurement="DKK",
+        currency_unit_template="{}",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:cash-remove",
         value_fn=lambda d: d.get("savings_missed_today", 0.0),
@@ -279,7 +282,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="savings_actual_week",
         translation_key="savings_actual_week",
-        native_unit_of_measurement="DKK",
+        currency_unit_template="{}",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:cash-plus",
         value_fn=lambda d: d.get("savings_actual_week", 0.0),
@@ -287,7 +290,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="savings_missed_week",
         translation_key="savings_missed_week",
-        native_unit_of_measurement="DKK",
+        currency_unit_template="{}",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:cash-remove",
         value_fn=lambda d: d.get("savings_missed_week", 0.0),
@@ -295,7 +298,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="savings_actual_month",
         translation_key="savings_actual_month",
-        native_unit_of_measurement="DKK",
+        currency_unit_template="{}",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:cash-plus",
         value_fn=lambda d: d.get("savings_actual_month", 0.0),
@@ -303,7 +306,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="savings_missed_month",
         translation_key="savings_missed_month",
-        native_unit_of_measurement="DKK",
+        currency_unit_template="{}",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:cash-remove",
         value_fn=lambda d: d.get("savings_missed_month", 0.0),
@@ -352,6 +355,16 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:transmission-tower-export",
         value_fn=lambda d: round(d.get("grid_headroom_kw", 0.0), 3),
     ),
+    # ── Live solar production ─────────────────────────────────────────────
+    BatteryArbitrageSensorDescription(
+        key="pv_power",
+        translation_key="pv_power",
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:solar-power",
+        value_fn=lambda d: round(d.get("pv_power_kw", 0.0), 3),
+    ),
 )
 
 
@@ -392,6 +405,14 @@ class BatteryArbitrageSensor(CoordinatorEntity[BatteryArbitrageCoordinator], Sen
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
         self._attr_device_info = _device_info(entry)
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        template = self.entity_description.currency_unit_template
+        if template:
+            currency = self.coordinator.config.get(CONF_CURRENCY, DEFAULT_CURRENCY)
+            return template.format(currency)
+        return self.entity_description.native_unit_of_measurement
 
     @property
     def native_value(self) -> Any:

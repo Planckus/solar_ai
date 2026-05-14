@@ -30,7 +30,10 @@ DEFAULT_ROUND_TRIP_EFFICIENCY = 0.92
 DEFAULT_MIN_SPREAD_ARBITRAGE = 1.0
 DEFAULT_MIN_SOLAR_EXPORT_PRICE = 0.50
 DEFAULT_FORECAST_HOURS = 24
-DEFAULT_EXPORT_DEDUCTION = 0.01  # DKK/kWh deducted by electricity company
+DEFAULT_VAT_PCT = 25.0              # VAT percentage applied to buy-side prices (%)
+DEFAULT_EXPORT_FEE = 0.0            # Sell-side fee/cut taken by grid company (currency/kWh)
+DEFAULT_CURRENCY = "DKK"            # Currency label used in price sensor units
+CONF_CURRENCY = "currency"          # Config entry key for currency selection
 
 # Well-known FoxESS entity IDs (auto-detected, user can override)
 FOXESS_BATTERY_SOC = "sensor.foxessmodbus_battery_soc_1"
@@ -132,8 +135,7 @@ GRID_MAX_KW = 17.0                  # Default circuit breaker limit (kW) — use
 GRID_SAFETY_MARGIN_KW = 0.5         # Buffer below the breaker limit to avoid nuisance trips
 GRID_MIN_CHARGE_KW = 0.3            # Minimum useful battery charge rate under headroom constraint
 
-# Pricing
-DANISH_VAT = 1.25                   # Danish VAT factor applied to buy-side prices
+# Pricing (VAT % and export fee are now live-configurable via number entities)
 
 # FoxESS lifetime energy totals (for auto-detecting round-trip efficiency)
 FOXESS_BATTERY_CHARGE_TOTAL = "sensor.foxessmodbus_battery_charge_total"

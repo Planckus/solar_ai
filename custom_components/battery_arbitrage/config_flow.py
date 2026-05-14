@@ -15,6 +15,7 @@ from .const import (
     CONF_BATTERY_CAPACITY,
     CONF_BATTERY_FLOOR_SOC,
     CONF_BATTERY_MAX_SOC,
+    CONF_CURRENCY,
     CONF_DASHBOARD_URL_PATH,
     CONF_EVCC_URL,
     CONF_FORECAST_HOURS,
@@ -29,6 +30,7 @@ from .const import (
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
+    DEFAULT_CURRENCY,
     DEFAULT_EVCC_URL,
     DEFAULT_FORECAST_HOURS,
     DEFAULT_MIN_SOLAR_EXPORT_PRICE,
@@ -48,7 +50,7 @@ _LOGGER = logging.getLogger(__name__)
 class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the setup wizard."""
 
-    VERSION = 2
+    VERSION = 3
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -179,6 +181,12 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Coerce(float),
                 vol.Required(CONF_FORECAST_HOURS, default=DEFAULT_FORECAST_HOURS):
                     vol.All(int, vol.Range(min=4, max=48)),
+                vol.Required(CONF_CURRENCY, default=DEFAULT_CURRENCY): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=["DKK", "EUR", "SEK", "NOK", "GBP", "USD", "AUD"],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
             }),
         )
 
@@ -302,5 +310,13 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                 vol.Required(CONF_FORECAST_HOURS,
                              default=data.get(CONF_FORECAST_HOURS, DEFAULT_FORECAST_HOURS)):
                     vol.All(int, vol.Range(min=4, max=48)),
+                vol.Required(CONF_CURRENCY,
+                             default=data.get(CONF_CURRENCY, DEFAULT_CURRENCY)):
+                    selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=["DKK", "EUR", "SEK", "NOK", "GBP", "USD", "AUD"],
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
             }),
         )

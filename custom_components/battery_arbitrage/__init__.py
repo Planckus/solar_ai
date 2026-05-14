@@ -8,6 +8,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 
 from .const import (
+    CONF_CURRENCY,
     DOMAIN,
     CONF_BATTERY_CAPACITY,
     CONF_BATTERY_FLOOR_SOC,
@@ -19,6 +20,7 @@ from .const import (
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
+    DEFAULT_CURRENCY,
     DEFAULT_FORECAST_HOURS,
     DEFAULT_MIN_SOLAR_EXPORT_PRICE,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
@@ -67,10 +69,11 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.config_entries.async_update_entry(entry, data=new_data, version=2)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v2")
 
-    # Add future migrations here:
-    # if entry.version < 3:
-    #     new_data["new_field"] = default_value
-    #     hass.config_entries.async_update_entry(entry, data=new_data, version=3)
+    if entry.version < 3:
+        # v2 → v3: add currency selector (defaults to DKK for existing installs)
+        new_data.setdefault(CONF_CURRENCY, DEFAULT_CURRENCY)
+        hass.config_entries.async_update_entry(entry, data=new_data, version=3)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v3")
 
     return True
 
