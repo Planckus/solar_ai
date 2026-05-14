@@ -124,7 +124,7 @@ Via HACS: add this repository as a custom repository and install from there.
 **Settings → Devices & Services → Add Integration → Solar AI**
 
 The setup wizard walks you through:
-1. **EVCC URL** — e.g. `http://192.168.1.2:7070`
+1. **EVCC URL** — e.g. `http://your-ha-ip:7070`
 2. **FoxESS entities** — auto-detected; override if your names differ
 3. **Strømligning entity** — select your spot price sensor (excl. VAT)
 4. **Battery & trading parameters** — capacity, efficiency, initial thresholds
@@ -180,7 +180,7 @@ If you use [Claude Code](https://claude.ai/code), it can dramatically speed up t
 
 Solar AI needs to know the exact entity IDs for your FoxESS Modbus sensors, your spot price sensor, and your EVCC URL. Claude Code can query your live HA instance and find them for you:
 
-> *"List all entities from the foxess_modbus integration in my Home Assistant at xxx.xxx.x.x:8123"*
+> *"List all entities from the foxess_modbus integration in my Home Assistant"*
 
 > *"Find the Strømligning or Nordpool spot price sensor in my HA entity registry"*
 
