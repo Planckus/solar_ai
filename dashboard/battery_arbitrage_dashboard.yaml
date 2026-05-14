@@ -114,7 +114,7 @@ views:
           - entity: binary_sensor.battery_arbitrage_ev_tilsluttet
             name: EV
           - entity: binary_sensor.battery_arbitrage_ev_oplader_now_minpv_tilstand
-            name: EV charging
+            name: EV on grid power
           - entity: sensor.battery_arbitrage_evcc_batteritilstand
             name: EVCC mode
 
