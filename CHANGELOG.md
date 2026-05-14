@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.7.3] — 2026-05-14
+
+### Changed
+- Dashboard: EV Status is now a proper titled card (heading + three tiles) using a vertical-stack with a heading card.
+
+---
+
 ## [0.7.2] — 2026-05-14
 
 ### Changed
