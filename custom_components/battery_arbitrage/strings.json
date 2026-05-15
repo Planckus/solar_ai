@@ -8,7 +8,7 @@
           "evcc_url": "EVCC URL"
         },
         "data_description": {
-          "evcc_url": "Full URL including port, e.g. http://192.168.1.2:7070"
+          "evcc_url": "Full URL including port, e.g. http://your-ha-ip:7070"
         }
       },
       "foxess": {
@@ -38,14 +38,18 @@
           "round_trip_efficiency": "Round-trip efficiency (%)",
           "min_spread_arbitrage": "Minimum spread for grid arbitrage (DKK/kWh)",
           "min_solar_export_price": "Minimum solar export price (DKK/kWh)",
-          "forecast_hours": "Forecast horizon (hours)"
+          "forecast_hours": "Forecast horizon (hours)",
+          "currency": "Currency",
+          "fast_poll_interval": "Live data poll interval (seconds)",
+          "dso_gln": "Grid operator (DSO)"
         },
         "data_description": {
           "battery_floor_soc": "Battery will not export below this state of charge",
           "battery_max_soc": "Battery will not grid-charge above this state of charge",
           "round_trip_efficiency": "Charge + discharge efficiency, typically 85–95%",
           "min_spread_arbitrage": "Minimum price difference (sell − cheapest-in-window) to trigger grid arbitrage",
-          "min_solar_export_price": "Minimum spot price to export solar surplus"
+          "min_solar_export_price": "Minimum spot price to export solar surplus",
+          "dso_gln": "Select your distribution grid operator. Used to fetch hourly network tariffs from Energi Data Service."
         }
       },
       "dashboard": {
@@ -75,15 +79,26 @@
           "round_trip_efficiency": "Round-trip efficiency (%)",
           "min_spread_arbitrage": "Minimum spread for grid arbitrage (DKK/kWh)",
           "min_solar_export_price": "Minimum solar export price (DKK/kWh)",
-          "forecast_hours": "Forecast horizon (hours)"
+          "forecast_hours": "Forecast horizon (hours)",
+          "currency": "Currency",
+          "fast_poll_interval": "Live data poll interval (seconds)",
+          "dso_gln": "Grid operator (DSO)"
         }
       }
     }
   },
   "entity": {
     "sensor": {
-      "mode": { "name": "Operating mode" },
-      "mode_reason": { "name": "Mode reason" },
+      "mode": {
+        "name": "Operating mode",
+        "state": {
+          "normal": "Self-use",
+          "exporting": "Exporting",
+          "grid_charging": "Grid charging",
+          "disabled": "Disabled"
+        }
+      },
+      "mode_reason": { "name": "Decision reason" },
       "export_price": { "name": "Export price" },
       "grid_spread": { "name": "Grid arbitrage spread" },
       "price_min": { "name": "24h price minimum" },
@@ -112,7 +127,13 @@
       "evcc_battery_mode": { "name": "EVCC battery mode" },
       "solar_accuracy_factor": { "name": "Solar forecast accuracy" },
       "net_solar_for_battery": { "name": "Net solar for battery (24h)" },
-      "season_mode": { "name": "Season mode" },
+      "season_mode": {
+        "name": "Season mode",
+        "state": {
+          "summer": "Summer",
+          "winter": "Winter"
+        }
+      },
       "solar_28d_avg": { "name": "Solar avg (28 days)" },
       "ev_charge_probability": { "name": "EV charge probability (this hour)" },
       "solar_forecast_24h_adjusted": { "name": "Solar forecast 24h (adjusted)" },
@@ -124,7 +145,12 @@
       "savings_actual_month": { "name": "Actual savings 30 days" },
       "savings_missed_month": { "name": "Missed savings 30 days" },
       "grid_power": { "name": "Grid import power" },
-      "grid_headroom": { "name": "Grid headroom" }
+      "grid_headroom": { "name": "Grid headroom" },
+      "learned_capacity": { "name": "Learned battery capacity" },
+      "auto_efficiency": { "name": "Auto-detected efficiency" },
+      "capacity_sample_count": { "name": "Capacity learning samples" },
+      "pv_power": { "name": "Solar production (live)" },
+      "tariff_this_hour": { "name": "Grid tariff this hour" }
     },
     "binary_sensor": {
       "should_export": { "name": "Should export" },
@@ -138,7 +164,8 @@
       },
       "solar_will_fill": { "name": "Solar will fill battery" },
       "ev_connected": { "name": "EV connected" },
-      "ev_charging_now": { "name": "EV charging (now/minpv mode)" }
+      "ev_charging_now": { "name": "EV charging (now/minpv mode)" },
+      "ev_charging_solar": { "name": "EV on Solar" }
     },
     "number": {
       "charge_rate_below_0": { "name": "Max charge rate — under 0°C" },
@@ -151,7 +178,11 @@
       "floor_soc": { "name": "Minimum SoC (export)" },
       "max_soc": { "name": "Maximum SoC (grid charge)" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage spread" },
-      "grid_max_kw": { "name": "Grid import limit" }
+      "grid_max_kw": { "name": "Grid import limit" },
+      "vat_pct": { "name": "Buy-side VAT (%)" },
+      "export_fee": { "name": "Sell-side fee (per kWh)" },
+      "elafgift": { "name": "Electricity duty — elafgift (DKK/kWh)" },
+      "spot_markup": { "name": "Spot price markup (retailer add-on)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage enabled" }
