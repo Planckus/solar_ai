@@ -393,39 +393,39 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             or (now - self._last_tariff_refresh).total_seconds() >= TARIFF_REFRESH_INTERVAL_SECONDS
         )
         if tariff_stale:
+            price_area = self.config.get(CONF_PRICE_AREA, DEFAULT_PRICE_AREA)
+
+            # Solar forecast — best-effort; a 404 from EVCC must not block startup
             try:
-                price_area = self.config.get(CONF_PRICE_AREA, DEFAULT_PRICE_AREA)
-                # Fetch solar forecast + EDS spot prices in parallel
-                solar_data, eds_data = await asyncio.gather(
-                    self._fetch_json(session, f"{evcc_url}{EVCC_API_SOLAR}"),
-                    self._fetch_eds_prices(session, price_area, now),
-                )
+                solar_data = await self._fetch_json(session, f"{evcc_url}{EVCC_API_SOLAR}")
                 self._cached_solar_rates = solar_data
-                if eds_data.get("rates"):
-                    self._cached_grid_rates = eds_data
-                    _LOGGER.debug(
-                        "EDS: %d spot price slots for area %s",
-                        len(eds_data["rates"]), price_area,
-                    )
-                else:
-                    # EDS returned nothing — fall back to EVCC grid tariff
-                    _LOGGER.info(
-                        "EDS spot prices unavailable for %s — falling back to EVCC grid tariff",
-                        price_area,
-                    )
-                    try:
-                        grid_data = await self._fetch_json(session, f"{evcc_url}{EVCC_API_GRID}")
-                        if grid_data.get("rates"):
-                            self._cached_grid_rates = grid_data
-                        else:
-                            _LOGGER.warning("EVCC grid tariff also returned no rates")
-                    except Exception as evcc_err:
-                        _LOGGER.debug("EVCC grid tariff fallback failed: %s", evcc_err)
-                self._last_tariff_refresh = now
-            except Exception as err:
-                if self._last_tariff_refresh is None:
-                    raise UpdateFailed(f"Could not fetch initial price data: {err}") from err
-                _LOGGER.warning("Tariff refresh failed, using cached data: %s", err)
+            except Exception as solar_err:
+                _LOGGER.warning("EVCC solar forecast unavailable (%s) — using cached/empty data", solar_err)
+
+            # EDS spot prices — primary price source; _fetch_eds_prices handles its own errors
+            eds_data = await self._fetch_eds_prices(session, price_area, now)
+            if eds_data.get("rates"):
+                self._cached_grid_rates = eds_data
+                _LOGGER.debug(
+                    "EDS: %d spot price slots for area %s",
+                    len(eds_data["rates"]), price_area,
+                )
+            else:
+                # EDS unavailable — fall back to EVCC grid tariff
+                _LOGGER.info(
+                    "EDS spot prices unavailable for %s — falling back to EVCC grid tariff",
+                    price_area,
+                )
+                try:
+                    grid_data = await self._fetch_json(session, f"{evcc_url}{EVCC_API_GRID}")
+                    if grid_data.get("rates"):
+                        self._cached_grid_rates = grid_data
+                    else:
+                        _LOGGER.warning("EVCC grid tariff also returned no rates")
+                except Exception as evcc_err:
+                    _LOGGER.debug("EVCC grid tariff fallback failed: %s", evcc_err)
+
+            self._last_tariff_refresh = now
 
         solar_rates = self._cached_solar_rates
         grid_rates = self._cached_grid_rates
