@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.15.1] — 2026-05-15
+
+### Fixed
+- **Minimum export price displayed with two decimal places** — HA's number platform does not propagate `suggested_display_precision` to the entity registry the way the sensor platform does. Fixed by writing `display_precision` directly into the entity registry options via `async_added_to_hass`, which is the key the Lovelace frontend actually reads for number entities. The entity now shows `0,10` instead of `0,1`.
+
+---
+
 ## [0.15.0] — 2026-05-15
 
 ### Added
