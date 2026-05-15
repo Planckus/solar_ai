@@ -13,7 +13,7 @@ The decision engine has been rebuilt from the ground up. Instead of reactive thr
 - **Globally optimal multi-cycle planning** — finds the best combination of charge and export windows across all 24 future hours simultaneously, rather than checking one slot at a time
 - **Per-hour house load profile** — the optimizer uses a learned 24-slot daily load profile (kW per hour, ~8-day EMA) to accurately estimate battery drain per slot, replacing the flat 24h average
 - **EV solar shading model** — the optimizer accounts for how much of the solar forecast will be consumed by EV charging (learned max rate × hourly probability), giving the battery an accurate net-solar estimate per hour
-- **Direct spot price feed** — prices now come from [Energi Data Service](https://api.energidataservice.dk) (Nord Pool day-ahead) instead of EVCC, fixing the zero-rate issue and removing a dependency on EVCC's tariff endpoint
+- **Direct spot price feed** — prices now come from [Energi Data Service](https://api.energidataservice.dk) (Nord Pool `DayAheadPrices`, 15-min resolution) instead of EVCC, fixing the zero-rate issue and removing a dependency on EVCC's tariff endpoint
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 

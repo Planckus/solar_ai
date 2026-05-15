@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.21.1] — 2026-05-16
+
+### Fixed
+
+- **EDS price source** — switched from the discontinued `Elspotprices` dataset (last updated 2025-09-30) to the current `DayAheadPrices` dataset. Field names updated: `TimeDK` (was `HourDK`) and `DayAheadPriceDKK` (was `SpotPriceDKK`). The new dataset has 15-minute resolution; the optimizer already averages slots within each hour so behaviour is unchanged. Fetch limit increased to 192 slots (4 × 48 hours) to cover today + tomorrow. This was the cause of the "no records returned" warning seen immediately after v0.21.0 was deployed.
+
+---
+
 ## [0.21.0] — 2026-05-15
 
 ### Added
@@ -19,7 +27,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **EV max charge rate learning** — a new season-independent single-value model learns the car's maximum AC charge rate (~20-sample EMA). Only full-speed sessions (≥ 80 % of current learned max) are included, so summer solar-throttled sessions do not drag the estimate down. The learned value is used by the optimizer to estimate how much solar the EV will consume per hour, giving the battery an accurate picture of net solar surplus. Exposed as the **"EV max charge rate (learned)"** sensor.
 
-- **Energi Data Service spot price source** — spot prices are now fetched directly from the [Energi Data Service](https://api.energidataservice.dk) `Elspotprices` dataset (Nord Pool day-ahead, DKK/MWh → DKK/kWh) instead of EVCC's `/api/tariff/grid` endpoint. This removes the dependency on EVCC for price data and resolves the issue where EVCC returned zero rates. Copenhagen CET/CEST timezone conversion is handled correctly year-round. Today + tomorrow (up to 48 hours) are fetched in one call. EVCC grid tariff is kept as an automatic fallback if EDS is unreachable. Price zone defaults to DK2 (eastern Denmark); change via `CONF_PRICE_AREA` in `const.py` for DK1.
+- **Energi Data Service spot price source** — spot prices are now fetched directly from the [Energi Data Service](https://api.energidataservice.dk) `DayAheadPrices` dataset (Nord Pool day-ahead, 15-min resolution, DKK/MWh → DKK/kWh) instead of EVCC's `/api/tariff/grid` endpoint. This removes the dependency on EVCC for price data and resolves the issue where EVCC returned zero rates. Copenhagen CET/CEST timezone conversion is handled correctly year-round. Today + tomorrow (up to 192 slots) are fetched in one call. EVCC grid tariff is kept as an automatic fallback if EDS is unreachable. Price zone defaults to DK2 (eastern Denmark); change via `CONF_PRICE_AREA` in `const.py` for DK1.
 
 ### Changed
 
