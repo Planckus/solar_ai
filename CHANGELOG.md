@@ -9,6 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.12.0] — 2026-05-15
+
+### Added
+- **Full language support** — Solar AI now ships complete English (`en`) and Danish (`da`) language packs covering every user-visible string: entity names, config flow labels, options flow labels, service descriptions, sensor state values, and binary sensor state labels.
+- **Translated sensor states** — the *Operating mode* sensor now displays human-readable translated states (`Self-use` / `Exporting` / `Grid charging` / `Disabled` in English; `Selvforbrug` / `Eksporterer` / `Netopladning` / `Deaktiveret` in Danish). The *Season mode* sensor shows `Summer` / `Winter` (or `Sommer` / `Vinter`). All state values follow HA's configured language automatically.
+- **Two dashboard files** — `dashboard/dashboard_en.yaml` (English) and `dashboard/dashboard_da.yaml` (Danish). Every card title, entity label override, and markdown card is fully consistent within each file. Import the one matching your language. `battery_arbitrage_dashboard.yaml` is kept for backwards compatibility and mirrors the Danish version.
+
+### Changed
+- Language follows Home Assistant's own language setting — no separate Solar AI language selector needed. Entity names and state labels switch automatically when HA's language is changed.
+
+---
+
 ## [0.11.2] — 2026-05-14
 
 ### Fixed
