@@ -272,6 +272,21 @@ class BatteryArbitrageConfigNumber(
             )
 
     @property
+    def extra_state_attributes(self) -> dict | None:
+        """Expose display_precision as a state attribute.
+
+        HA's getNumberFormatOptions (frontend) checks stateObj.attributes.display_precision
+        as a fallback when the entity registry display entry has no 'dp' field (which
+        is never computed for number entities, only sensors).  Returning it here makes
+        the Lovelace number formatter apply {minimumFractionDigits, maximumFractionDigits}
+        instead of the step-only {maximumFractionDigits} default.
+        """
+        precision = getattr(self, "_attr_suggested_display_precision", None)
+        if precision is not None:
+            return {"display_precision": precision}
+        return None
+
+    @property
     def native_value(self) -> float:
         return self.coordinator._stored.get(self._storage_key, self._default)
 
