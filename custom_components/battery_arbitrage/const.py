@@ -22,6 +22,14 @@ CONF_FOXESS_FORCE_DISCHARGE_ENTITY = "foxess_force_discharge_entity"
 CONF_STROMLIGNING_ENTITY = "stromligning_entity"   # legacy key — migrated to CONF_SPOT_PRICE_ENTITY
 CONF_SPOT_PRICE_ENTITY = "spot_price_entity"        # generic spot-price source (any DKK/kWh sensor)
 
+# Configurable battery sensor entity IDs (default to FoxESS Modbus names; any compatible sensor works)
+CONF_BATTERY_SOC_ENTITY            = "battery_soc_entity"
+CONF_CELL_TEMP_ENTITY              = "cell_temp_entity"
+CONF_BATTERY_CHARGE_ENTITY         = "battery_charge_entity"
+CONF_BATTERY_DISCHARGE_ENTITY      = "battery_discharge_entity"
+CONF_BATTERY_CHARGE_TOTAL_ENTITY   = "battery_charge_total_entity"
+CONF_BATTERY_DISCHARGE_TOTAL_ENTITY = "battery_discharge_total_entity"
+
 # Defaults
 DEFAULT_EVCC_URL = "http://192.168.1.2:7070"
 DEFAULT_BATTERY_FLOOR_SOC = 50

@@ -25,12 +25,13 @@ All thresholds are adjustable via live dashboard controls. No YAML editing, no r
 - **Grid charging** — charges the battery when the all-in buy price (spot + markup + network tariff + elafgift) × VAT is in the cheapest 25th percentile of the next 24 hours, then uses or exports that energy when prices rise
 - **Battery export** — activates FoxESS *Feed-in First* mode to push battery energy to the grid, but **only when the current price is at or above the 75th percentile** of the day — reserving stored energy for true evening peaks, not mediocre mid-day prices
 - **Minimum spread threshold** — configurable minimum price difference (sell − cheapest buy) before arbitrage triggers. Live slider on the dashboard (0.10–3.00 DKK/kWh)
-- **Minimum export price floor** — configurable floor below which Solar AI will never export, even at technically positive prices. Useful if you want to avoid selling at prices you consider too low. Default 0.00 blocks only negative/zero prices
+- **Minimum export price floor** — configurable floor below which Solar AI will never export. When the price is at or below the floor, the FoxESS export limit register is set to 25 W — blocking both battery export *and* solar panel export. Default 0.00 blocks only negative/zero prices. Works even when the arbitrage switch is off
 - **Export power cap** — optionally cap the battery's discharge rate during export (0–10 kW). Useful if your grid connection or feed-in contract has a power limit. Default 0 = no cap
 
-### 🚫 Negative Price Guard
-- **Export blocked** when the net export price is at or below your configured floor (prevents selling at a loss)
+### 🚫 Negative Price Guard & Export Floor
+- **All export blocked** (25 W limit) when the net export price is at or below your configured floor — this stops both battery discharge and solar panel export at unprofitable prices
 - **Forced grid charge** when the buy price drops to or below zero — if the grid is paying you to consume electricity, Solar AI charges the battery regardless of the spread threshold or EV schedule
+- **Always active** — the export floor is enforced on every poll tick, even when the arbitrage switch is off
 
 ### 💶 Full Price Stack — Buy & Sell Side
 
@@ -263,9 +264,13 @@ Every 5 minutes:
 
 7. Act if enabled       → set FoxESS work mode, capped charge power, EVCC mode
                           optionally cap discharge power to max_export_kw
-8. Notify (optional)    → persistent HA notification on every mode transition
-9. Track savings        → accumulate actual/missed DKK into daily log
-10. Save to storage     → learned rates, load history, EV probabilities, solar history
+8. Export limit (always)→ write FoxESS export limit register on every tick:
+                            grid charging  → 0 W
+                            price ≤ floor  → 25 W  (blocks solar + battery export)
+                            price > floor  → 10 000 W
+9. Notify (optional)    → persistent HA notification on every mode transition
+10. Track savings       → accumulate actual/missed DKK into daily log
+11. Save to storage     → learned rates, load history, EV probabilities, solar history
 ```
 
 ---

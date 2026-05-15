@@ -8,6 +8,12 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 
 from .const import (
+    CONF_BATTERY_CHARGE_ENTITY,
+    CONF_BATTERY_CHARGE_TOTAL_ENTITY,
+    CONF_BATTERY_DISCHARGE_ENTITY,
+    CONF_BATTERY_DISCHARGE_TOTAL_ENTITY,
+    CONF_BATTERY_SOC_ENTITY,
+    CONF_CELL_TEMP_ENTITY,
     CONF_CURRENCY,
     CONF_DSO_GLN,
     CONF_FAST_POLL_INTERVAL,
@@ -33,6 +39,12 @@ from .const import (
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_ROUND_TRIP_EFFICIENCY,
     DEFAULT_SPOT_MARKUP,
+    FOXESS_BATTERY_CHARGE_POWER,
+    FOXESS_BATTERY_CHARGE_TOTAL,
+    FOXESS_BATTERY_DISCHARGE_POWER,
+    FOXESS_BATTERY_DISCHARGE_TOTAL,
+    FOXESS_BATTERY_SOC,
+    FOXESS_CELL_TEMP_LOW,
     STROMLIGNING_SPOTPRICE_EX_VAT,
 )
 from .coordinator import BatteryArbitrageCoordinator
@@ -124,6 +136,18 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             new_data.setdefault(CONF_SPOT_PRICE_ENTITY, STROMLIGNING_SPOTPRICE_EX_VAT)
         hass.config_entries.async_update_entry(entry, data=new_data, version=7)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v7")
+
+    if entry.version < 8:
+        # v7 → v8: add configurable battery sensor entity IDs.
+        # Existing installs get the FoxESS Modbus defaults — zero behaviour change.
+        new_data.setdefault(CONF_BATTERY_SOC_ENTITY,             FOXESS_BATTERY_SOC)
+        new_data.setdefault(CONF_CELL_TEMP_ENTITY,               FOXESS_CELL_TEMP_LOW)
+        new_data.setdefault(CONF_BATTERY_CHARGE_ENTITY,          FOXESS_BATTERY_CHARGE_POWER)
+        new_data.setdefault(CONF_BATTERY_DISCHARGE_ENTITY,       FOXESS_BATTERY_DISCHARGE_POWER)
+        new_data.setdefault(CONF_BATTERY_CHARGE_TOTAL_ENTITY,    FOXESS_BATTERY_CHARGE_TOTAL)
+        new_data.setdefault(CONF_BATTERY_DISCHARGE_TOTAL_ENTITY, FOXESS_BATTERY_DISCHARGE_TOTAL)
+        hass.config_entries.async_update_entry(entry, data=new_data, version=8)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v8")
 
     return True
 
