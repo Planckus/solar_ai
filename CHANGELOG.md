@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.16.0] — 2026-05-15
+
+### Added
+- **Min. export price display sensor** — a new read-only sensor (`min_export_price_display`) mirrors the minimum export price setting and displays it with two decimal places (e.g. `0,10`). HA only applies `minimumFractionDigits` to number entities when the entity registry `dp` field is present, which is hardcoded to sensor-domain entities only. The mirror sensor is the correct fix: it gets `dp` via `suggested_display_precision=2` and the dashboard can show it in place of the raw number entity value. The number entity itself remains available for editing.
+
+---
+
 ## [0.15.3] — 2026-05-15
 
 ### Changed

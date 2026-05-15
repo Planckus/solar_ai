@@ -149,6 +149,7 @@
       "learned_capacity": { "name": "Learned battery capacity" },
       "auto_efficiency": { "name": "Auto-detected efficiency" },
       "feed_in_tariff": { "name": "Feed-in tariff (DSO + Energinet)" },
+      "min_export_price_display": { "name": "Min. export price floor" },
       "capacity_sample_count": { "name": "Capacity learning samples" },
       "pv_power": { "name": "Solar production (live)" },
       "tariff_this_hour": { "name": "Grid tariff this hour" },

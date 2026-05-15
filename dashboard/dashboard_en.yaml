@@ -46,7 +46,7 @@ views:
             name: Grid arbitrage spread
           - entity: number.solar_ai_minimum_arbitrage_spread
             name: Spread threshold
-          - entity: number.solar_ai_minimum_eksportpris_0_tillad_negativ
+          - entity: sensor.solar_ai_minimum_eksportpris
             name: Min. export price
           - type: divider
           - entity: sensor.battery_arbitrage_24h_prisminimum
@@ -157,6 +157,8 @@ views:
             name: Sell-side fee
           - entity: sensor.solar_ai_indfodningstarif_dso_energinet
             name: Feed-in tariff (auto)
+          - entity: number.solar_ai_minimum_eksportpris_0_tillad_negativ
+            name: Min. export price (set)
           - type: divider
           - entity: sensor.solar_ai_nettarif_denne_time
             name: Grid tariff this hour
