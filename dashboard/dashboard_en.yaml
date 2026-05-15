@@ -1,62 +1,62 @@
 title: Solar AI
 views:
-  - title: Oversigt
+  - title: Overview
     path: overview
     icon: mdi:battery-charging
     cards:
 
-      # ── Styring ────────────────────────────────────────────────────────────
+      # ── Control ────────────────────────────────────────────────────────────
       - type: horizontal-stack
         cards:
           - type: tile
             entity: switch.battery_arbitrage_arbitrage_aktiv
-            name: Arbitrage aktiv
+            name: Arbitrage enabled
             color: green
             tap_action:
               action: toggle
           - type: tile
             entity: sensor.battery_arbitrage_driftstilstand
-            name: Driftstilstand
+            name: Operating mode
             icon: mdi:sine-wave
           - type: tile
             entity: sensor.foxessmodbus_battery_soc_1
-            name: Batteri SoC
+            name: Battery SoC
             icon: mdi:battery
 
       - type: entity
         entity: sensor.battery_arbitrage_begrundelse_for_tilstand
-        name: Beslutningsårsag
+        name: Decision reason
         icon: mdi:information-outline
 
-      # ── Elpriser ───────────────────────────────────────────────────────────
+      # ── Electricity Prices ─────────────────────────────────────────────────
       - type: entities
-        title: Elpriser
+        title: Electricity Prices
         icon: mdi:currency-eur
         show_header_toggle: false
         entities:
           - entity: sensor.battery_arbitrage_eksportpris
-            name: Eksportpris
+            name: Export price
           - entity: sensor.battery_arbitrage_net_arbitrage_spread
-            name: Net-arbitrage spread
+            name: Grid arbitrage spread
           - entity: number.solar_ai_minimum_arbitrage_spread
-            name: Spread-grænse
+            name: Spread threshold
           - type: divider
           - entity: sensor.battery_arbitrage_24h_prisminimum
-            name: 24h prisminimum
+            name: 24h price minimum
           - entity: sensor.battery_arbitrage_24h_prismaksimum
-            name: 24h prismaksimum
+            name: 24h price maximum
           - entity: sensor.battery_arbitrage_24h_prisgennemsnit
-            name: 24h prisgennemsnit
+            name: 24h price average
           - entity: sensor.battery_arbitrage_24h_pris_25_percentil
-            name: 24h pris 25. percentil
+            name: 24h price 25th percentile
           - entity: sensor.battery_arbitrage_24h_pris_75_percentil
-            name: 24h pris 75. percentil
+            name: 24h price 75th percentile
           - entity: sensor.battery_arbitrage_naeste_slots_pris
-            name: Næste slots pris
+            name: Next-slot price
 
-      # ── Prissammensætning ──────────────────────────────────────────────────
+      # ── Price Breakdown ────────────────────────────────────────────────────
       - type: markdown
-        title: Prissammensætning
+        title: Price Breakdown
         content: >
           {% set spot_markup = states('number.solar_ai_spotpris_tillaeg_elhandlertillaeg') | float(0) %}
           {% set export_fee = states('number.solar_ai_salgsgebyr_pr_kwh') | float(0) %}
@@ -75,215 +75,215 @@ views:
           {% set price_max = states('sensor.battery_arbitrage_24h_prismaksimum') | float(0) %}
           {% set p25 = states('sensor.battery_arbitrage_24h_pris_25_percentil') | float(0) %}
 
-          #### 📈 Salgspris (eksport)
+          #### 📈 Export price
           | | DKK/kWh |
           |:---|---:|
-          | Spotpris (ekskl. moms) | {{ '%.3f' | format(spot_ex_vat) }} |
-          | − Salgsgebyr | {{ '%.3f' | format(export_fee) }} |
-          | **Netto eksportpris** | **{{ '%.3f' | format(export_price) }}** |
+          | Spot price (excl. VAT) | {{ '%.3f' | format(spot_ex_vat) }} |
+          | − Sell-side fee | {{ '%.3f' | format(export_fee) }} |
+          | **Net export price** | **{{ '%.3f' | format(export_price) }}** |
 
-          #### 🔌 Købspris (denne time)
+          #### 🔌 Buy price (this hour)
           | | DKK/kWh |
           |:---|---:|
-          | Spotpris (ekskl. moms) | {{ '%.3f' | format(spot_ex_vat) }} |
-          | + Spotpris-tillæg | {{ '%.3f' | format(spot_markup) }} |
-          | + Nettarif (DSO + Energinet) | {{ '%.3f' | format(network_tariff) }} |
-          | + Elafgift | {{ '%.3f' | format(elafgift) }} |
-          | Subtotal (ekskl. moms) | {{ '%.3f' | format(pretax_buy) }} |
-          | + Moms ({{ vat_pct | int }} %) | {{ '%.3f' | format(pretax_buy * vat_pct / 100) }} |
-          | **Samlet købspris** | **{{ '%.3f' | format(total_buy) }}** |
+          | Spot price (excl. VAT) | {{ '%.3f' | format(spot_ex_vat) }} |
+          | + Retailer markup | {{ '%.3f' | format(spot_markup) }} |
+          | + Network tariff (DSO + Energinet) | {{ '%.3f' | format(network_tariff) }} |
+          | + Electricity duty (elafgift) | {{ '%.3f' | format(elafgift) }} |
+          | Subtotal (excl. VAT) | {{ '%.3f' | format(pretax_buy) }} |
+          | + VAT ({{ vat_pct | int }}%) | {{ '%.3f' | format(pretax_buy * vat_pct / 100) }} |
+          | **Total buy price** | **{{ '%.3f' | format(total_buy) }}** |
 
-          #### ⚖️ Arbitrage-spread
-          **{{ '%.3f' | format(spread) }} DKK/kWh** {% if spread >= min_spread %}✅ over grænse ({{ '%.2f' | format(min_spread) }}){% else %}⛔ under grænse ({{ '%.2f' | format(min_spread) }}){% endif %}
+          #### ⚖️ Arbitrage spread
+          **{{ '%.3f' | format(spread) }} DKK/kWh** {% if spread >= min_spread %}✅ above threshold ({{ '%.2f' | format(min_spread) }}){% else %}⛔ below threshold ({{ '%.2f' | format(min_spread) }}){% endif %}
 
-          *24h spotinterval: {{ '%.3f' | format(price_min) }}–{{ '%.3f' | format(price_max) }} DKK/kWh · p25: {{ '%.3f' | format(p25) }} DKK/kWh*
+          *24h spot range: {{ '%.3f' | format(price_min) }}–{{ '%.3f' | format(price_max) }} DKK/kWh · p25: {{ '%.3f' | format(p25) }} DKK/kWh*
 
-      # ── Priskonfiguration ──────────────────────────────────────────────────
+      # ── Price Configuration ────────────────────────────────────────────────
       - type: entities
-        title: Priskonfiguration
+        title: Price Configuration
         icon: mdi:tune
         show_header_toggle: false
         entities:
           - entity: number.solar_ai_spotpris_tillaeg_elhandlertillaeg
-            name: Spotpris-tillæg (elhandler)
+            name: Spot markup (retailer)
           - entity: number.solar_ai_elafgift_dkk_kwh
-            name: Elafgift
+            name: Electricity duty (elafgift)
           - entity: number.solar_ai_moms_pa_kob
-            name: Moms på køb
+            name: VAT on purchases
           - type: divider
           - entity: number.solar_ai_salgsgebyr_pr_kwh
-            name: Salgsgebyr (ved salg)
+            name: Sell-side fee
           - type: divider
           - entity: sensor.solar_ai_nettarif_denne_time
-            name: Nettarif denne time
+            name: Grid tariff this hour
 
-      # ── Net ────────────────────────────────────────────────────────────────
+      # ── Grid ───────────────────────────────────────────────────────────────
       - type: entities
-        title: Net
+        title: Grid
         icon: mdi:transmission-tower
         show_header_toggle: false
         entities:
           - entity: number.solar_ai_net_importgraense
-            name: Sikringsstørrelse
+            name: Circuit breaker limit
           - type: divider
           - entity: sensor.solar_ai_net_importeffekt
-            name: Aktuelt netimport
+            name: Current grid import
           - entity: sensor.solar_ai_net_raderum
-            name: Råderum til grænse
+            name: Headroom before limit
 
-      # ── Solcelleprognose ───────────────────────────────────────────────────
+      # ── Solar Forecast ─────────────────────────────────────────────────────
       - type: entities
-        title: Solcelleprognose
+        title: Solar Forecast
         icon: mdi:solar-power
         show_header_toggle: false
         entities:
           - entity: sensor.battery_arbitrage_solcelle_prognose_nojagtighed
-            name: Prognose-nøjagtighed
+            name: Forecast accuracy factor
           - type: divider
           - entity: sensor.battery_arbitrage_solcelle_prognose_24h
-            name: Rå 24h
+            name: Raw 24h
           - entity: sensor.battery_arbitrage_solcelle_prognose_24h_justeret
-            name: Justeret 24h
+            name: Adjusted 24h
           - entity: sensor.battery_arbitrage_solcelle_prognose_6h
-            name: Rå 6h
+            name: Raw 6h
           - entity: sensor.battery_arbitrage_solcelle_prognose_6h_justeret
-            name: Justeret 6h
+            name: Adjusted 6h
           - type: divider
           - entity: binary_sensor.battery_arbitrage_sol_fylder_batteri
-            name: Sol fylder batteri
+            name: Solar will fill battery
 
-      # ── Batteri ────────────────────────────────────────────────────────────
+      # ── Battery ────────────────────────────────────────────────────────────
       - type: entities
-        title: Batteri
+        title: Battery
         icon: mdi:battery-charging
         show_header_toggle: false
         entities:
           - entity: sensor.foxessmodbus_battery_soc_1
-            name: Ladetilstand
+            name: State of charge
           - entity: number.solar_ai_minimum_soc_eksport
-            name: Min. SoC (eksport)
+            name: Min SoC (export)
           - entity: number.solar_ai_maksimum_soc_netopladning
-            name: Maks. SoC (netopladning)
+            name: Max SoC (grid charge)
           - entity: sensor.battery_arbitrage_eksporterbar_energi
-            name: Eksporterbar energi
+            name: Exportable energy
           - entity: sensor.battery_arbitrage_importerbar_energi
-            name: Importerbar energi
+            name: Importable energy
           - entity: sensor.battery_arbitrage_tid_til_fuld_opladning
-            name: Tid til fuld opladning
+            name: Time to full charge
           - type: divider
           - entity: sensor.foxessmodbus_battery_charge
-            name: Opladningseffekt
+            name: Charge power
           - entity: sensor.foxessmodbus_battery_discharge
-            name: Afladningseffekt
+            name: Discharge power
           - entity: sensor.battery_arbitrage_batteritemperatur_laveste_celle
-            name: Celletemperatur (laveste)
+            name: Cell temperature (lowest)
 
-      # ── Betingelser ────────────────────────────────────────────────────────
+      # ── Conditions ─────────────────────────────────────────────────────────
       - type: glance
-        title: Betingelser
+        title: Conditions
         show_state: true
         entities:
           - entity: binary_sensor.battery_arbitrage_bor_eksportere
-            name: Bør eksportere
+            name: Should export
           - entity: binary_sensor.battery_arbitrage_bor_net_oplade
-            name: Bør netoplade
+            name: Should charge
           - entity: binary_sensor.battery_arbitrage_tilstedevaerelse
-            name: Hjemme
+            name: Home
           - entity: sensor.battery_arbitrage_evcc_batteritilstand
-            name: EVCC-tilstand
+            name: EVCC mode
 
-      # ── EV-status ──────────────────────────────────────────────────────────
+      # ── EV Status ──────────────────────────────────────────────────────────
       - type: vertical-stack
         cards:
           - type: heading
-            heading: EV-status
+            heading: EV Status
             icon: mdi:car-electric
           - type: horizontal-stack
             cards:
               - type: tile
                 entity: binary_sensor.battery_arbitrage_ev_tilsluttet
-                name: EV tilsluttet
+                name: EV connected
                 color: green
               - type: tile
                 entity: binary_sensor.solar_ai_ev_oplader_solenergi
-                name: EV på solenergi
+                name: EV on Solar
                 color: green
                 state_content: charge_kw
               - type: tile
                 entity: binary_sensor.battery_arbitrage_ev_oplader_now_minpv_tilstand
-                name: EV på netstrøm
+                name: EV on grid power
                 color: green
                 state_content: charge_kw
 
-      # ── Besparelser ────────────────────────────────────────────────────────
+      # ── Savings ────────────────────────────────────────────────────────────
       - type: entities
-        title: Besparelser (DKK)
+        title: Savings (DKK)
         icon: mdi:cash
         show_header_toggle: false
         entities:
           - entity: sensor.solar_ai_faktisk_besparelse_i_dag
-            name: "I dag — faktisk"
+            name: "Today — actual"
           - entity: sensor.solar_ai_forpasset_besparelse_i_dag
-            name: "I dag — forpasset (deaktiveret)"
+            name: "Today — missed (disabled)"
           - type: divider
           - entity: sensor.solar_ai_faktisk_besparelse_7_dage
-            name: "7 dage — faktisk"
+            name: "7 days — actual"
           - entity: sensor.solar_ai_forpasset_besparelse_7_dage
-            name: "7 dage — forpasset (deaktiveret)"
+            name: "7 days — missed (disabled)"
           - type: divider
           - entity: sensor.solar_ai_faktisk_besparelse_30_dage
-            name: "30 dage — faktisk"
+            name: "30 days — actual"
           - entity: sensor.solar_ai_forpasset_besparelse_30_dage
-            name: "30 dage — forpasset (deaktiveret)"
+            name: "30 days — missed (disabled)"
 
-      # ── Forbrugsmodel ──────────────────────────────────────────────────────
+      # ── Load Model ─────────────────────────────────────────────────────────
       - type: entities
-        title: Forbrugsmodel
+        title: Load Model
         icon: mdi:home-lightning-bolt
         show_header_toggle: false
         entities:
           - entity: sensor.battery_arbitrage_husstand_forbrug_2h_gennemsnit
-            name: Husforbrug 2h-gennemsnit
+            name: House load 2h average
           - entity: sensor.battery_arbitrage_husstand_forbrug_28_dages_gennemsnit
-            name: Husforbrug 28-dages gennemsnit
+            name: House load 28-day average
           - entity: sensor.battery_arbitrage_forudsagt_husstand_forbrug_24h
-            name: Forudsagt husforbrug 24h
+            name: Predicted house load 24h
           - entity: sensor.foxessmodbus_load_power
-            name: Aktuelt husforbrug
+            name: Current load power
 
-      # ── Lærte opladningshastigheder ────────────────────────────────────────
+      # ── Learned Charge Rates ───────────────────────────────────────────────
       - type: entities
-        title: Lærte opladningshastigheder
+        title: Learned Charge Rates
         icon: mdi:thermometer-lines
         show_header_toggle: false
         entities:
           - entity: sensor.battery_arbitrage_laert_opladningshastighed_aktuel_temp
-            name: Opladningshastighed (aktuel temp.)
+            name: Charge rate (current temp)
           - type: divider
           - entity: sensor.battery_arbitrage_laert_opladningshastighed_under_0degc
-            name: "Hastighed — under 0 °C"
+            name: "Rate — under 0°C"
           - entity: sensor.solar_ai_laert_opladningshastighed_0_5degc
-            name: "Hastighed — 0–5 °C"
+            name: "Rate — 0–5°C"
           - entity: sensor.solar_ai_laert_opladningshastighed_6_15degc
-            name: "Hastighed — 6–15 °C"
+            name: "Rate — 6–15°C"
           - entity: sensor.solar_ai_laert_opladningshastighed_16_21degc
-            name: "Hastighed — 16–21 °C"
+            name: "Rate — 16–21°C"
           - entity: sensor.solar_ai_laert_opladningshastighed_21_35degc
-            name: "Hastighed — 21–35 °C"
+            name: "Rate — 21–35°C"
           - entity: sensor.solar_ai_laert_opladningshastighed_35_50degc
-            name: "Hastighed — 35–50 °C"
+            name: "Rate — 35–50°C"
           - entity: sensor.solar_ai_laert_opladningshastighed_over_50degc
-            name: "Hastighed — over 50 °C"
+            name: "Rate — over 50°C"
 
-      # ── FoxESS-inverter ────────────────────────────────────────────────────
+      # ── FoxESS Inverter ────────────────────────────────────────────────────
       - type: entities
-        title: FoxESS-inverter
+        title: FoxESS Inverter
         icon: mdi:solar-panel
         show_header_toggle: false
         entities:
           - entity: select.foxessmodbus_work_mode
-            name: Driftstilstand
+            name: Work mode
           - entity: sensor.foxessmodbus_feed_in
-            name: Indspejlingseffekt
+            name: Feed-in power
           - entity: sensor.foxessmodbus_load_power
-            name: Forbrugseffekt
+            name: Load power
