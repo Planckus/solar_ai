@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.15.3] — 2026-05-15
+
+### Changed
+- Reverted display-precision workarounds from v0.15.1–v0.15.2 (entity registry options, `extra_state_attributes`). After tracing HA's source, the compact `dp` field that `getNumberFormatOptions` reads is hardcoded to `domain == "sensor"` entities only — there is no mechanism to force trailing zeros for number entities from outside HA. Code cleaned up and limitation documented in a comment.
+
+---
+
 ## [0.15.2] — 2026-05-15
 
 ### Fixed
