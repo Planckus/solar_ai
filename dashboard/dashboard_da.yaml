@@ -63,16 +63,26 @@ views:
             name: Næste slots pris
 
       # ── 24h priskort ──────────────────────────────────────────────────────
+      - type: entities
+        entities:
+          - entity: switch.battery_arbitrage_price_resolution_15min
+            name: "15-minutters prisopløsning"
       - type: markdown
         title: 24h priskort
         content: |
           {% set slots = state_attr('sensor.solar_ai_24h_priskort', 'slots') | default([]) %}
+          {% set res15 = is_state('switch.battery_arbitrage_price_resolution_15min', 'on') %}
           {% set charge_hrs = state_attr('sensor.solar_ai_dagens_plan', 'charge_hours') | default([]) %}
           {% set export_hrs = state_attr('sensor.solar_ai_dagens_plan', 'export_hours') | default([]) %}
           {% if slots %}
           {% set bars = ['▁','▂','▃','▄','▅','▆','▇','█'] %}
-          {% set ns = namespace(seen=[], rows=[]) %}
-          {% for s in slots %}{% if s.h not in ns.seen %}{% set ns.seen = ns.seen + [s.h] %}{% set ns.rows = ns.rows + [s] %}{% endif %}{% endfor %}
+          {% set ns = namespace(rows=[]) %}
+          {% if res15 %}
+          {% set ns.rows = slots[:48] %}
+          {% else %}
+          {% set seen = namespace(h=[]) %}
+          {% for s in slots %}{% if s.h not in seen.h %}{% set seen.h = seen.h + [s.h] %}{% set ns.rows = ns.rows + [s] %}{% endif %}{% endfor %}
+          {% endif %}
           {% set buys = ns.rows | map(attribute='buy') | list %}
           {% set sbuys = buys | sort | list %}
           {% set n = sbuys | length %}
@@ -81,15 +91,15 @@ views:
           {% set min_b = sbuys | first %}
           {% set max_b = sbuys | last %}
           {% set range_b = [max_b - min_b, 0.001] | max %}
-          {% set cur_h = now().hour %}
+          {% set cur_h = now().hour %}{% set cur_m = now().minute %}
           🟢 billig ≤ {{ '%.2f' | format(p25_v) }} · 🟡 normal · 🔴 dyr ≥ {{ '%.2f' | format(p75_v) }} DKK/kWh
 
           | Tid | Køb | Sælg |
           | :-- | --: | --: |
-          {% for r in ns.rows %}{% set norm = (r.buy - min_b) / range_b %}{% set bi = [[(norm * 7.99) | int, 0] | max, 7] | min %}{% set col = '🟢' if r.buy <= p25_v else ('🔴' if r.buy >= p75_v else '🟡') %}{% set mark = ' ◀' if r.h == cur_h else (' ⚡' if r.h in charge_hrs else (' 💰' if r.h in export_hrs else '')) %}
-          | {{ col }}{{ bars[bi] }} **{{ '%02d:00' | format(r.h) }}**{{ mark }} | {{ '%.2f' | format(r.buy) }} | {{ '%.2f' | format(r.sell) }} |{% endfor %}
+          {% for r in ns.rows %}{% set norm = (r.buy - min_b) / range_b %}{% set bi = [[(norm * 7.99) | int, 0] | max, 7] | min %}{% set col = '🟢' if r.buy <= p25_v else ('🔴' if r.buy >= p75_v else '🟡') %}{% set is_now = r.h == cur_h and (not res15 or (r.m | default(0)) <= cur_m < (r.m | default(0)) + 15) %}{% set mark = ' ◀' if is_now else (' ⚡' if r.h in charge_hrs else (' 💰' if r.h in export_hrs else '')) %}
+          | {{ col }}{{ bars[bi] }} **{{ '%02d:%02d' | format(r.h, r.m | default(0)) }}**{{ mark }} | {{ '%.2f' | format(r.buy) }} | {{ '%.2f' | format(r.sell) }} |{% endfor %}
 
-          *◀ nu · ⚡ billig opladning · 💰 god eksport · {{ '%.2f' | format(min_b) }}–{{ '%.2f' | format(max_b) }} DKK/kWh*
+          *◀ nu · ⚡ billig opladning · 💰 god eksport · {{ '%.2f' | format(min_b) }}–{{ '%.2f' | format(max_b) }} DKK/kWh*{% if res15 %} · viser næste 12t i 15-min opløsning{% endif %}
           {% else %}
           *Ingen prisdata tilgængelig*
           {% endif %}

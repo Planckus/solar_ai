@@ -229,7 +229,8 @@
     },
     "switch": {
       "enabled": { "name": "Arbitrage aktiv" },
-      "notifications_enabled": { "name": "Notifikationer ved tilstandsskift" }
+      "notifications_enabled": { "name": "Notifikationer ved tilstandsskift" },
+      "price_resolution_15min": { "name": "15-minutters prisopløsning" }
     }
   },
   "services": {

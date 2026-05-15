@@ -530,6 +530,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         tariff_this_hour = round(tariff_sched[current_local_hour] + elafgift, 4)
 
         grid_slots = _forecast_values_with_hours(grid_rates.get("rates", []), now, forecast_hours)
+
+        # Native-resolution slot data (handles 15-min or hourly depending on DSO/EVCC config)
+        grid_slot_data = _forecast_slots(grid_rates.get("rates", []), now, forecast_hours)
+        solar_slot_data = _forecast_slots(solar_rates.get("rates", []), now, forecast_hours)
+        # Solar lookup: slot_start → kW (value is average Watts during the slot)
+        solar_kw_by_start: dict = {s[0]: s[4] / 1000.0 for s in solar_slot_data}
         if grid_slots:
             buy_vals_sorted = sorted(
                 (spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor
@@ -661,22 +667,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         #  requiring per-hour solar forecast that EVCC does not provide)
 
         house_drag_cost = 0.0
-        if grid_slots and truly_exportable_kwh > 0 and learned_charge_rate > 0:
-            # Find the hour with the cheapest full buy price
-            cheapest_hour = min(
-                grid_slots,
-                key=lambda hs: (hs[1] + spot_markup + tariff_sched[hs[0]] + elafgift) * vat_factor,
-            )[0]
-            hours_until_charge = (cheapest_hour - current_local_hour) % 24
-            # hours_until_charge == 0 → cheapest slot is right now → no drag needed
-            if hours_until_charge > 0:
-                avg_solar_kw = solar_kwh / 24.0
-                net_house_kw = max(0.0, load_2h_avg - avg_solar_kw)
-                for h, spot in grid_slots:
-                    hrs_from_now = (h - current_local_hour) % 24
-                    if 0 < hrs_from_now <= hours_until_charge:
+        if grid_slot_data and truly_exportable_kwh > 0 and learned_charge_rate > 0:
+            # Find the slot with the cheapest full buy price (native resolution)
+            cheapest_slot = min(
+                grid_slot_data,
+                key=lambda s: (s[4] + spot_markup + tariff_sched[s[2]] + elafgift) * vat_factor,
+            )
+            cheapest_start = cheapest_slot[0]
+            # Only count drag if the cheapest slot is in the future
+            if cheapest_start > now:
+                for slot_start, dur_h, h, m, spot in grid_slot_data:
+                    if now < slot_start < cheapest_start:
                         buy_h = (spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor
-                        house_drag_cost += net_house_kw * buy_h
+                        # Per-slot solar: use actual forecast kW, fall back to 24h average
+                        solar_kw = solar_kw_by_start.get(slot_start, solar_kwh / 24.0)
+                        net_house_kw = max(0.0, load_2h_avg - solar_kw)
+                        # Multiply by slot duration (0.25 h for 15-min, 1.0 h for hourly)
+                        house_drag_cost += net_house_kw * buy_h * dur_h
 
         recharge_cost_per_kwh = buy_price_min / efficiency if efficiency > 0 else buy_price_min
         house_drag_per_kwh = house_drag_cost / truly_exportable_kwh if truly_exportable_kwh > 0 else 0.0
@@ -738,17 +745,29 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ):
             should_grid_charge = True
 
-        # ── Price chart data (chronological buy + sell per slot) ─────────────
+        # ── Price chart data ──────────────────────────────────────────────────
+        # When price_resolution_15min is enabled: emit every native slot (15-min or
+        # whatever the DSO provides via EVCC).  Otherwise deduplicate to one row per
+        # hour (backward-compatible Lovelace behaviour).
+        price_resolution_15min = self._stored.get("price_resolution_15min", False)
         price_chart_slots: list[dict] = []
-        for h, spot in grid_slots:
-            buy_slot = round((spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor, 3)
-            sell_slot = round(max(0.0, spot - export_fee - feed_in_tariff), 3)
-            price_chart_slots.append({"h": h, "buy": buy_slot, "sell": sell_slot})
+        if price_resolution_15min:
+            for slot_start, dur_h, h, m, spot in grid_slot_data:
+                buy_slot = round((spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor, 3)
+                sell_slot = round(max(0.0, spot - export_fee - feed_in_tariff), 3)
+                price_chart_slots.append({"h": h, "m": m, "buy": buy_slot, "sell": sell_slot})
+        else:
+            seen_ch: set[int] = set()
+            for slot_start, dur_h, h, m, spot in grid_slot_data:
+                if h not in seen_ch:
+                    seen_ch.add(h)
+                    buy_slot = round((spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor, 3)
+                    sell_slot = round(max(0.0, spot - export_fee - feed_in_tariff), 3)
+                    price_chart_slots.append({"h": h, "m": 0, "buy": buy_slot, "sell": sell_slot})
 
         # ── Tonight's plan (best charge + export windows in next 24h) ────────
+        # Always uses hourly deduplication regardless of display resolution.
         if price_chart_slots:
-            # Cheapest buy hours — pick top-3 unique hours (EVCC returns 15-min slots,
-            # so multiple slots per hour are possible; deduplicate to avoid repetition)
             sorted_by_buy = sorted(price_chart_slots, key=lambda s: s["buy"])
             seen_buy: set[int] = set()
             charge_hours = []
@@ -1383,6 +1402,37 @@ def _current_slot_forecast(rates: list[dict], now: datetime) -> float | None:
         if start <= now < end:
             return float(rate["value"])
     return None
+
+
+def _forecast_slots(
+    rates: list[dict], now: datetime, hours: float
+) -> list[tuple]:
+    """Return (slot_start, duration_h, local_hour, local_minute, value) for each slot.
+
+    Handles any slot granularity (15-min, 30-min, 1h) automatically by deriving
+    the duration from the gap to the next slot.  Falls back to 15 minutes for the
+    last slot.  Slots are returned in ascending time order.
+    """
+    cutoff = now + timedelta(hours=hours)
+    parsed: list[tuple] = []
+    for rate in rates:
+        start = datetime.fromisoformat(rate["start"])
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        parsed.append((start, rate["value"]))
+    parsed.sort(key=lambda x: x[0])
+
+    result: list[tuple] = []
+    for i, (start, value) in enumerate(parsed):
+        if not (now <= start < cutoff):
+            continue
+        if i + 1 < len(parsed):
+            dur_h = (parsed[i + 1][0] - start).total_seconds() / 3600
+        else:
+            dur_h = 0.25  # default 15 min for the last slot
+        local = start.astimezone()
+        result.append((start, dur_h, local.hour, local.minute, value))
+    return result
 
 
 def _forecast_values(rates: list[dict], now: datetime, hours: float) -> list[float]:
