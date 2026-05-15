@@ -25,6 +25,12 @@ All thresholds are adjustable via live dashboard controls. No YAML editing, no r
 - **Grid charging** — charges the battery when the all-in buy price (spot + markup + network tariff + elafgift) × VAT is in the cheapest 25th percentile of the next 24 hours, then uses or exports that energy when prices rise
 - **Battery export** — activates FoxESS *Feed-in First* mode to push battery energy to the grid, but **only when the current price is at or above the 75th percentile** of the day — reserving stored energy for true evening peaks, not mediocre mid-day prices
 - **Minimum spread threshold** — configurable minimum price difference (sell − cheapest buy) before arbitrage triggers. Live slider on the dashboard (0.10–3.00 DKK/kWh)
+- **Minimum export price floor** — configurable floor below which Solar AI will never export, even at technically positive prices. Useful if you want to avoid selling at prices you consider too low. Default 0.00 blocks only negative/zero prices
+- **Export power cap** — optionally cap the battery's discharge rate during export (0–10 kW). Useful if your grid connection or feed-in contract has a power limit. Default 0 = no cap
+
+### 🚫 Negative Price Guard
+- **Export blocked** when the net export price is at or below your configured floor (prevents selling at a loss)
+- **Forced grid charge** when the buy price drops to or below zero — if the grid is paying you to consume electricity, Solar AI charges the battery regardless of the spread threshold or EV schedule
 
 ### 💶 Full Price Stack — Buy & Sell Side
 
@@ -32,12 +38,12 @@ Solar AI computes accurate buy and sell prices using all relevant cost component
 
 **Buy-side (what you pay per kWh from the grid):**
 ```
-(spot price + retailer markup + DSO network tariff + elafgift) × VAT
+(spot price + retailer markup + DSO network tariff + Energinet tariff + elafgift) × VAT
 ```
 
 **Sell-side (what you receive per kWh exported):**
 ```
-spot price − sell-side fee
+spot price − sell-side fee − indfødningstarif (DSO + Energinet, auto-fetched)
 ```
 
 All components are live-configurable number entities in the dashboard:
@@ -48,6 +54,7 @@ All components are live-configurable number entities in the dashboard:
 | Sell-side fee | 0.00 DKK/kWh | Per-kWh cut taken by your electricity seller on exports |
 | Spot price markup | 0.00 DKK/kWh | Retailer's add-on on top of spot price (handelstillæg / abonnementstillæg) |
 | Elafgift | 0.01 DKK/kWh | Danish government electricity duty |
+| Min. export price | 0.00 DKK/kWh | Floor below which Solar AI will not export |
 
 ### 🌐 Hourly Network Tariff Integration
 
@@ -55,8 +62,20 @@ Solar AI automatically fetches your grid operator's hourly time-of-use tariffs f
 
 - **DSO nettarif C time** — the time-varying hourly network tariff from your local grid operator (e.g. Dinel/Jutland/Fyn), fetched by GLN number
 - **Energinet transmission tariff** — system and transmission charges from the national TSO (code `40000`)
+- **Auto-fetched indfødningstarif** — Solar AI also retrieves your DSO's feed-in production tariff (e.g. Nettarif indfødning C, code `TC_IND_03`) and the Energinet production tariff (code `40010`) and deducts them automatically from the export price. No manual entry needed — they update daily
 - Select your DSO from the **Grid operator (DSO)** dropdown in *Settings → Integrations → Solar AI → Configure*. Dinel (Jutland/Fyn) is available now; more DSOs will be added over time
 - The `Grid tariff this hour` sensor shows the combined DSO + Energinet + elafgift for the current hour
+- The `Feed-in tariff` sensor shows the combined auto-fetched indfødningstarif (DSO + Energinet) currently being deducted from your export price
+
+### 📊 24h Price Chart & Tonight's Plan
+
+- **24h price chart** — a markdown card in the dashboard renders a live table of all upcoming hourly buy and sell prices, colour-coded by quartile (🟢 cheap / 🟡 normal / 🔴 expensive), with ⚡ and 💰 markers showing which hours are planned for charging and export
+- **Tonight's plan** — a `todays_plan` sensor shows the full list of planned charge and export hours in plain text, plus a visual grid view in the dashboard. The plan only includes export hours where the price exceeds your configured minimum floor
+
+### 🔔 Mode-Change Notifications
+- Optional persistent notifications in HA whenever Solar AI changes operating mode (export → normal, grid charging → normal, etc.)
+- Includes the reason for the transition (e.g. "Exporting: price 1.23 ≥ p75 1.10 DKK/kWh")
+- Toggle on/off with the **Notifications** switch in the dashboard — no restart needed
 
 ### 🌞 Solar-Aware Decision Making
 - **Solcast integration** (via EVCC) — uses your roof's 24-hour solar forecast
@@ -102,6 +121,7 @@ Solar AI automatically fetches your grid operator's hourly time-of-use tariffs f
 - **Missed savings** — estimated opportunity cost when the system is switched off
 - Available for: today / 7 days / 30 days
 - Stored in a 90-day rolling log that survives HA restarts
+- Correctly excludes hours blocked by the minimum export price floor from both actual and missed calculations
 
 ### ⏱️ Split-Rate Polling
 - **Live state** (grid power, solar production, EV status, battery mode) is fetched on every fast-poll tick
@@ -117,11 +137,14 @@ All key thresholds are adjustable from the dashboard without restarting HA:
 | Battery floor SoC (export minimum) | 10–100 % | 50 % |
 | Battery max SoC (grid charge ceiling) | 10–100 % | 100 % |
 | Minimum arbitrage spread | 0.10–3.00 DKK/kWh | 1.00 |
+| Minimum export price floor | 0.00–2.00 DKK/kWh | 0.00 |
+| Export power cap | 0–10 kW | 0 (no cap) |
 | Grid import limit | 5–63 kW | 17 kW |
 | Buy-side VAT | 0–50 % | 25 % |
 | Sell-side fee | 0.00–0.50 DKK/kWh | 0.00 |
 | Spot price markup | 0.00–0.50 DKK/kWh | 0.00 |
 | Elafgift | 0.00–3.00 DKK/kWh | 0.01 |
+| Notifications | On / Off | Off |
 
 ---
 
@@ -133,7 +156,7 @@ You need all of the following already working in Home Assistant:
 |-----------|---------|------|
 | FoxESS Modbus integration | Read battery SoC, temperature, power; set work mode and charge power | [GitHub](https://github.com/nathanmarlor/foxess_modbus) |
 | EVCC | Solar forecast (Solcast), live grid power, EV charge power, battery mode API | [evcc.io](https://evcc.io) |
-| Strømligning | Electricity spot prices (Denmark) | [stromligning.dk](https://www.stromligning.dk) |
+| Spot price entity | Any HA sensor that exposes the hourly spot price excl. VAT in DKK/kWh (e.g. [Strømligning](https://www.stromligning.dk), Energi Data Service, or similar) | — |
 | Solcast | Solar production forecast — connected to EVCC | [solcast.com](https://solcast.com) |
 
 ### Default FoxESS Modbus entity IDs
@@ -175,22 +198,32 @@ Via HACS: add this repository as a custom repository and install from there.
 The setup wizard walks you through:
 1. **EVCC URL** — e.g. `http://your-ha-ip:7070`
 2. **FoxESS entities** — auto-detected; override if your names differ
-3. **Strømligning entity** — select your spot price sensor (excl. VAT)
+3. **Spot price entity** — select any HA sensor exposing hourly spot price excl. VAT in DKK/kWh
 4. **Battery & trading parameters** — capacity, efficiency, initial thresholds, DSO, currency
 5. **Dashboard** — optionally link an existing Lovelace dashboard
 
 ### 4. Import the dashboard
 
-Import `dashboard/battery_arbitrage_dashboard.yaml` via **Settings → Dashboards → Add Dashboard → From YAML**.
+Two dashboard files are included:
+
+| File | Language |
+|------|----------|
+| `dashboard/dashboard_da.yaml` | Danish |
+| `dashboard/dashboard_en.yaml` | English |
+
+Import via **Settings → Dashboards → Add Dashboard → From YAML**.
 
 ### 5. Set your electricity cost parameters
 
-In the dashboard, set the **Priskonfiguration** card values to match your electricity contract:
+In the dashboard, set the **Priskonfiguration / Price Configuration** card values to match your electricity contract:
 
 - **Elafgift** — the Danish government electricity duty (check your bill)
-- **Spotpris-tillæg** — your retailer's per-kWh add-on (handelstillæg / abonnementstillæg)
-- **Moms** — leave at 25% for Denmark
-- **Salgsgebyr** — your retailer's per-kWh cut on exports (if any)
+- **Spotpris-tillæg / Spot markup** — your retailer's per-kWh add-on (handelstillæg / abonnementstillæg)
+- **Moms / VAT** — leave at 25% for Denmark
+- **Salgsgebyr / Sell-side fee** — your retailer's per-kWh cut on exports (if any)
+- **Min. eksportpris / Min. export price** — optional floor below which Solar AI won't export (default 0.00)
+
+The **indfødningstarif** (DSO + Energinet feed-in production tariff) is fetched and deducted automatically — no manual entry needed.
 
 ### 6. Start monitoring, then enable
 
@@ -206,7 +239,7 @@ Every 5 minutes:
 1. Fetch EVCC state     → grid power, solar forecast, EV charge power, battery mode
 2. Fetch prices         → 24h spot price array → min, max, mean, p25, p75
                           buy-side: (spot + markup + DSO tariff + Energinet tariff + elafgift) × VAT
-                          sell-side: spot − sell-side fee
+                          sell-side: spot − sell-side fee − indfødningstarif (auto-fetched)
 3. Read FoxESS          → SoC, cell temp, charge/discharge power, work mode
 4. Update models        → load history, solar accuracy, EV hourly probability, daily solar kWh
 5. Compute headroom     → grid limit − 0.5 kW − current grid import
@@ -214,6 +247,7 @@ Every 5 minutes:
 
    EXPORT?       sell price ≥ p75 (of sell-side prices)
              AND spread ≥ threshold
+             AND sell price > min export price floor
              AND exportable kWh ≥ 0.5
              AND SoC > floor
              AND no EV charging (now/minpv mode)
@@ -225,9 +259,13 @@ Every 5 minutes:
              AND headroom ≥ 0.3 kW
              AND EV unlikely to charge this hour
 
+   FORCED CHARGE if buy price ≤ 0 (grid pays you to consume — overrides all other checks)
+
 7. Act if enabled       → set FoxESS work mode, capped charge power, EVCC mode
-8. Track savings        → accumulate actual/missed DKK into daily log
-9. Save to storage      → learned rates, load history, EV probabilities, solar history
+                          optionally cap discharge power to max_export_kw
+8. Notify (optional)    → persistent HA notification on every mode transition
+9. Track savings        → accumulate actual/missed DKK into daily log
+10. Save to storage     → learned rates, load history, EV probabilities, solar history
 ```
 
 ---
@@ -238,18 +276,37 @@ Every 5 minutes:
 | Entity | Description |
 |--------|-------------|
 | `switch.*_arbitrage_aktiv` | Master on/off switch |
+| `switch.*_notifikationer_ved_tilstandsskift` | Toggle mode-change notifications |
 | `sensor.*_driftstilstand` | Current mode: `normal` / `exporting` / `grid_charging` / `disabled` |
 | `sensor.*_begrundelse_for_tilstand` | Plain-language reason for the current decision |
 
 ### Price sensors
 | Entity | Description |
 |--------|-------------|
-| `sensor.*_eksportpris` | Current export price (DKK/kWh) |
-| `sensor.*_net_arbitrage_spread` | Spread: export price − 24 h minimum |
+| `sensor.*_eksportpris` | Current net export price (DKK/kWh); never < 0 |
+| `sensor.*_net_arbitrage_spread` | Spread: export price − 24 h minimum buy price |
 | `sensor.*_24h_prisminimum/maksimum/gennemsnit` | 24 h price statistics |
 | `sensor.*_24h_pris_25/75_percentil` | Quartile thresholds used for decisions |
 | `sensor.*_naeste_slots_pris` | Price for the next 30-minute slot |
 | `sensor.*_nettarif_denne_time` | Total grid tariff this hour: DSO + Energinet + elafgift (DKK/kWh) |
+| `sensor.*_indfodningstarif_dso_energinet` | Auto-fetched feed-in production tariff currently deducted from export price (DKK/kWh) |
+| `sensor.*_minimum_eksportpris` | Configured minimum export price floor, displayed at 2 decimal places (DKK/kWh) |
+| `sensor.*_24h_priskort` | 24 h price chart sensor; `slots` attribute contains list of `{h, buy, sell}` dicts |
+| `sensor.*_dagens_plan` | Tonight's plan in plain text; `charge_hours` and `export_hours` attributes |
+
+### Number entities (live-configurable)
+| Entity | Range | Description |
+|--------|-------|-------------|
+| `number.*_minimum_arbitrage_spread` | 0.10–3.00 DKK/kWh | Spread threshold before arbitrage triggers |
+| `number.*_minimum_eksportpris_*` | 0.00–2.00 DKK/kWh | Minimum export price floor (editable) |
+| `number.*_eksporteffekt_graense_*` | 0–10 kW | Max battery discharge power during export (0 = no cap) |
+| `number.*_salgsgebyr_pr_kwh` | 0.00–0.50 DKK/kWh | Sell-side fee |
+| `number.*_spotpris_tillaeg_*` | 0.00–0.50 DKK/kWh | Retailer spot price markup |
+| `number.*_elafgift_dkk_kwh` | 0.00–3.00 DKK/kWh | Elafgift |
+| `number.*_moms_pa_kob` | 0–50 % | VAT on purchases |
+| `number.*_minimum_soc_eksport` | 10–100 % | Battery floor SoC for export |
+| `number.*_maksimum_soc_netopladning` | 10–100 % | Battery max SoC for grid charging |
+| `number.*_net_importgraense` | 5–63 kW | Circuit breaker capacity |
 
 ### Solar sensors
 | Entity | Description |
@@ -309,13 +366,16 @@ All settings are available in **Settings → Devices & Services → Solar AI →
 | Min SoC during export | 50 % | ✅ Dashboard slider | Battery will not export below this SoC |
 | Max SoC for grid charge | 100 % | ✅ Dashboard slider | Battery will not grid-charge above this SoC |
 | Min arbitrage spread | 1.00 DKK/kWh | ✅ Dashboard slider | Minimum sell−buy spread to trigger arbitrage |
-| Min solar export price | 0.50 DKK/kWh | No (config flow) | Minimum price to export solar surplus |
+| Min export price floor | 0.00 DKK/kWh | ✅ Dashboard input | Floor below which Solar AI will not export; blocks negative/zero prices by default |
+| Export power cap | 0 kW | ✅ Dashboard input | Max battery discharge power during export; 0 = no cap |
 | Grid import limit | 17 kW | ✅ Dashboard input | Circuit breaker capacity for overcurrent protection |
 | Buy-side VAT | 25 % | ✅ Dashboard input | VAT on grid electricity purchases |
 | Sell-side fee | 0.00 DKK/kWh | ✅ Dashboard slider | Retailer's per-kWh cut on exports |
 | Spot price markup | 0.00 DKK/kWh | ✅ Dashboard input | Retailer's add-on to spot price (handelstillæg) |
 | Elafgift | 0.01 DKK/kWh | ✅ Dashboard input | Danish electricity duty |
-| Grid operator (DSO) | Dinel (Jutland/Fyn) | Options flow | DSO for hourly network tariff data |
+| Indfødningstarif (DSO + Energinet) | Auto-fetched | Read-only sensor | Feed-in production tariff deducted from export price; updated daily from Energi Data Service |
+| Notifications | Off | ✅ Dashboard switch | Send a persistent HA notification on every mode change |
+| Grid operator (DSO) | Dinel (Jutland/Fyn) | Options flow | DSO for hourly network tariff and indfødningstarif data |
 | Currency | DKK | Options flow | Price and savings sensor currency (DKK, EUR, SEK, NOK, GBP) |
 | Live data poll interval | 30 s | Options flow | How often EVCC live state is fetched (10–300 s) |
 
@@ -334,10 +394,10 @@ All settings are available in **Settings → Devices & Services → Solar AI →
 
 ## Known limitations
 
-- **Denmark-focused** — built around DKK/kWh spot prices from Strømligning. Other markets need a different price entity and currency unit; the currency selector covers the display unit but the tariff APIs are Danish-specific.
+- **Denmark-focused** — built around DKK/kWh spot prices and the Energi Data Service tariff APIs. Any HA sensor can be used as the spot price source, but tariff fetching (DSO nettarif and indfødningstarif) is Danish-specific.
 - **FoxESS Modbus required** — work mode control uses FoxESS-specific entities. Other inverters need code changes in `coordinator.py`.
 - **EVCC required** — solar forecasts, live grid power, and EV charge data come from EVCC's API.
-- **DSO coverage** — network tariff auto-fetch currently covers Dinel (Jutland/Fyn). Other Danish DSOs can be added in `const.py`; their GLN numbers are available in the Energi Data Service DatahubPricelist.
+- **DSO coverage** — network tariff and indfødningstarif auto-fetch currently covers Dinel (Jutland/Fyn). Other Danish DSOs can be added in `const.py`; their GLN numbers are available in the Energi Data Service DatahubPricelist.
 - **Learning period** — the system works best after 1–2 weeks of data. During the first few days it uses conservative defaults for charge rates and EV patterns.
 
 ---
