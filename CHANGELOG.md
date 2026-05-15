@@ -9,6 +9,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.19.0] — 2026-05-15
+
+### Changed
+- **Arbitrage spread model now accounts for house load drag and round-trip efficiency**
+
+  Previously the spread was simply `export_price − buy_price_min`, which ignored two real costs:
+
+  1. **Round-trip losses on the recharge**: to restore what we sold we must buy more kWh than we exported. The recharge cost is now `buy_price_min ÷ round_trip_efficiency` instead of `buy_price_min` flat.
+
+  2. **House load drag**: while the battery is depleted (from now until the cheapest recharge slot), the house must buy from the grid instead of drawing from the battery. The model now calculates this cost hour by hour using the actual forecast buy prices for each hour in the drag window, offset by expected solar production (`solar_forecast_24h ÷ 24` per hour). The drag cost is divided by the exportable kWh to get a per-kWh penalty that is subtracted from the spread.
+
+  The temperature-adaptive learned charge rate determines how quickly the battery can recover once charging starts, and the drag window ends precisely when the cheapest charge slot begins.
+
+  Net effect: the model will be more conservative — it will decline exports whose headline spread looked attractive but whose actual net profit (after recharge cost and grid house load during depletion) is below the minimum spread threshold.
+
+---
+
 ## [0.18.3] — 2026-05-15
 
 ### Changed
