@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.16.2] — 2026-05-15
+
+### Changed
+- **README fully updated** — documents all features added since v0.11.2: negative price guard, 24h price chart, tonight's plan, generic spot price source, export power cap, mode-change notifications, minimum export price floor, auto-fetched indfødningstarif, feed-in tariff sensor, mirror display sensor, and Price Breakdown floor indicator. Updated sell-side price formula, decision loop, sensors reference, configuration table, dashboard section, prerequisites, and known limitations.
+
+---
+
 ## [0.16.1] — 2026-05-15
 
 ### Changed
