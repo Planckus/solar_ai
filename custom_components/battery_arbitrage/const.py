@@ -19,7 +19,8 @@ CONF_DASHBOARD_URL_PATH = "dashboard_url_path"
 CONF_FOXESS_WORK_MODE_ENTITY = "foxess_work_mode_entity"
 CONF_FOXESS_FORCE_CHARGE_ENTITY = "foxess_force_charge_entity"
 CONF_FOXESS_FORCE_DISCHARGE_ENTITY = "foxess_force_discharge_entity"
-CONF_STROMLIGNING_ENTITY = "stromligning_entity"
+CONF_STROMLIGNING_ENTITY = "stromligning_entity"   # legacy key — migrated to CONF_SPOT_PRICE_ENTITY
+CONF_SPOT_PRICE_ENTITY = "spot_price_entity"        # generic spot-price source (any DKK/kWh sensor)
 
 # Defaults
 DEFAULT_EVCC_URL = "http://192.168.1.2:7070"
@@ -143,6 +144,7 @@ GRID_MIN_CHARGE_KW = 0.3            # Minimum useful battery charge rate under h
 # Spot price markup (retailer's per-kWh margin on top of raw spot price)
 CONF_SPOT_MARKUP = "spot_markup"
 DEFAULT_SPOT_MARKUP = 0.0               # DKK/kWh — user-adjustable via number entity
+DEFAULT_MAX_EXPORT_KW = 0.0             # kW — 0 = no cap; set > 0 to limit inverter export power
 
 # DSO tariff integration — DatahubPricelist API
 CONF_DSO_GLN = "dso_gln"

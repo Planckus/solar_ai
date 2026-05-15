@@ -94,6 +94,9 @@ from .const import (
     CAPACITY_MIN_CHARGE_KW,
     CAPACITY_MIN_SAMPLES,
     CAPACITY_MAX_SAMPLES,
+    CONF_SPOT_PRICE_ENTITY,
+    CONF_STROMLIGNING_ENTITY,
+    DEFAULT_MAX_EXPORT_KW,
     DEFAULT_SPOT_MARKUP,
     EFFICIENCY_MIN_TOTAL_KWH,
 )
@@ -255,6 +258,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "export_fee": DEFAULT_EXPORT_FEE,
                 "elafgift": DEFAULT_ELAFGIFT_DKK_KWH,
                 "spot_markup": DEFAULT_SPOT_MARKUP,
+                "max_export_kw": DEFAULT_MAX_EXPORT_KW,
+                "notifications_enabled": False,
                 "ev_charge_hourly": [0.0] * 24,
                 "solar_daily_kwh": [],
                 "solar_today_kwh": 0.0,
@@ -292,6 +297,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("export_fee", DEFAULT_EXPORT_FEE)
             self._stored.setdefault("elafgift", DEFAULT_ELAFGIFT_DKK_KWH)
             self._stored.setdefault("spot_markup", DEFAULT_SPOT_MARKUP)
+            self._stored.setdefault("max_export_kw", DEFAULT_MAX_EXPORT_KW)
+            self._stored.setdefault("notifications_enabled", False)
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
 
@@ -530,17 +537,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         current_work_mode = self.hass.states.get(FOXESS_WORK_MODE_ENTITY)
         work_mode_str = current_work_mode.state if current_work_mode else WORK_MODE_SELF_USE
 
-        # ---- strømligning export price ----
-        spot_state = self.hass.states.get(
-            self.config.get("stromligning_entity", "sensor.stromligning_spotprice_ex_vat")
+        # ---- spot price entity (generic; was stromligning_entity before v7) ----
+        # Prefer the new key, fall back to legacy key for installs that haven't migrated yet
+        spot_entity_id = (
+            self.config.get(CONF_SPOT_PRICE_ENTITY)
+            or self.config.get(CONF_STROMLIGNING_ENTITY)
+            or STROMLIGNING_SPOTPRICE_EX_VAT
         )
+        spot_state = self.hass.states.get(spot_entity_id)
         spot_ex_vat = (
             float(spot_state.state)
             if spot_state and spot_state.state not in ("unknown", "unavailable")
             else 0.0
         )
         export_fee = self._stored.get("export_fee", DEFAULT_EXPORT_FEE)
-        export_price = max(0.0, spot_ex_vat - export_fee)
+        # Raw export price before negative-price guard (used in chart / plan)
+        export_price_raw = spot_ex_vat - export_fee
+        export_price = max(0.0, export_price_raw)
 
         # ---- load model (reads from storage, always fresh) ----
         load_history = self._stored.get("load_history", [])
@@ -652,6 +665,65 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
         )
 
+        # ── Negative-price guards ────────────────────────────────────────────
+        # Never export when grid is paying consumers to take power — export_price_raw ≤ 0
+        # means we'd receive nothing (or pay) for exported energy.
+        if export_price_raw <= 0.0:
+            should_export = False
+
+        # If grid is paying US to buy electricity (buy price ≤ 0), always charge if there's
+        # room — this overrides the spread threshold and even the EV schedule check.
+        if (
+            buy_price_next_slot <= 0.0
+            and not should_export
+            and importable_kwh >= MIN_GRID_CHARGE_KWH
+            and battery_soc < max_soc
+            and not evcc_managing_battery
+            and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
+        ):
+            should_grid_charge = True
+
+        # ── Price chart data (chronological buy + sell per slot) ─────────────
+        price_chart_slots: list[dict] = []
+        for h, spot in grid_slots:
+            buy_slot = round((spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor, 3)
+            sell_slot = round(max(0.0, spot - export_fee), 3)
+            price_chart_slots.append({"h": h, "buy": buy_slot, "sell": sell_slot})
+
+        # ── Tonight's plan (best charge + export windows in next 24h) ────────
+        if price_chart_slots:
+            # Cheapest buy hours — pick top-3 unique hours (EVCC returns 15-min slots,
+            # so multiple slots per hour are possible; deduplicate to avoid repetition)
+            sorted_by_buy = sorted(price_chart_slots, key=lambda s: s["buy"])
+            seen_buy: set[int] = set()
+            charge_hours = []
+            for s in sorted_by_buy:
+                if s["h"] not in seen_buy:
+                    seen_buy.add(s["h"])
+                    charge_hours.append(s["h"])
+                if len(charge_hours) >= 3:
+                    break
+            charge_hours.sort()
+
+            # Most valuable sell hours — same deduplication
+            sorted_by_sell = sorted(price_chart_slots, key=lambda s: -s["sell"])
+            seen_sell: set[int] = set()
+            export_hours = []
+            for s in sorted_by_sell:
+                if s["h"] not in seen_sell:
+                    seen_sell.add(s["h"])
+                    export_hours.append(s["h"])
+                if len(export_hours) >= 3:
+                    break
+            export_hours.sort()
+
+            charge_str = ", ".join(f"{h:02d}h" for h in charge_hours) if charge_hours else "none"
+            export_str = ", ".join(f"{h:02d}h" for h in export_hours) if export_hours else "none"
+            plan_text = f"Charge: {charge_str}  ·  Export: {export_str}"
+        else:
+            charge_hours = export_hours = []
+            plan_text = "No price data"
+
         # ---- execute action (skipped when disabled — data still reported) ----
         if self._enabled:
             new_mode, reason = await self._execute_decision(
@@ -743,6 +815,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             capacity_source="learned" if learned_capacity is not None else "configured",
             efficiency_source="auto" if auto_efficiency is not None else "configured",
             capacity_sample_count=len(self._stored.get("capacity_samples", [])),
+            price_chart_slots=price_chart_slots,
+            plan_text=plan_text,
+            plan_charge_hours=charge_hours,
+            plan_export_hours=export_hours,
             **savings,
         )
 
@@ -796,13 +872,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 reason = f"EV typically charges now ({ev_block_prob:.0%} learned) — skipping grid charge"
 
         if target_mode != self._current_mode:
-            await self._transition_to(target_mode, capped_charge_rate_kw)
+            await self._transition_to(target_mode, capped_charge_rate_kw, reason=reason)
 
         self._current_mode = target_mode
         self._mode_reason = reason
         return target_mode, reason
 
-    async def _transition_to(self, new_mode: str, capped_charge_rate_kw: float = 0.0) -> None:
+    async def _transition_to(
+        self,
+        new_mode: str,
+        capped_charge_rate_kw: float = 0.0,
+        reason: str = "",
+    ) -> None:
         """Handle transition between operating modes."""
         _LOGGER.info("Battery Arbitrage: transitioning %s → %s", self._current_mode, new_mode)
 
@@ -814,6 +895,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # Feed-in First: inverter pushes battery + solar to grid
             await self._set_work_mode(WORK_MODE_EXPORT)
             await self._set_export_limit(inverter_id, 10000)
+            # Apply export power cap if configured (0 = no cap)
+            max_export_kw = float(self._stored.get("max_export_kw", DEFAULT_MAX_EXPORT_KW))
+            if max_export_kw > 0:
+                await self._set_discharge_power(max_export_kw)
             # Tell EVCC to hold so it doesn't fight our export
             self._we_set_evcc_mode = True
             await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
@@ -833,6 +918,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             if self._we_set_evcc_mode:
                 self._we_set_evcc_mode = False
                 await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_NORMAL}")
+
+        # Send HA notification on mode change if enabled
+        if self._stored.get("notifications_enabled", False):
+            await self._send_mode_notification(self._current_mode, new_mode, reason)
 
     async def _set_work_mode(self, mode: str) -> None:
         entity = self.config.get("foxess_work_mode_entity", "select.foxessmodbus_work_mode")
@@ -885,6 +974,47 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("Battery Arbitrage: force charge power → %dW", rate_w)
         except Exception as err:
             _LOGGER.error("Failed to set force charge power: %s", err)
+
+    async def _set_discharge_power(self, max_kw: float) -> None:
+        """Set the Force Discharge power entity to cap grid export at max_kw."""
+        rate_w = int(max_kw * 1000)
+        entity = self.config.get("foxess_force_discharge_entity", FOXESS_FORCE_DISCHARGE_ENTITY)
+        try:
+            await self.hass.services.async_call(
+                "number", "set_value",
+                {"entity_id": entity, "value": rate_w},
+                blocking=True,
+            )
+            _LOGGER.debug("Battery Arbitrage: force discharge power capped → %dW", rate_w)
+        except Exception as err:
+            _LOGGER.error("Failed to set force discharge power: %s", err)
+
+    async def _send_mode_notification(
+        self, old_mode: str, new_mode: str, reason: str
+    ) -> None:
+        """Fire a persistent HA notification when the operating mode changes."""
+        _MODE_NAMES = {
+            MODE_NORMAL: "Self-use",
+            MODE_EXPORTING: "Exporting",
+            MODE_GRID_CHARGING: "Grid charging",
+            MODE_DISABLED: "Disabled",
+        }
+        old_name = _MODE_NAMES.get(old_mode, old_mode)
+        new_name = _MODE_NAMES.get(new_mode, new_mode)
+        title = f"Solar AI: {new_name}"
+        message = reason or f"Mode changed from {old_name} to {new_name}"
+        try:
+            await self.hass.services.async_call(
+                "persistent_notification", "create",
+                {
+                    "title": title,
+                    "message": message,
+                    "notification_id": "battery_arbitrage_mode",
+                },
+                blocking=False,
+            )
+        except Exception as err:
+            _LOGGER.warning("Failed to send mode notification: %s", err)
 
     async def _evcc_post(self, session: aiohttp.ClientSession, base_url: str, path: str) -> None:
         try:

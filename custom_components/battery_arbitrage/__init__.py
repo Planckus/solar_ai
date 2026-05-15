@@ -12,6 +12,8 @@ from .const import (
     CONF_DSO_GLN,
     CONF_FAST_POLL_INTERVAL,
     CONF_SPOT_MARKUP,
+    CONF_SPOT_PRICE_ENTITY,
+    CONF_STROMLIGNING_ENTITY,
     DOMAIN,
     CONF_BATTERY_CAPACITY,
     CONF_BATTERY_FLOOR_SOC,
@@ -31,6 +33,7 @@ from .const import (
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_ROUND_TRIP_EFFICIENCY,
     DEFAULT_SPOT_MARKUP,
+    STROMLIGNING_SPOTPRICE_EX_VAT,
 )
 from .coordinator import BatteryArbitrageCoordinator
 
@@ -106,6 +109,21 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data.setdefault(CONF_SPOT_MARKUP, DEFAULT_SPOT_MARKUP)
         hass.config_entries.async_update_entry(entry, data=new_data, version=6)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v6")
+
+    if entry.version < 7:
+        # v6 → v7: rename stromligning_entity → spot_price_entity for generic price source
+        # support.  Preserves the user's existing entity selection verbatim.
+        old_entity = new_data.pop(CONF_STROMLIGNING_ENTITY, None)
+        if old_entity:
+            new_data[CONF_SPOT_PRICE_ENTITY] = old_entity
+            _LOGGER.info(
+                "Battery Arbitrage: migrated spot price entity key (%s)", old_entity
+            )
+        else:
+            # Seed with the well-known Strømligning default so existing installs don't break
+            new_data.setdefault(CONF_SPOT_PRICE_ENTITY, STROMLIGNING_SPOTPRICE_EX_VAT)
+        hass.config_entries.async_update_entry(entry, data=new_data, version=7)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v7")
 
     return True
 
