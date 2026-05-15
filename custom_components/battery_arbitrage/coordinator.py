@@ -6,6 +6,7 @@ import logging
 import statistics
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiohttp
 from homeassistant.core import HomeAssistant
@@ -40,6 +41,11 @@ from .const import (
     EV_CHARGE_BLOCK_PROBABILITY,
     EV_CHARGE_THRESHOLD_W,
     EV_LEARNING_ALPHA,
+    EV_MAX_KW_HIGH_POWER_FRACTION,
+    EV_MAX_KW_LEARNING_ALPHA,
+    HOUSE_LOAD_LEARNING_ALPHA,
+    HOUSE_LOAD_OUTLIER_FACTOR,
+    HOUSE_LOAD_WARM_THRESHOLD_KW,
     SEASON_SOLAR_THRESHOLD_KWH,
     SOLAR_DAILY_SAMPLES_MAX,
     DOMAIN,
@@ -102,6 +108,9 @@ from .const import (
     CAPACITY_MAX_SAMPLES,
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
+    CONF_PRICE_AREA,
+    DEFAULT_PRICE_AREA,
+    EDS_ELSPOT_URL,
     DEFAULT_MAX_EXPORT_KW,
     DEFAULT_MIN_EXPORT_PRICE,
     DEFAULT_SPOT_MARKUP,
@@ -145,6 +154,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._vacation_mode: bool = False  # Cached between learning ticks
         # Export limit tracker — avoids unnecessary register writes; -1 forces first write
         self._last_export_limit: int = -1
+        # Day-ahead DP optimizer plan — list of {hour, action, soc, buy, sell}
+        self._optimizer_plan: list[dict] = []
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -288,6 +299,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("solar_accuracy_samples", [])
             self._stored.setdefault("savings_log", [])
             self._stored.setdefault("ev_charge_hourly", [0.0] * 24)
+            self._stored.setdefault("ev_max_kw", 0.0)
+            self._stored.setdefault("house_load_hourly", [0.0] * 24)
             self._stored.setdefault("solar_daily_kwh", [])
             self._stored.setdefault("solar_today_kwh", 0.0)
             self._stored.setdefault("solar_today_date", "")
@@ -381,16 +394,37 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         )
         if tariff_stale:
             try:
-                solar_data, grid_data = await asyncio.gather(
+                price_area = self.config.get(CONF_PRICE_AREA, DEFAULT_PRICE_AREA)
+                # Fetch solar forecast + EDS spot prices in parallel
+                solar_data, eds_data = await asyncio.gather(
                     self._fetch_json(session, f"{evcc_url}{EVCC_API_SOLAR}"),
-                    self._fetch_json(session, f"{evcc_url}{EVCC_API_GRID}"),
+                    self._fetch_eds_prices(session, price_area, now),
                 )
                 self._cached_solar_rates = solar_data
-                self._cached_grid_rates = grid_data
+                if eds_data.get("rates"):
+                    self._cached_grid_rates = eds_data
+                    _LOGGER.debug(
+                        "EDS: %d spot price slots for area %s",
+                        len(eds_data["rates"]), price_area,
+                    )
+                else:
+                    # EDS returned nothing — fall back to EVCC grid tariff
+                    _LOGGER.info(
+                        "EDS spot prices unavailable for %s — falling back to EVCC grid tariff",
+                        price_area,
+                    )
+                    try:
+                        grid_data = await self._fetch_json(session, f"{evcc_url}{EVCC_API_GRID}")
+                        if grid_data.get("rates"):
+                            self._cached_grid_rates = grid_data
+                        else:
+                            _LOGGER.warning("EVCC grid tariff also returned no rates")
+                    except Exception as evcc_err:
+                        _LOGGER.debug("EVCC grid tariff fallback failed: %s", evcc_err)
                 self._last_tariff_refresh = now
             except Exception as err:
                 if self._last_tariff_refresh is None:
-                    raise UpdateFailed(f"Could not fetch initial tariff data: {err}") from err
+                    raise UpdateFailed(f"Could not fetch initial price data: {err}") from err
                 _LOGGER.warning("Tariff refresh failed, using cached data: %s", err)
 
         solar_rates = self._cached_solar_rates
@@ -492,7 +526,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             ):
                 self._update_solar_accuracy(current_forecast_w, pv_power_w)
             self._update_load_history(base_load_kw)
+            self._update_house_load_hourly(base_load_kw)
             self._update_ev_charge_learning(ev_charge_power_w)
+            self._update_ev_max_kw(ev_charge_power_w)
             self._update_daily_solar(pv_power_w)
             self._last_learning_tick = now
 
@@ -561,19 +597,38 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         current_work_mode = self.hass.states.get(FOXESS_WORK_MODE_ENTITY)
         work_mode_str = current_work_mode.state if current_work_mode else WORK_MODE_SELF_USE
 
-        # ---- spot price entity (generic; was stromligning_entity before v7) ----
-        # Prefer the new key, fall back to legacy key for installs that haven't migrated yet
+        # ---- current spot price ----
+        # Primary: read from a user-configured HA sensor (Strømligning, Tibber, etc.)
+        # Fallback: extract the current hour's rate from the EDS cache that the optimizer
+        #           already uses.  This makes the HA spot-price entity fully optional —
+        #           when it is not configured or unavailable, Solar AI self-sources the
+        #           price from the same Nord Pool data the optimizer uses.
         spot_entity_id = (
             self.config.get(CONF_SPOT_PRICE_ENTITY)
             or self.config.get(CONF_STROMLIGNING_ENTITY)
-            or STROMLIGNING_SPOTPRICE_EX_VAT
         )
-        spot_state = self.hass.states.get(spot_entity_id)
-        spot_ex_vat = (
-            float(spot_state.state)
-            if spot_state and spot_state.state not in ("unknown", "unavailable")
-            else 0.0
-        )
+        spot_ex_vat: float = 0.0
+        if spot_entity_id:
+            spot_state = self.hass.states.get(spot_entity_id)
+            if spot_state and spot_state.state not in ("unknown", "unavailable"):
+                try:
+                    spot_ex_vat = float(spot_state.state)
+                except ValueError:
+                    pass
+
+        if spot_ex_vat == 0.0:
+            # HA entity missing/unavailable — fall back to EDS rate for this hour
+            for rate in self._cached_grid_rates.get("rates", []):
+                try:
+                    rate_start = datetime.fromisoformat(rate["start"])
+                    if rate_start.tzinfo is None:
+                        rate_start = rate_start.replace(tzinfo=timezone.utc)
+                    rate_local_hour = rate_start.astimezone().hour
+                    if rate_local_hour == current_local_hour:
+                        spot_ex_vat = float(rate["value"])
+                        break
+                except (ValueError, TypeError, KeyError):
+                    continue
         export_fee = self._stored.get("export_fee", DEFAULT_EXPORT_FEE)
         feed_in_tariff = round(self._feed_in_tariff_dso + self._feed_in_tariff_energinet, 6)
         # Raw export price before floor guard (used in chart / plan)
@@ -691,13 +746,54 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         min_spread = float(self._stored.get("min_spread_arbitrage", self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE)))
         grid_arbitrage_worthwhile = grid_arbitrage_spread >= min_spread
 
+        # ── Day-ahead DP optimizer ───────────────────────────────────────────
+        # Refresh when prices are stale (tariff_stale) or on first run.
+        # The optimizer produces a 24-h plan (charge/export/idle per hour) that
+        # replaces the reactive p25/p75 threshold logic for decisions.
+        if tariff_stale or not self._optimizer_plan:
+            max_export_kw_setting = float(self._stored.get("max_export_kw", DEFAULT_MAX_EXPORT_KW))
+            self._optimizer_plan = self._run_optimizer(
+                now=now,
+                grid_slot_data=grid_slot_data,
+                solar_slot_data=solar_slot_data,
+                current_soc=battery_soc,
+                capacity_kwh=capacity_kwh,
+                floor_soc=float(floor_soc),
+                max_soc=float(max_soc),
+                efficiency=efficiency,
+                charge_rate_kw=capped_charge_rate_kw if capped_charge_rate_kw > 0 else learned_charge_rate,
+                house_load_profile=self.get_house_load_profile(),
+                ev_charge_hourly=list(self._stored.get("ev_charge_hourly", [0.0] * 24)),
+                ev_max_kw=float(self._stored.get("ev_max_kw", 0.0)),
+                vat_factor=vat_factor,
+                tariff_sched=tariff_sched,
+                elafgift=elafgift,
+                spot_markup=spot_markup,
+                export_fee=export_fee,
+                feed_in_tariff=feed_in_tariff,
+                min_export_price=float(self._stored.get("min_export_price", DEFAULT_MIN_EXPORT_PRICE)),
+                min_spread=min_spread,
+                max_export_kw=max_export_kw_setting,
+            )
+
+        # Translate optimizer plan into flags for the current hour
+        optimizer_says_export = any(
+            s["hour"] == current_local_hour and s["action"] == "EXPORT"
+            for s in self._optimizer_plan
+        )
+        optimizer_says_charge = any(
+            s["hour"] == current_local_hour and s["action"] == "CHARGE"
+            for s in self._optimizer_plan
+        )
+        # Fall back to reactive thresholds when no plan is available
+        if not self._optimizer_plan:
+            battery_export_at_peak = price_p75 > 0 and export_price >= price_p75
+            optimizer_says_export = battery_export_at_peak and grid_arbitrage_worthwhile
+            optimizer_says_charge = buy_price_next_slot <= buy_price_p25
+
         # ---- decision logic ----
-        # Battery export (Feed-in First) only at top-quartile prices — preserves energy
-        # for evening peak. Solar surplus already exports automatically in Self-Use mode.
-        battery_export_at_peak = price_p75 > 0 and export_price >= price_p75
         should_export = (
-            battery_export_at_peak
-            and grid_arbitrage_worthwhile
+            optimizer_says_export
             and truly_exportable_kwh >= MIN_EXPORTABLE_KWH
             and battery_soc > floor_soc
             # Don't fight EVCC: if EV is fast/minpv-charging, hold the battery for it
@@ -713,7 +809,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         should_grid_charge = (
             not should_export
             and bool(grid_vals)
-            and buy_price_next_slot <= buy_price_p25
+            and optimizer_says_charge
             and importable_kwh >= MIN_GRID_CHARGE_KWH
             and not solar_will_fill
             and battery_soc < max_soc
@@ -765,9 +861,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     sell_slot = round(max(0.0, spot - export_fee - feed_in_tariff), 3)
                     price_chart_slots.append({"h": h, "m": 0, "buy": buy_slot, "sell": sell_slot})
 
-        # ── Tonight's plan (best charge + export windows in next 24h) ────────
-        # Always uses hourly deduplication regardless of display resolution.
-        if price_chart_slots:
+        # ── Tonight's plan (from DP optimizer) ───────────────────────────────
+        # Prefer the optimizer plan; fall back to simple greedy if unavailable.
+        if self._optimizer_plan:
+            charge_hours = sorted({s["hour"] for s in self._optimizer_plan if s["action"] == "CHARGE"})
+            export_hours = sorted({s["hour"] for s in self._optimizer_plan if s["action"] == "EXPORT"})
+            charge_str = ", ".join(f"{h:02d}h" for h in charge_hours) if charge_hours else "none"
+            export_str = ", ".join(f"{h:02d}h" for h in export_hours) if export_hours else "none"
+            plan_text = f"Charge: {charge_str}  ·  Export: {export_str}"
+        elif price_chart_slots:
+            # Fallback: simple greedy sort (used before first optimizer run)
             sorted_by_buy = sorted(price_chart_slots, key=lambda s: s["buy"])
             seen_buy: set[int] = set()
             charge_hours = []
@@ -779,14 +882,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     break
             charge_hours.sort()
 
-            # Most valuable sell hours — same deduplication, skipping hours below the
-            # min_export_price floor so the plan reflects what will actually happen
             sorted_by_sell = sorted(price_chart_slots, key=lambda s: -s["sell"])
             seen_sell: set[int] = set()
             export_hours = []
             for s in sorted_by_sell:
                 if s["sell"] <= min_export_price:
-                    continue  # would be blocked at runtime — exclude from plan
+                    continue
                 if s["h"] not in seen_sell:
                     seen_sell.add(s["h"])
                     export_hours.append(s["h"])
@@ -903,6 +1004,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             plan_text=plan_text,
             plan_charge_hours=charge_hours,
             plan_export_hours=export_hours,
+            house_load_hourly=self.get_house_load_profile(),
+            ev_max_kw=float(self._stored.get("ev_max_kw", 0.0)),
             **savings,
         )
 
@@ -1173,6 +1276,79 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             4,
         )
 
+    def _update_ev_max_kw(self, ev_charge_power_w: float) -> None:
+        """Learn the EV's maximum AC charge rate from high-power sessions.
+
+        Only updates when EVCC is delivering at ≥ EV_MAX_KW_HIGH_POWER_FRACTION of
+        the current learned max — meaning the car or charger (not solar surplus) is
+        the bottleneck.  Solar-throttled sessions are ignored, so the learned value
+        stays valid year-round regardless of seasonal solar availability.
+
+        Hard ceiling: grid_max_kw — physically impossible to charge faster than the
+        breaker allows.
+        """
+        if ev_charge_power_w <= EV_CHARGE_THRESHOLD_W:
+            return
+        rate_kw = ev_charge_power_w / 1000.0
+        current_max = float(self._stored.get("ev_max_kw", 0.0))
+        grid_max = float(self._stored.get("grid_max_kw", GRID_MAX_KW))
+
+        # Only learn from sessions at or near full speed
+        threshold_kw = current_max * EV_MAX_KW_HIGH_POWER_FRACTION
+        if current_max > 0 and rate_kw < threshold_kw:
+            return  # Solar-throttled session — skip
+
+        # Hard physical ceiling
+        clamped = min(rate_kw, grid_max)
+        self._stored["ev_max_kw"] = round(
+            (1 - EV_MAX_KW_LEARNING_ALPHA) * current_max + EV_MAX_KW_LEARNING_ALPHA * clamped,
+            3,
+        )
+
+    def _update_house_load_hourly(self, base_load_kw: float) -> None:
+        """Exponentially update the learned house load for the current hour of day.
+
+        Builds a 24-slot daily load profile (kW per hour) that the day-ahead
+        optimizer uses instead of the flat 24h average.  Uses the same EMA
+        approach as EV charge learning so the profile adapts gradually to
+        changes in usage habits over ~8 days per hour slot.
+
+        Outlier guard (two layers):
+        1. Hard ceiling: grid_max_kw — no real house load can exceed the breaker.
+        2. Soft ceiling: once the model is warm, clamp to HOUSE_LOAD_OUTLIER_FACTOR ×
+           the current estimate.  A 5× factor allows genuine large spikes (sauna,
+           heat pump + oven simultaneously) while blocking sensor errors.
+        """
+        hour = datetime.now().hour
+        hourly: list[float] = self._stored.setdefault("house_load_hourly", [0.0] * 24)
+        while len(hourly) < 24:
+            hourly.append(0.0)
+        current = hourly[hour]
+        grid_max = float(self._stored.get("grid_max_kw", GRID_MAX_KW))
+        # Layer 1 — hard physical ceiling
+        clamped = max(0.0, min(base_load_kw, grid_max))
+        # Layer 2 — soft outlier rejection (only when model is warm)
+        if current >= HOUSE_LOAD_WARM_THRESHOLD_KW:
+            clamped = min(clamped, current * HOUSE_LOAD_OUTLIER_FACTOR)
+        hourly[hour] = round(
+            (1 - HOUSE_LOAD_LEARNING_ALPHA) * current + HOUSE_LOAD_LEARNING_ALPHA * clamped,
+            3,
+        )
+
+    def get_house_load_profile(self) -> list[float]:
+        """Return the learned per-hour house load profile (kW, 24 values).
+
+        For hours that have not been observed yet (value == 0.0), falls back
+        to the short-term rolling average so the optimizer always has a
+        reasonable estimate from the very first run.
+        """
+        profile = list(self._stored.get("house_load_hourly", [0.0] * 24))
+        while len(profile) < 24:
+            profile.append(0.0)
+        load_history = self._stored.get("load_history", [])
+        fallback = _rolling_mean(load_history, VACATION_SHORT_WINDOW) if load_history else 0.5
+        return [v if v > 0.0 else round(fallback, 3) for v in profile]
+
     def _update_daily_solar(self, pv_power_w: float) -> None:
         """Accumulate today's solar production; push to daily log when day rolls over."""
         today = datetime.now().date().isoformat()
@@ -1350,6 +1526,326 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         samples.append({"f": round(forecast_w, 0), "a": round(actual_w, 0)})
         if len(samples) > SOLAR_ACCURACY_MAX_SAMPLES:
             del samples[: len(samples) - SOLAR_ACCURACY_MAX_SAMPLES]
+
+    # ------------------------------------------------------------------ #
+    # Price source: Energi Data Service Elspotprices                      #
+    # ------------------------------------------------------------------ #
+
+    async def _fetch_eds_prices(
+        self,
+        session: aiohttp.ClientSession,
+        price_area: str,
+        reference_dt: datetime,
+    ) -> dict:
+        """Fetch day-ahead spot prices from Energi Data Service Elspotprices.
+
+        Returns a dict in EVCC-compatible format:
+            {"rates": [{"start": "<utc-iso>", "value": <dkk_per_kwh>}, ...]}
+
+        Nord Pool day-ahead prices are published at 13:00 CET for the next
+        calendar day.  We fetch today + tomorrow (limit=48) so the full 24-h
+        horizon is always populated once yesterday's prices have been replaced.
+
+        HourDK values are local Copenhagen time (CET/CEST) without timezone
+        info; we convert to UTC using the Europe/Copenhagen zone so that DST
+        transitions are handled correctly year-round.
+        """
+        _CPH_TZ = ZoneInfo("Europe/Copenhagen")
+        today_str = reference_dt.astimezone(_CPH_TZ).strftime("%Y-%m-%d")
+        url = (
+            f"{EDS_ELSPOT_URL}"
+            f'?filter={{"PriceArea":"{price_area}"}}'
+            f"&sort=HourDK%20ASC"
+            f"&start={today_str}"
+            f"&limit=48"
+        )
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                resp.raise_for_status()
+                data = await resp.json(content_type=None)
+        except Exception as err:
+            _LOGGER.warning("EDS Elspotprices fetch failed (area %s): %s", price_area, err)
+            return {}
+
+        records = data.get("records", [])
+        if not records:
+            _LOGGER.warning("EDS Elspotprices: no records returned for area %s", price_area)
+            return {}
+
+        rates: list[dict] = []
+        for rec in records:
+            hour_dk = rec.get("HourDK")
+            spot_dkk_mwh = rec.get("SpotPriceDKK")
+            if hour_dk is None or spot_dkk_mwh is None:
+                continue
+            try:
+                local_dt = datetime.fromisoformat(hour_dk).replace(tzinfo=_CPH_TZ)
+                utc_dt = local_dt.astimezone(timezone.utc)
+                rates.append({
+                    "start": utc_dt.isoformat(),
+                    "value": round(float(spot_dkk_mwh) / 1000.0, 6),
+                })
+            except (ValueError, TypeError) as parse_err:
+                _LOGGER.debug("EDS: skipping bad record %s: %s", rec, parse_err)
+
+        _LOGGER.debug(
+            "EDS Elspotprices: area %s — %d records, %d valid rates",
+            price_area, len(records), len(rates),
+        )
+        return {"rates": rates} if rates else {}
+
+    # ------------------------------------------------------------------ #
+    # Day-ahead DP optimizer                                               #
+    # ------------------------------------------------------------------ #
+
+    def _run_optimizer(
+        self,
+        now: datetime,
+        grid_slot_data: list[tuple],
+        solar_slot_data: list[tuple],
+        current_soc: float,
+        capacity_kwh: float,
+        floor_soc: float,
+        max_soc: float,
+        efficiency: float,
+        charge_rate_kw: float,
+        house_load_profile: list[float],
+        ev_charge_hourly: list[float],
+        ev_max_kw: float,
+        vat_factor: float,
+        tariff_sched: list[float],
+        elafgift: float,
+        spot_markup: float,
+        export_fee: float,
+        feed_in_tariff: float,
+        min_export_price: float,
+        min_spread: float,
+        max_export_kw: float,
+    ) -> list[dict]:
+        """Backward-induction dynamic programming optimizer.
+
+        Solves the 24-h charge/export sequencing problem optimally over all
+        future hourly slots.  The state is battery SoC (0–100 %, integer
+        steps) and the actions are CHARGE, EXPORT, or IDLE.
+
+        Returns a list of slot dicts — one per future hour — each containing:
+            hour    : local hour of day (0–23)
+            action  : "CHARGE" | "EXPORT" | "IDLE"
+            soc     : expected SoC at the start of that hour (integer %)
+            buy     : full buy-side price for that hour (DKK/kWh)
+            sell    : sell-side price for that hour (DKK/kWh)
+
+        The optimizer is intentionally conservative on the first run when the
+        house-load and EV models are cold (all zeros).  Models warm up within
+        a few days of operation, after which the optimizer has accurate per-hour
+        demand forecasts to work with.
+        """
+        if not grid_slot_data or capacity_kwh <= 0 or charge_rate_kw <= 0:
+            return []
+
+        try:
+            return self._dp_solve(
+                now, grid_slot_data, solar_slot_data, current_soc,
+                capacity_kwh, floor_soc, max_soc, efficiency,
+                charge_rate_kw, house_load_profile, ev_charge_hourly, ev_max_kw,
+                vat_factor, tariff_sched, elafgift, spot_markup,
+                export_fee, feed_in_tariff, min_export_price, min_spread, max_export_kw,
+            )
+        except Exception as err:
+            _LOGGER.warning("Optimizer failed — returning empty plan: %s", err)
+            return []
+
+    def _dp_solve(
+        self,
+        now: datetime,
+        grid_slot_data: list[tuple],
+        solar_slot_data: list[tuple],
+        current_soc: float,
+        capacity_kwh: float,
+        floor_soc: float,
+        max_soc: float,
+        efficiency: float,
+        charge_rate_kw: float,
+        house_load_profile: list[float],
+        ev_charge_hourly: list[float],
+        ev_max_kw: float,
+        vat_factor: float,
+        tariff_sched: list[float],
+        elafgift: float,
+        spot_markup: float,
+        export_fee: float,
+        feed_in_tariff: float,
+        min_export_price: float,
+        min_spread: float,
+        max_export_kw: float,
+    ) -> list[dict]:
+        """Core DP computation (separated for clean error handling)."""
+        # ── Build per-hour buy/sell/solar/idle arrays ─────────────────────
+        # Average values across 15-min sub-slots within each hour
+        buy_acc: dict[int, list[float]] = {}
+        sell_acc: dict[int, list[float]] = {}
+        for slot_start, dur_h, h, m, spot in grid_slot_data:
+            buy_h = (spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor
+            sell_h = max(0.0, spot - export_fee - feed_in_tariff)
+            buy_acc.setdefault(h, []).append(buy_h)
+            sell_acc.setdefault(h, []).append(sell_h)
+
+        solar_acc: dict[int, list[float]] = {}
+        for slot_start, dur_h, h, m, watts in solar_slot_data:
+            solar_acc.setdefault(h, []).append(watts / 1000.0)
+
+        hours = sorted(buy_acc.keys())
+        if not hours:
+            return []
+
+        # Effective export rate: use user cap if set, else same as charge rate
+        export_rate_kw = max_export_kw if max_export_kw > 0 else charge_rate_kw
+
+        # Efficiency split: assume symmetric charge/discharge
+        charge_eff = efficiency ** 0.5
+        discharge_eff = efficiency ** 0.5
+
+        # Global cheapest buy price across all future hours — used for spread check
+        best_buy_global = min(
+            statistics.mean(buy_acc[h]) for h in hours
+        )
+        recharge_cost = best_buy_global / efficiency if efficiency > 0 else best_buy_global
+
+        # ── Precompute per-hour data ──────────────────────────────────────
+        hour_data: list[dict] = []
+        ev_block_prob_threshold = EV_CHARGE_BLOCK_PROBABILITY
+        while len(ev_charge_hourly) < 24:
+            ev_charge_hourly.append(0.0)
+        while len(house_load_profile) < 24:
+            house_load_profile.append(0.5)
+        while len(tariff_sched) < 24:
+            tariff_sched.append(0.0)
+
+        for h in hours:
+            buy_h = round(statistics.mean(buy_acc[h]), 4)
+            sell_h = round(statistics.mean(sell_acc[h]), 4)
+            solar_kw = statistics.mean(solar_acc.get(h, [0.0]))
+            house_kw = house_load_profile[h]
+            ev_prob = ev_charge_hourly[h]
+            ev_kw = ev_prob * ev_max_kw  # EV expected draw this hour
+
+            # Battery idle delta: solar → house first, then EV, then battery
+            # EV never draws from battery (EVCC setting) — only house drain from battery
+            solar_to_house = min(solar_kw, house_kw)
+            house_from_battery = max(0.0, house_kw - solar_kw)
+            solar_remaining = solar_kw - solar_to_house
+            solar_to_ev = min(solar_remaining, ev_kw)
+            solar_to_battery = max(0.0, solar_remaining - solar_to_ev)
+            idle_delta_pct = (solar_to_battery - house_from_battery) / capacity_kwh * 100.0
+
+            # Spread viability: can we profitably export and recharge later?
+            spread_ok = sell_h - recharge_cost >= min_spread
+
+            hour_data.append({
+                "h": h,
+                "buy": buy_h,
+                "sell": sell_h,
+                "idle_delta_pct": idle_delta_pct,
+                "ev_blocked": ev_prob >= ev_block_prob_threshold,
+                "spread_ok": spread_ok,
+            })
+
+        N = len(hours)
+        SOC_STATES = 101  # SoC 0–100 %
+
+        # SoC step sizes per action (in % per hour)
+        charge_delta_pct = charge_rate_kw * charge_eff / capacity_kwh * 100.0
+        export_delta_pct = export_rate_kw / capacity_kwh * 100.0
+
+        # Floor/max as integers
+        soc_floor = int(max(0, round(floor_soc)))
+        soc_max = int(min(100, round(max_soc)))
+
+        # ── Backward induction ────────────────────────────────────────────
+        # V[s] = best cumulative value from the next slot onward, starting at SoC s
+        V: list[float] = [0.0] * SOC_STATES
+        policy: list[list[str]] = [["I"] * SOC_STATES for _ in range(N)]
+
+        for t in range(N - 1, -1, -1):
+            hd = hour_data[t]
+            buy_h = hd["buy"]
+            sell_h = hd["sell"]
+            idle_delta = hd["idle_delta_pct"]
+            ev_blocked = hd["ev_blocked"]
+            spread_ok = hd["spread_ok"]
+
+            new_V: list[float] = [0.0] * SOC_STATES
+
+            for s in range(SOC_STATES):
+                # ── IDLE ──────────────────────────────────────────────────
+                s_idle = int(max(float(soc_floor), min(float(soc_max), s + idle_delta)) + 0.5)
+                s_idle = max(0, min(100, s_idle))
+                best_val = V[s_idle]
+                best_act = "I"
+
+                # ── CHARGE ────────────────────────────────────────────────
+                if s < soc_max and not ev_blocked:
+                    s_ch = int(max(float(soc_floor), min(float(soc_max), s + charge_delta_pct + idle_delta)) + 0.5)
+                    s_ch = max(0, min(100, s_ch))
+                    val_ch = -charge_rate_kw * buy_h + V[s_ch]
+                    if val_ch > best_val:
+                        best_val = val_ch
+                        best_act = "C"
+
+                # ── EXPORT ────────────────────────────────────────────────
+                if s > soc_floor and sell_h > min_export_price and spread_ok:
+                    avail_pct = s - soc_floor
+                    actual_exp_pct = min(export_delta_pct, avail_pct)
+                    actual_exp_kw = actual_exp_pct / 100.0 * capacity_kwh
+                    s_ex = int(max(float(soc_floor), min(float(soc_max), s - actual_exp_pct + idle_delta)) + 0.5)
+                    s_ex = max(0, min(100, s_ex))
+                    revenue = actual_exp_kw * discharge_eff * sell_h
+                    val_ex = revenue + V[s_ex]
+                    if val_ex > best_val:
+                        best_val = val_ex
+                        best_act = "E"
+
+                new_V[s] = best_val
+                policy[t][s] = best_act
+
+            V = new_V
+
+        # ── Forward pass: generate the plan from current SoC ─────────────
+        _ACTION_NAMES = {"I": "IDLE", "C": "CHARGE", "E": "EXPORT"}
+        soc_s = max(0, min(100, int(current_soc + 0.5)))
+        plan: list[dict] = []
+
+        for t in range(N):
+            hd = hour_data[t]
+            h = hd["h"]
+            act_code = policy[t][soc_s]
+            action = _ACTION_NAMES[act_code]
+
+            plan.append({
+                "hour": h,
+                "action": action,
+                "soc": soc_s,
+                "buy": hd["buy"],
+                "sell": hd["sell"],
+            })
+
+            if act_code == "C":
+                soc_s = int(max(float(soc_floor), min(float(soc_max), soc_s + charge_delta_pct + hd["idle_delta_pct"])) + 0.5)
+            elif act_code == "E":
+                avail_pct = soc_s - soc_floor
+                actual_exp_pct = min(export_delta_pct, float(avail_pct))
+                soc_s = int(max(float(soc_floor), min(float(soc_max), soc_s - actual_exp_pct + hd["idle_delta_pct"])) + 0.5)
+            else:
+                soc_s = int(max(float(soc_floor), min(float(soc_max), soc_s + hd["idle_delta_pct"])) + 0.5)
+            soc_s = max(0, min(100, soc_s))
+
+        n_charge = sum(1 for s in plan if s["action"] == "CHARGE")
+        n_export = sum(1 for s in plan if s["action"] == "EXPORT")
+        _LOGGER.debug(
+            "Optimizer: %d charge slots, %d export slots over %d hours (SoC %d%%→%d%%)",
+            n_charge, n_export, N, int(current_soc + 0.5), soc_s,
+        )
+        return plan
 
     # ------------------------------------------------------------------ #
     # Helpers                                                               #

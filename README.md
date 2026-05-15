@@ -6,14 +6,26 @@
 
 ---
 
+## ✨ New in v0.21.0 — Day-ahead optimizer
+
+The decision engine has been rebuilt from the ground up. Instead of reactive threshold comparisons, Solar AI now runs a **full 24-hour dynamic programming optimizer** every time prices refresh:
+
+- **Globally optimal multi-cycle planning** — finds the best combination of charge and export windows across all 24 future hours simultaneously, rather than checking one slot at a time
+- **Per-hour house load profile** — the optimizer uses a learned 24-slot daily load profile (kW per hour, ~8-day EMA) to accurately estimate battery drain per slot, replacing the flat 24h average
+- **EV solar shading model** — the optimizer accounts for how much of the solar forecast will be consumed by EV charging (learned max rate × hourly probability), giving the battery an accurate net-solar estimate per hour
+- **Direct spot price feed** — prices now come from [Energi Data Service](https://api.energidataservice.dk) (Nord Pool day-ahead) instead of EVCC, fixing the zero-rate issue and removing a dependency on EVCC's tariff endpoint
+
+See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+---
+
 ## What it does
 
-Solar AI sits between your FoxESS inverter, your EV charger (EVCC), and the electricity spot market. Every 5 minutes it:
+Solar AI sits between your FoxESS inverter, your EV charger (EVCC), and the electricity spot market. Every hour it:
 
-1. Reads live spot prices, solar forecasts, battery state, grid draw, and EV charge power
-2. Runs its decision model — export? grid-charge? do nothing?
-3. Acts — setting the FoxESS work mode, force-charge power, and EVCC battery mode
-4. Learns — refining its understanding of charge rates, solar accuracy, EV habits, and house load
+1. **Fetches day-ahead spot prices** directly from Energi Data Service (Nord Pool) and runs a 24-hour DP optimizer to plan the best charge and export windows for the rest of the day
+2. **Every 5 minutes**: reads live battery state, solar production, grid draw, and EV charge power, then follows the plan — setting the FoxESS work mode, force-charge power, and EVCC battery mode
+3. **Learns** — refining its understanding of charge rates, solar accuracy, EV habits, and per-hour house load demand
 
 All thresholds are adjustable via live dashboard controls. No YAML editing, no restarts needed.
 
@@ -22,9 +34,14 @@ All thresholds are adjustable via live dashboard controls. No YAML editing, no r
 ## Features
 
 ### ⚡ Core Arbitrage Engine
-- **Grid charging** — charges the battery when the all-in buy price (spot + markup + network tariff + elafgift) × VAT is in the cheapest 25th percentile of the next 24 hours, then uses or exports that energy when prices rise
-- **Battery export** — activates FoxESS *Feed-in First* mode to push battery energy to the grid, but **only when the current price is at or above the 75th percentile** of the day — reserving stored energy for true evening peaks, not mediocre mid-day prices
-- **Minimum spread threshold** — configurable minimum price difference (sell − cheapest buy) before arbitrage triggers. Live slider on the dashboard (0.10–3.00 DKK/kWh)
+
+Solar AI plans the day's charge and export schedule using a **backward-induction dynamic programming optimizer**, refreshed every hour when new spot prices arrive:
+
+- **Day-ahead DP optimizer** — models 24 hourly slots with battery SoC as state (0–100 % at 1 % resolution). For each slot it evaluates three actions — CHARGE, EXPORT, IDLE — and finds the globally optimal sequence that maximises net revenue (export earnings minus charging cost) over the full horizon, given efficiency losses, house demand, solar production, and EV charging patterns
+- **Multi-cycle awareness** — correctly handles scenarios like "charge at 02h, export at 11h, charge again at 14h, export again at 19h" that simple threshold logic cannot plan
+- **Grid charging** — charges the battery in slots the optimizer identifies as optimal buy windows, subject to the full all-in cost stack: (spot + markup + DSO nettarif + Energinet tariff + elafgift) × VAT
+- **Battery export** — activates FoxESS *Feed-in First* mode in slots the optimizer identifies as peak sell windows
+- **Minimum spread threshold** — the optimizer only recommends export when `sell_price − cheapest_recharge_cost / efficiency ≥ min_spread`, ensuring the round-trip is profitable after losses. Configurable live slider on the dashboard (0.10–3.00 DKK/kWh)
 - **Minimum export price floor** — configurable floor below which Solar AI will never export. When the price is at or below the floor, the FoxESS export limit register is set to 25 W — blocking both battery export *and* solar panel export. Default 0.00 blocks only negative/zero prices. Works even when the arbitrage switch is off
 - **Export power cap** — optionally cap the battery's discharge rate during export (0–10 kW). Useful if your grid connection or feed-in contract has a power limit. Default 0 = no cap
 
@@ -85,13 +102,17 @@ Solar AI automatically fetches your grid operator's hourly time-of-use tariffs f
 - **Net solar for battery** — subtracts predicted house load from the solar forecast to compute the true surplus available for the battery. Grid charging is automatically skipped when solar will fill the battery anyway
 
 ### 🏠 House Load Model
+- **Per-hour daily profile** — a 24-slot learned profile (kW per hour of day, ~8-day EMA per slot) that the optimizer uses to forecast demand for each future hour. Adapts gradually to changes in household routine. Unobserved hours fall back to the short-term rolling average at startup
 - **2-hour rolling average** — captures current consumption trends
 - **28-day rolling average** — establishes a long-term baseline
 - **Vacation / low-load detection** — if consumption drops below 25% of the 28-day baseline for 4+ hours, Solar AI enters vacation mode and applies a more conservative load estimate
+- **Outlier-resistant learning** — each learning tick applies a two-layer guard: physical ceiling at `grid_max_kw` and a soft cap at 5× the current estimate (once model is warm), preventing sensor spikes from distorting the profile
 
 ### 🚗 EV-Aware Scheduling (EVCC)
 - **Real charging detection** — uses actual EV charge power (> 3 000 W) rather than "connected" state, so scheduled or idle sessions don't block battery operations
-- **Hourly EV pattern learning** — exponential smoothing learns when your EV typically charges, hour by hour (~8-day memory). Grid charging is skipped during hours where the EV charges ≥ 70% of the time
+- **Hourly EV pattern learning** — exponential smoothing learns when your EV typically charges, hour by hour (~8-day memory). Grid charging is skipped during hours where the EV charges ≥ 70 % of the time
+- **EV max charge rate learning** — learns the car's peak AC charge rate (~20-sample EMA) from full-speed sessions only (≥ 80 % of current learned max). Solar-throttled summer sessions are excluded so the estimate stays accurate year-round. The optimizer uses this value to compute expected EV solar consumption per hour, giving the battery an accurate net-surplus forecast
+- **Battery-bypass model** — the optimizer knows that the EV never charges from the battery (EVCC setting). Solar allocated to the EV is correctly subtracted from what is available to charge the battery, not from battery discharge
 - **EV on Solar sensor** — binary sensor that activates when the EV is charging in EVCC's `pv` mode with real solar power flowing (> 3 000 W)
 - **EVCC battery mode coordination** — sets EVCC battery mode to *hold* during export/charging and restores *normal* when done. Respects EVCC if it has independently taken control of the battery
 
@@ -151,14 +172,14 @@ All key thresholds are adjustable from the dashboard without restarting HA:
 
 ## Prerequisites
 
-You need all of the following already working in Home Assistant:
+You need the following already working in Home Assistant:
 
-| Component | Purpose | Link |
-|-----------|---------|------|
-| FoxESS Modbus integration | Read battery SoC, temperature, power; set work mode and charge power | [GitHub](https://github.com/nathanmarlor/foxess_modbus) |
-| EVCC | Solar forecast (Solcast), live grid power, EV charge power, battery mode API | [evcc.io](https://evcc.io) |
-| Spot price entity | Any HA sensor that exposes the hourly spot price excl. VAT in DKK/kWh (e.g. [Strømligning](https://www.stromligning.dk), Energi Data Service, or similar) | — |
-| Solcast | Solar production forecast — connected to EVCC | [solcast.com](https://solcast.com) |
+| Component | Required | Purpose | Link |
+|-----------|----------|---------|------|
+| FoxESS Modbus integration | ✅ Required | Read battery SoC, temperature, power; set work mode and charge power | [GitHub](https://github.com/nathanmarlor/foxess_modbus) |
+| EVCC | ✅ Required | Solar forecast (Solcast), live grid power, EV charge power, battery mode API | [evcc.io](https://evcc.io) |
+| Solcast | ✅ Required | Solar production forecast — connected to EVCC | [solcast.com](https://solcast.com) |
+| Spot price entity | ⚙️ Optional | Any HA sensor exposing the current spot price excl. VAT in DKK/kWh (e.g. [Strømligning](https://www.stromligning.dk), Tibber). If omitted, Solar AI reads the live spot price from Energi Data Service automatically — the same feed used by the optimizer | — |
 
 ### Default FoxESS Modbus entity IDs
 
@@ -199,7 +220,7 @@ Via HACS: add this repository as a custom repository and install from there.
 The setup wizard walks you through:
 1. **EVCC URL** — e.g. `http://your-ha-ip:7070`
 2. **FoxESS entities** — auto-detected; override if your names differ
-3. **Spot price entity** — select any HA sensor exposing hourly spot price excl. VAT in DKK/kWh
+3. **Spot price entity** *(optional)* — select any HA sensor exposing hourly spot price excl. VAT in DKK/kWh. Leave blank and Solar AI will source the live price from Energi Data Service instead
 4. **Battery & trading parameters** — capacity, efficiency, initial thresholds, DSO, currency
 5. **Dashboard** — optionally link an existing Lovelace dashboard
 
@@ -234,43 +255,69 @@ The system starts in **monitoring-only mode** (switch off). Watch the *Decision 
 
 ## How the decision loop works
 
+### Hourly — optimizer run (triggered by price refresh)
+
 ```
-Every 5 minutes:
+Once per hour (when spot prices refresh):
 
-1. Fetch EVCC state     → grid power, solar forecast, EV charge power, battery mode
-2. Fetch prices         → 24h spot price array → min, max, mean, p25, p75
+1. Fetch prices         → Energi Data Service Elspotprices (Nord Pool day-ahead, DK2)
+                          Falls back to EVCC /api/tariff/grid if EDS is unreachable
                           buy-side: (spot + markup + DSO tariff + Energinet tariff + elafgift) × VAT
-                          sell-side: spot − sell-side fee − indfødningstarif (auto-fetched)
-3. Read FoxESS          → SoC, cell temp, charge/discharge power, work mode
-4. Update models        → load history, solar accuracy, EV hourly probability, daily solar kWh
-5. Compute headroom     → grid limit − 0.5 kW − current grid import
-6. Make decision:
+                          sell-side: spot − sell-side fee − indfødningstarif (auto-fetched daily)
 
-   EXPORT?       sell price ≥ p75 (of sell-side prices)
-             AND spread ≥ threshold
-             AND sell price > min export price floor
+2. Run DP optimizer     → 24-hour backward-induction dynamic programming
+                          State:   battery SoC (0–100 %, integer steps = 101 states)
+                          Actions: CHARGE | EXPORT | IDLE per hourly slot
+                          Inputs:  per-hour buy/sell prices, learned house load profile (24 slots),
+                                   solar forecast per hour, EV hourly charge probability × learned max rate,
+                                   charge/discharge efficiency, floor SoC, max SoC
+                          EXPORT only allowed when:
+                            sell_price > min_export_price floor
+                            AND sell_price − cheapest_recharge / efficiency ≥ min_spread
+                          CHARGE blocked for hours where EV typically charges (≥ 70 % probability)
+                          Output:  ordered plan — {hour, action, expected SoC, buy, sell} for each slot
+
+3. Store plan           → drives decisions for the next 60 minutes
+```
+
+### Every 5 minutes — decision execution
+
+```
+1. Fetch EVCC state     → grid power, solar forecast, EV charge power, battery mode
+2. Read FoxESS          → SoC, cell temp, charge/discharge power, work mode
+3. Update models        → house load hourly profile, EV max rate, load history,
+                          solar accuracy, EV hourly probability, daily solar kWh
+4. Compute headroom     → grid limit − 0.5 kW − current grid import
+
+5. Look up optimizer plan for the current hour:
+
+   EXPORT?       optimizer plan says EXPORT for this hour
+             AND sell price > min export price floor          ← hard floor, always applied
              AND exportable kWh ≥ 0.5
-             AND SoC > floor
-             AND no EV charging (now/minpv mode)
-             AND EVCC not managing battery
+             AND SoC > floor SoC
+             AND EV not actively charging (now/minpv mode)   ← safety guard
+             AND EVCC not managing battery independently
 
-   GRID CHARGE?  all-in buy price ≤ p25 (of buy-side prices, incl. full tariff stack)
-             AND solar won't fill battery
+   GRID CHARGE?  optimizer plan says CHARGE for this hour
+             AND solar won't fill battery on its own
              AND importable kWh ≥ 0.5
-             AND headroom ≥ 0.3 kW
-             AND EV unlikely to charge this hour
+             AND grid headroom ≥ 0.3 kW
+             AND EV not likely charging this hour
 
    FORCED CHARGE if buy price ≤ 0 (grid pays you to consume — overrides all other checks)
 
-7. Act if enabled       → set FoxESS work mode, capped charge power, EVCC mode
+   FALLBACK      if no optimizer plan yet (first startup hour):
+                 reactive logic — export if sell ≥ p75, charge if buy ≤ p25
+
+6. Act if enabled       → set FoxESS work mode, capped charge power, EVCC mode
                           optionally cap discharge power to max_export_kw
-8. Export limit (always)→ write FoxESS export limit register on every tick:
+7. Export limit (always)→ write FoxESS export limit register on every tick:
                             grid charging  → 0 W
                             price ≤ floor  → 25 W  (blocks solar + battery export)
                             price > floor  → 10 000 W
-9. Notify (optional)    → persistent HA notification on every mode transition
-10. Track savings       → accumulate actual/missed DKK into daily log
-11. Save to storage     → learned rates, load history, EV probabilities, solar history
+8. Notify (optional)    → persistent HA notification on every mode transition
+9. Track savings        → accumulate actual/missed DKK into daily log
+10. Save to storage     → learned rates, load history, EV probabilities, solar history
 ```
 
 ---
@@ -346,8 +393,10 @@ Every 5 minutes:
 | Entity | Description |
 |--------|-------------|
 | `sensor.*_ev_opladningssandsynlighed_denne_time` | Learned EV charge probability this hour (%) |
+| `sensor.*_ev_maks_opladningshastighed_laert` | Learned EV maximum AC charge rate (kW); season-independent; `profile_kw` attribute unused |
 | `sensor.*_husstand_forbrug_2h_gennemsnit` | 2 h average house load (kW) |
 | `sensor.*_husstand_forbrug_28_dages_gennemsnit` | 28-day average house load (kW) |
+| `sensor.*_huslast_laert_denne_time` | Learned house load for the current hour of day (kW); `profile_kw` attribute = full 24-slot array |
 | `sensor.*_forudsagt_husstand_forbrug_24h` | Predicted house consumption today (kWh) |
 | `binary_sensor.*_ev_oplader_solenergi` | EV actively charging on solar power (pv mode, > 3 kW) |
 
@@ -383,6 +432,7 @@ All settings are available in **Settings → Devices & Services → Solar AI →
 | Grid operator (DSO) | Dinel (Jutland/Fyn) | Options flow | DSO for hourly network tariff and indfødningstarif data |
 | Currency | DKK | Options flow | Price and savings sensor currency (DKK, EUR, SEK, NOK, GBP) |
 | Live data poll interval | 30 s | Options flow | How often EVCC live state is fetched (10–300 s) |
+| Spot price area | DK2 | `CONF_PRICE_AREA` in `const.py` | Nord Pool price zone for Energi Data Service (`DK1` = Jutland/Fyn, `DK2` = Zealand/Copenhagen). Change in `const.py` — config-flow selection coming in a future version |
 
 ---
 
@@ -399,7 +449,7 @@ All settings are available in **Settings → Devices & Services → Solar AI →
 
 ## Known limitations
 
-- **Denmark-focused** — built around DKK/kWh spot prices and the Energi Data Service tariff APIs. Any HA sensor can be used as the spot price source, but tariff fetching (DSO nettarif and indfødningstarif) is Danish-specific.
+- **Denmark-focused** — built around DKK/kWh spot prices (Nord Pool Elspot, fetched from Energi Data Service) and the Energi Data Service DatahubPricelist tariff APIs. Tariff fetching (DSO nettarif and indfødningstarif) is Danish-specific. The spot price area defaults to DK2; change `DEFAULT_PRICE_AREA` in `const.py` for DK1.
 - **FoxESS Modbus required** — work mode control uses FoxESS-specific entities. Other inverters need code changes in `coordinator.py`.
 - **EVCC required** — solar forecasts, live grid power, and EV charge data come from EVCC's API.
 - **DSO coverage** — network tariff and indfødningstarif auto-fetch currently covers Dinel (Jutland/Fyn). Other Danish DSOs can be added in `const.py`; their GLN numbers are available in the Energi Data Service DatahubPricelist.

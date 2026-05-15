@@ -173,6 +173,8 @@
       },
       "solar_28d_avg": { "name": "Solar avg (28 days)" },
       "ev_charge_probability": { "name": "EV charge probability (this hour)" },
+      "house_load_this_hour": { "name": "House load — learned (this hour)" },
+      "ev_max_charge_rate": { "name": "EV max charge rate (learned)" },
       "solar_forecast_24h_adjusted": { "name": "Solar forecast 24h (adjusted)" },
       "solar_forecast_6h_adjusted": { "name": "Solar forecast 6h (adjusted)" },
       "savings_actual_today": { "name": "Actual savings today" },

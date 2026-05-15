@@ -46,9 +46,7 @@ CONF_CURRENCY = "currency"          # Config entry key for currency selection
 
 # Well-known FoxESS entity IDs (auto-detected, user can override)
 FOXESS_BATTERY_SOC = "sensor.foxessmodbus_battery_soc_1"
-FOXESS_BATTERY_TEMP = "sensor.foxessmodbus_battery_temp_1"
 FOXESS_CELL_TEMP_LOW = "sensor.foxessmodbus_bms_cell_temp_low_1"
-FOXESS_CELL_TEMP_HIGH = "sensor.foxessmodbus_bms_cell_temp_high_1"
 FOXESS_BATTERY_CHARGE_POWER = "sensor.foxessmodbus_battery_charge"
 FOXESS_BATTERY_DISCHARGE_POWER = "sensor.foxessmodbus_battery_discharge"
 FOXESS_LOAD_POWER = "sensor.foxessmodbus_load_power"
@@ -66,17 +64,11 @@ EVCC_API_STATE = "/api/state"
 EVCC_API_SOLAR = "/api/tariff/solar"
 EVCC_API_GRID = "/api/tariff/grid"
 EVCC_API_BATTERY_MODE = "/api/batterymode"
-EVCC_API_BUFFER_SOC = "/api/buffersoc"
-EVCC_API_PRIORITY_SOC = "/api/prioritysoc"
 
 # FoxESS work mode values
 WORK_MODE_SELF_USE = "Self Use"
 WORK_MODE_FORCE_CHARGE = "Force Charge"
-WORK_MODE_FORCE_DISCHARGE = "Force Discharge"
-WORK_MODE_FEED_IN_FIRST = "Feed-in First"  # Best mode for grid export (battery + solar)
-
-# The work mode to use when actively exporting to the grid
-WORK_MODE_EXPORT = WORK_MODE_FEED_IN_FIRST
+WORK_MODE_EXPORT = "Feed-in First"  # FoxESS mode for grid export (battery + solar pushed to grid)
 
 # Pre-existing HA automation that controls the export limit register —
 # disabled while our integration is running to avoid conflicts
@@ -88,10 +80,8 @@ EVCC_BATTERY_HOLD = "hold"
 EVCC_BATTERY_CHARGE = "charge"
 
 # EV charging modes
-EV_MODE_PV = "pv"
 EV_MODE_NOW = "now"
 EV_MODE_MIN_PV = "minpv"
-EV_MODE_OFF = "off"
 
 # System operating modes
 MODE_NORMAL = "normal"
@@ -132,6 +122,14 @@ SAVINGS_LOG_MAX_DAYS = 90           # Keep 90 days of daily savings data
 EV_CHARGE_THRESHOLD_W = 3000        # W — above this the EV is truly charging
 EV_CHARGE_BLOCK_PROBABILITY = 0.7   # Skip grid charge if EV charges >70% of time this hour
 EV_LEARNING_ALPHA = 0.01            # Exp. smoothing factor (~100 sample memory ≈ 8 days/hour)
+# EV maximum charge rate learning (single value, season-independent)
+EV_MAX_KW_LEARNING_ALPHA = 0.05     # ~20-sample memory — adapts in ~2 days of full-speed sessions
+EV_MAX_KW_HIGH_POWER_FRACTION = 0.8 # Only learn from sessions at ≥80% of current max (car/charger is bottleneck, not solar)
+
+# House load profile learning
+HOUSE_LOAD_LEARNING_ALPHA = 0.01    # Same memory as EV probability (~8 days per hour slot)
+HOUSE_LOAD_OUTLIER_FACTOR = 5.0     # Clamp spikes to 5× learned value (once model is warm)
+HOUSE_LOAD_WARM_THRESHOLD_KW = 0.05 # Model considered warm above this value (> standby noise)
 
 # Seasonal mode
 SEASON_SOLAR_THRESHOLD_KWH = 6.0    # kWh/day 28-day avg — below = winter mode
@@ -169,7 +167,11 @@ ENERGINET_GLN = "5790000432752"          # Energinet — transmission/system tar
 ENERGINET_TARIFF_CODES = frozenset({"40000"})  # Transmissions nettarif only (residential; excludes indfødningstarif)
 DEFAULT_ELAFGIFT_DKK_KWH = 0.01         # Danish electricity duty (elafgift) — user-adjustable
 TARIFF_SCHEDULE_REFRESH_SECONDS = 86400  # Refresh tariff schedule daily (tariffs are stable within a day)
-DATAHUB_API_URL = "https://api.energidataservice.dk/dataset/DatahubPricelist"
+EDS_ELSPOT_URL = "https://api.energidataservice.dk/dataset/Elspotprices"
+
+# Spot price area (Nord Pool zone) — used by EDS Elspotprices fetch
+CONF_PRICE_AREA = "price_area"
+DEFAULT_PRICE_AREA = "DK2"  # Change to DK1 for western Denmark (Jutland/Fyn)
 
 # FoxESS lifetime energy totals (for auto-detecting round-trip efficiency)
 FOXESS_BATTERY_CHARGE_TOTAL = "sensor.foxessmodbus_battery_charge_total"
