@@ -57,7 +57,7 @@ views:
       # ── Prissammensætning ──────────────────────────────────────────────────
       - type: markdown
         title: Prissammensætning
-        content: >
+        content: |
           {% set spot_markup = states('number.solar_ai_spotpris_tillaeg_elhandlertillaeg') | float(0) %}
           {% set export_fee = states('number.solar_ai_salgsgebyr_pr_kwh') | float(0) %}
           {% set export_price = states('sensor.battery_arbitrage_eksportpris') | float(0) %}
