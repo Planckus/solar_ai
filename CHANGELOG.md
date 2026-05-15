@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.20.1] — 2026-05-15
+
+### Fixed
+- **Dashboard switch entity ID** — the 15-minute price resolution toggle in the dashboard templates (`dashboard_da.yaml`, `dashboard_en.yaml`) referenced the wrong entity ID (`switch.battery_arbitrage_price_resolution_15min`). Corrected to the actual entity ID assigned by HA (`switch.solar_ai_15_minutters_prisoplosning`). The live dashboard was also patched with this fix and the 24h price chart section that was missing from it.
+
+---
+
 ## [0.20.0] — 2026-05-15
 
 ### Added
