@@ -13,8 +13,14 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_BATTERY_CAPACITY,
+    CONF_BATTERY_CHARGE_ENTITY,
+    CONF_BATTERY_CHARGE_TOTAL_ENTITY,
+    CONF_BATTERY_DISCHARGE_ENTITY,
+    CONF_BATTERY_DISCHARGE_TOTAL_ENTITY,
     CONF_BATTERY_FLOOR_SOC,
     CONF_BATTERY_MAX_SOC,
+    CONF_BATTERY_SOC_ENTITY,
+    CONF_CELL_TEMP_ENTITY,
     CONF_CURRENCY,
     CONF_DASHBOARD_URL_PATH,
     CONF_DSO_GLN,
@@ -43,6 +49,12 @@ from .const import (
     DOMAIN,
     DSO_OPTIONS,
     EVCC_API_STATE,
+    FOXESS_BATTERY_CHARGE_POWER,
+    FOXESS_BATTERY_CHARGE_TOTAL,
+    FOXESS_BATTERY_DISCHARGE_POWER,
+    FOXESS_BATTERY_DISCHARGE_TOTAL,
+    FOXESS_BATTERY_SOC,
+    FOXESS_CELL_TEMP_LOW,
     FOXESS_FORCE_CHARGE_ENTITY,
     FOXESS_FORCE_DISCHARGE_ENTITY,
     FOXESS_WORK_MODE_ENTITY,
@@ -55,7 +67,7 @@ _LOGGER = logging.getLogger(__name__)
 class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the setup wizard."""
 
-    VERSION = 7
+    VERSION = 8
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -96,30 +108,15 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_foxess(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 2: FoxESS inverter entity detection."""
-        errors: dict[str, str] = {}
+        """Step 2: Inverter control entities."""
+        if user_input is not None:
+            self._data.update(user_input)
+            return await self.async_step_battery_sensors()
 
-        # Auto-detect FoxESS entities
+        detected_inverter_id = self._detect_inverter_id()
         detected_work_mode = self._find_entity(FOXESS_WORK_MODE_ENTITY)
         detected_force_charge = self._find_entity(FOXESS_FORCE_CHARGE_ENTITY)
         detected_force_discharge = self._find_entity(FOXESS_FORCE_DISCHARGE_ENTITY)
-        detected_inverter_id = self._detect_inverter_id()
-
-        if user_input is not None:
-            self._data.update(user_input)
-
-            # Verify entities exist
-            missing = []
-            for key in [CONF_FOXESS_WORK_MODE_ENTITY, CONF_FOXESS_FORCE_CHARGE_ENTITY,
-                         CONF_FOXESS_FORCE_DISCHARGE_ENTITY]:
-                eid = user_input.get(key)
-                if eid and not self.hass.states.get(eid):
-                    missing.append(eid)
-
-            if missing:
-                errors["base"] = "entity_not_found"
-            else:
-                return await self.async_step_spot_price()
 
         return self.async_show_form(
             step_id="foxess",
@@ -127,40 +124,69 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_FOXESS_INVERTER_ID,
                              default=detected_inverter_id or ""): str,
                 vol.Required(CONF_FOXESS_WORK_MODE_ENTITY,
-                             default=detected_work_mode or ""): str,
+                             default=detected_work_mode or FOXESS_WORK_MODE_ENTITY):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="select")),
                 vol.Required(CONF_FOXESS_FORCE_CHARGE_ENTITY,
-                             default=detected_force_charge or ""): str,
+                             default=detected_force_charge or FOXESS_FORCE_CHARGE_ENTITY):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="number")),
                 vol.Required(CONF_FOXESS_FORCE_DISCHARGE_ENTITY,
-                             default=detected_force_discharge or ""): str,
+                             default=detected_force_discharge or FOXESS_FORCE_DISCHARGE_ENTITY):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="number")),
             }),
-            errors=errors,
+        )
+
+    async def async_step_battery_sensors(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 3: Battery sensor entities."""
+        if user_input is not None:
+            self._data.update(user_input)
+            return await self.async_step_spot_price()
+
+        return self.async_show_form(
+            step_id="battery_sensors",
+            data_schema=vol.Schema({
+                vol.Required(CONF_BATTERY_SOC_ENTITY,
+                             default=self._find_entity(FOXESS_BATTERY_SOC) or FOXESS_BATTERY_SOC):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_CELL_TEMP_ENTITY,
+                             default=self._find_entity(FOXESS_CELL_TEMP_LOW) or FOXESS_CELL_TEMP_LOW):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_BATTERY_CHARGE_ENTITY,
+                             default=self._find_entity(FOXESS_BATTERY_CHARGE_POWER) or FOXESS_BATTERY_CHARGE_POWER):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_BATTERY_DISCHARGE_ENTITY,
+                             default=self._find_entity(FOXESS_BATTERY_DISCHARGE_POWER) or FOXESS_BATTERY_DISCHARGE_POWER):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_BATTERY_CHARGE_TOTAL_ENTITY,
+                             default=self._find_entity(FOXESS_BATTERY_CHARGE_TOTAL) or FOXESS_BATTERY_CHARGE_TOTAL):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_BATTERY_DISCHARGE_TOTAL_ENTITY,
+                             default=self._find_entity(FOXESS_BATTERY_DISCHARGE_TOTAL) or FOXESS_BATTERY_DISCHARGE_TOTAL):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+            }),
         )
 
     async def async_step_spot_price(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 3: Generic spot price entity (excl. VAT, in local currency/kWh).
+        """Step 4: Generic spot price entity (excl. VAT, in local currency/kWh).
 
         Accepts any HA sensor — Strømligning, Tibber, or any compatible source.
         """
-        errors: dict[str, str] = {}
-        detected = self._find_entity(STROMLIGNING_SPOTPRICE_EX_VAT)
-
         if user_input is not None:
-            entity = user_input[CONF_SPOT_PRICE_ENTITY]
-            if not self.hass.states.get(entity):
-                errors[CONF_SPOT_PRICE_ENTITY] = "entity_not_found"
-            else:
-                self._data[CONF_SPOT_PRICE_ENTITY] = entity
-                return await self.async_step_battery()
+            self._data[CONF_SPOT_PRICE_ENTITY] = user_input[CONF_SPOT_PRICE_ENTITY]
+            return await self.async_step_battery()
+
+        detected = self._find_entity(STROMLIGNING_SPOTPRICE_EX_VAT)
 
         return self.async_show_form(
             step_id="spot_price",
             data_schema=vol.Schema({
                 vol.Required(CONF_SPOT_PRICE_ENTITY,
-                             default=detected or STROMLIGNING_SPOTPRICE_EX_VAT): str,
+                             default=detected or STROMLIGNING_SPOTPRICE_EX_VAT):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             }),
-            errors=errors,
         )
 
     async def async_step_battery(
@@ -292,19 +318,22 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class BatteryArbitrageOptionsFlow(OptionsFlow):
-    """Allow editing battery/trading parameters after setup."""
+    """Allow editing battery/trading parameters and entity mappings after setup."""
 
     def __init__(self, entry: ConfigEntry) -> None:
         self._entry = entry
+        self._data: dict[str, Any] = {}
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """Step 1: Battery & trading parameters."""
         if user_input is not None:
             eff = user_input.get(CONF_ROUND_TRIP_EFFICIENCY, 92)
             if eff > 1:
                 user_input[CONF_ROUND_TRIP_EFFICIENCY] = eff / 100
-            return self.async_create_entry(title="", data=user_input)
+            self._data.update(user_input)
+            return await self.async_step_entities()
 
         data = self._entry.data
         eff_pct = int(data.get(CONF_ROUND_TRIP_EFFICIENCY, 0.92) * 100)
@@ -351,5 +380,51 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
+            }),
+        )
+
+    async def async_step_entities(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 2: Entity mappings — inverter controls and battery sensors."""
+        if user_input is not None:
+            self._data.update(user_input)
+            return self.async_create_entry(title="", data=self._data)
+
+        data = self._entry.data
+
+        return self.async_show_form(
+            step_id="entities",
+            data_schema=vol.Schema({
+                vol.Required(CONF_FOXESS_INVERTER_ID,
+                             default=data.get(CONF_FOXESS_INVERTER_ID, "")):
+                    str,
+                vol.Required(CONF_FOXESS_WORK_MODE_ENTITY,
+                             default=data.get(CONF_FOXESS_WORK_MODE_ENTITY, FOXESS_WORK_MODE_ENTITY)):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="select")),
+                vol.Required(CONF_FOXESS_FORCE_CHARGE_ENTITY,
+                             default=data.get(CONF_FOXESS_FORCE_CHARGE_ENTITY, FOXESS_FORCE_CHARGE_ENTITY)):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="number")),
+                vol.Required(CONF_FOXESS_FORCE_DISCHARGE_ENTITY,
+                             default=data.get(CONF_FOXESS_FORCE_DISCHARGE_ENTITY, FOXESS_FORCE_DISCHARGE_ENTITY)):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="number")),
+                vol.Required(CONF_BATTERY_SOC_ENTITY,
+                             default=data.get(CONF_BATTERY_SOC_ENTITY, FOXESS_BATTERY_SOC)):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_CELL_TEMP_ENTITY,
+                             default=data.get(CONF_CELL_TEMP_ENTITY, FOXESS_CELL_TEMP_LOW)):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_BATTERY_CHARGE_ENTITY,
+                             default=data.get(CONF_BATTERY_CHARGE_ENTITY, FOXESS_BATTERY_CHARGE_POWER)):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_BATTERY_DISCHARGE_ENTITY,
+                             default=data.get(CONF_BATTERY_DISCHARGE_ENTITY, FOXESS_BATTERY_DISCHARGE_POWER)):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_BATTERY_CHARGE_TOTAL_ENTITY,
+                             default=data.get(CONF_BATTERY_CHARGE_TOTAL_ENTITY, FOXESS_BATTERY_CHARGE_TOTAL)):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_BATTERY_DISCHARGE_TOTAL_ENTITY,
+                             default=data.get(CONF_BATTERY_DISCHARGE_TOTAL_ENTITY, FOXESS_BATTERY_DISCHARGE_TOTAL)):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             }),
         )

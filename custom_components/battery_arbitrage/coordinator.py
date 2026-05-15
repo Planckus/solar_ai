@@ -48,6 +48,12 @@ from .const import (
     EVCC_API_SOLAR,
     EVCC_API_STATE,
     EV_MODE_NOW,
+    CONF_BATTERY_CHARGE_ENTITY,
+    CONF_BATTERY_CHARGE_TOTAL_ENTITY,
+    CONF_BATTERY_DISCHARGE_ENTITY,
+    CONF_BATTERY_DISCHARGE_TOTAL_ENTITY,
+    CONF_BATTERY_SOC_ENTITY,
+    CONF_CELL_TEMP_ENTITY,
     FOXESS_BATTERY_CHARGE_POWER,
     FOXESS_BATTERY_DISCHARGE_POWER,
     FOXESS_BATTERY_SOC,
@@ -137,6 +143,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Learning tick gate: storage-write operations run every 5 min, not every fast tick
         self._last_learning_tick: datetime | None = None
         self._vacation_mode: bool = False  # Cached between learning ticks
+        # Export limit tracker — avoids unnecessary register writes; -1 forces first write
+        self._last_export_limit: int = -1
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -175,7 +183,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         return {key: rates.get(key, default) for key, _, _, default in TEMP_BUCKETS}
 
     def get_current_temp_bucket(self) -> str | None:
-        temp = self._get_float_state(FOXESS_CELL_TEMP_LOW)
+        temp = self._get_float_state(self.config.get(CONF_CELL_TEMP_ENTITY, FOXESS_CELL_TEMP_LOW))
         if temp is None:
             return None
         return _temp_bucket(temp)
@@ -540,10 +548,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             buy_price_min = buy_price_p25 = buy_price_next_slot = 0.0
 
         # ---- FoxESS state ----
-        battery_soc = self._get_float_state(FOXESS_BATTERY_SOC, 0)
-        cell_temp_low = self._get_float_state(FOXESS_CELL_TEMP_LOW)
-        battery_charge_kw = self._get_float_state(FOXESS_BATTERY_CHARGE_POWER, 0)
-        battery_discharge_kw = self._get_float_state(FOXESS_BATTERY_DISCHARGE_POWER, 0)
+        battery_soc = self._get_float_state(self.config.get(CONF_BATTERY_SOC_ENTITY, FOXESS_BATTERY_SOC), 0)
+        cell_temp_low = self._get_float_state(self.config.get(CONF_CELL_TEMP_ENTITY, FOXESS_CELL_TEMP_LOW))
+        battery_charge_kw = self._get_float_state(self.config.get(CONF_BATTERY_CHARGE_ENTITY, FOXESS_BATTERY_CHARGE_POWER), 0)
+        battery_discharge_kw = self._get_float_state(self.config.get(CONF_BATTERY_DISCHARGE_ENTITY, FOXESS_BATTERY_DISCHARGE_POWER), 0)
         current_work_mode = self.hass.states.get(FOXESS_WORK_MODE_ENTITY)
         work_mode_str = current_work_mode.state if current_work_mode else WORK_MODE_SELF_USE
 
@@ -763,6 +771,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             else:
                 reason = "Disabled — monitoring only"
 
+        # ---- export limit (every tick — enforces solar floor even when disabled) ----
+        await self._maintain_export_limit(export_price_raw, min_export_price, new_mode)
+
         # ---- savings tracking (learning tick only — accumulates per interval_h) ----
         if is_learning_tick:
             self._update_savings(
@@ -914,7 +925,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if new_mode == MODE_EXPORTING:
             # Feed-in First: inverter pushes battery + solar to grid
             await self._set_work_mode(WORK_MODE_EXPORT)
-            await self._set_export_limit(inverter_id, 10000)
             # Apply export power cap if configured (0 = no cap)
             max_export_kw = float(self._stored.get("max_export_kw", DEFAULT_MAX_EXPORT_KW))
             if max_export_kw > 0:
@@ -927,13 +937,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # Force Charge: inverter charges battery from grid at grid-headroom-capped rate
             await self._set_work_mode(WORK_MODE_FORCE_CHARGE)
             await self._set_charge_power(inverter_id, max_kw=capped_charge_rate_kw)
-            await self._set_export_limit(inverter_id, 0)   # Don't export while buying cheap power
             self._we_set_evcc_mode = True
             await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
 
         elif new_mode == MODE_NORMAL:
             await self._set_work_mode(WORK_MODE_SELF_USE)
-            await self._set_export_limit(inverter_id, 10000)
             # Release EVCC back to normal only if WE were the one who set it to hold
             if self._we_set_evcc_mode:
                 self._we_set_evcc_mode = False
@@ -942,6 +950,37 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Send HA notification on mode change if enabled
         if self._stored.get("notifications_enabled", False):
             await self._send_mode_notification(self._current_mode, new_mode, reason)
+
+    async def _maintain_export_limit(
+        self,
+        export_price_raw: float,
+        min_export_price: float,
+        current_mode: str,
+    ) -> None:
+        """Set the FoxESS export limit register every tick.
+
+        Three states:
+          - Grid charging  → 0 W    (never export while buying cheap power)
+          - Below floor    → 25 W   (block solar export at unprofitable prices)
+          - Above floor    → 10 000 W (full export allowed)
+
+        Only writes to the inverter when the limit actually changes, to avoid
+        unnecessary register wear. Runs even when Solar AI is disabled so the
+        floor is always enforced.
+        """
+        if current_mode == MODE_GRID_CHARGING:
+            limit_w = 0
+        elif export_price_raw <= min_export_price:
+            limit_w = 25
+        else:
+            limit_w = 10000
+
+        if limit_w == self._last_export_limit:
+            return  # no change — skip the write
+
+        inverter_id = self.config.get("foxess_inverter_id", "")
+        await self._set_export_limit(inverter_id, limit_w)
+        self._last_export_limit = limit_w
 
     async def _set_work_mode(self, mode: str) -> None:
         entity = self.config.get("foxess_work_mode_entity", "select.foxessmodbus_work_mode")
@@ -1186,8 +1225,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         are hardware-accurate and available immediately on any existing install.
         Returns None if there isn't enough lifetime data yet.
         """
-        charge_total = self._get_float_state(FOXESS_BATTERY_CHARGE_TOTAL)
-        discharge_total = self._get_float_state(FOXESS_BATTERY_DISCHARGE_TOTAL)
+        charge_total = self._get_float_state(self.config.get(CONF_BATTERY_CHARGE_TOTAL_ENTITY, FOXESS_BATTERY_CHARGE_TOTAL))
+        discharge_total = self._get_float_state(self.config.get(CONF_BATTERY_DISCHARGE_TOTAL_ENTITY, FOXESS_BATTERY_DISCHARGE_TOTAL))
         if (
             charge_total is None
             or discharge_total is None

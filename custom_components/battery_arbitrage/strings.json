@@ -12,13 +12,39 @@
         }
       },
       "foxess": {
-        "title": "FoxESS Inverter Entities",
-        "description": "Solar AI needs to control three FoxESS Modbus entities. Auto-detected values are pre-filled.",
+        "title": "Inverter Control Entities",
+        "description": "Select the entities Solar AI uses to control the inverter. Auto-detected values are pre-filled — change them if your entity IDs differ.",
         "data": {
           "foxess_inverter_id": "Inverter ID",
-          "foxess_work_mode_entity": "Work mode select entity",
+          "foxess_work_mode_entity": "Work mode entity",
           "foxess_force_charge_entity": "Force charge power entity",
           "foxess_force_discharge_entity": "Force discharge power entity"
+        },
+        "data_description": {
+          "foxess_inverter_id": "The FoxESS Modbus inverter ID (a hex string). Used for direct register writes.",
+          "foxess_work_mode_entity": "Select entity used to set the inverter work mode (Self Use / Feed-in First / Force Charge)",
+          "foxess_force_charge_entity": "Number entity for setting the force-charge power (W)",
+          "foxess_force_discharge_entity": "Number entity for setting the force-discharge / export power (W)"
+        }
+      },
+      "battery_sensors": {
+        "title": "Battery Sensor Entities",
+        "description": "Select the sensors Solar AI reads to monitor the battery. Auto-detected FoxESS Modbus values are pre-filled.",
+        "data": {
+          "battery_soc_entity": "Battery state of charge (%)",
+          "cell_temp_entity": "Battery cell temperature (lowest)",
+          "battery_charge_entity": "Battery charge power (kW)",
+          "battery_discharge_entity": "Battery discharge power (kW)",
+          "battery_charge_total_entity": "Lifetime charge total (kWh)",
+          "battery_discharge_total_entity": "Lifetime discharge total (kWh)"
+        },
+        "data_description": {
+          "battery_soc_entity": "Sensor reporting current SoC in percent (0–100)",
+          "cell_temp_entity": "Sensor reporting the lowest cell temperature in °C — used for temperature-adaptive charge rates",
+          "battery_charge_entity": "Sensor reporting current charge power in kW",
+          "battery_discharge_entity": "Sensor reporting current discharge power in kW",
+          "battery_charge_total_entity": "Cumulative lifetime energy charged into the battery (kWh) — used to auto-detect round-trip efficiency",
+          "battery_discharge_total_entity": "Cumulative lifetime energy discharged from the battery (kWh) — used to auto-detect round-trip efficiency"
         }
       },
       "spot_price": {
@@ -72,7 +98,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Solar AI Options",
+        "title": "Solar AI — Parameters",
         "data": {
           "battery_floor_soc": "Minimum SoC during export (%)",
           "battery_max_soc": "Maximum SoC for grid charging (%)",
@@ -83,6 +109,22 @@
           "currency": "Currency",
           "fast_poll_interval": "Live data poll interval (seconds)",
           "dso_gln": "Grid operator (DSO)"
+        }
+      },
+      "entities": {
+        "title": "Solar AI — Entity Mapping",
+        "description": "Map Solar AI to your inverter and battery sensors. Change these if your entity IDs differ from the FoxESS Modbus defaults.",
+        "data": {
+          "foxess_inverter_id": "Inverter ID",
+          "foxess_work_mode_entity": "Work mode entity",
+          "foxess_force_charge_entity": "Force charge power entity",
+          "foxess_force_discharge_entity": "Force discharge power entity",
+          "battery_soc_entity": "Battery state of charge (%)",
+          "cell_temp_entity": "Battery cell temperature (lowest)",
+          "battery_charge_entity": "Battery charge power (kW)",
+          "battery_discharge_entity": "Battery discharge power (kW)",
+          "battery_charge_total_entity": "Lifetime charge total (kWh)",
+          "battery_discharge_total_entity": "Lifetime discharge total (kWh)"
         }
       }
     }

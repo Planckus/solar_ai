@@ -9,6 +9,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.18.0] — 2026-05-15
+
+### Added
+- **Configurable entity mapping** — Solar AI no longer requires FoxESS Modbus entity IDs to be hardcoded. All six battery sensor entities (SoC, cell temperature, charge power, discharge power, lifetime charge total, lifetime discharge total) can now be mapped to any HA sensor during setup or changed later via the integration's Options flow. The setup wizard now has a dedicated "Battery Sensor Entities" step with HA entity pickers for each sensor. The three inverter control entities (work mode, force charge power, force discharge power) likewise now use entity pickers instead of plain text fields. Existing installs are automatically migrated at startup — they receive the FoxESS Modbus defaults and work without any manual intervention. This is the foundation for using Solar AI with non-FoxESS inverters or custom sensor naming.
+
+### Changed
+- Config entry schema version bumped 7 → 8 to accommodate the new sensor entity keys.
+- Setup flow: "FoxESS Inverter Entities" step retitled to "Inverter Control Entities"; inverter control fields now use HA entity pickers (select/number domain filters). A new "Battery Sensor Entities" step follows it with sensor entity pickers.
+- Options flow: a second page ("Entity Mapping") is now reachable from the options menu, listing all 10 entity fields (inverter ID + 3 control + 6 sensors) for post-install changes.
+
+---
+
+## [0.17.0] — 2026-05-15
+
+### Changed
+- **Solar export blocked below minimum export price floor** — Solar AI now writes the FoxESS export limit register (46616) directly on every poll tick, not just on mode transitions. When the net export price is at or below your configured floor, the limit is set to 25 W — effectively blocking solar panel export as well as battery export. When above the floor it is set to 10 000 W. During grid charging it is always set to 0 W (unchanged behaviour). This matches the behaviour of the legacy `FoxESS - Export Limit by Spotprice` automation that Solar AI was previously disabling. The floor is enforced even when Solar AI's arbitrage switch is off. The register is only written when the limit value actually changes, to avoid unnecessary wear.
+- **README updated** — export floor section and decision loop updated to reflect the 25 W solar blocking behaviour.
+
+---
+
 ## [0.16.2] — 2026-05-15
 
 ### Changed
