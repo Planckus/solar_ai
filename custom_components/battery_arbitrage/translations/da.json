@@ -99,7 +99,7 @@
     "step": {
       "init": {
         "title": "Solar AI — parametre",
-        "description": "Trin 1 af 2 — batteri- og handelsparametre. Tryk Gem for at fortsætte til enhedstilknytning →",
+        "description": "Trin 1 af 2 — batteri- og handelsparametre. Tryk Send for at tilknytte din invertér og batterisensorer på næste side.",
         "data": {
           "battery_floor_soc": "Minimum SoC under eksport (%)",
           "battery_max_soc": "Maksimum SoC ved netopladning (%)",

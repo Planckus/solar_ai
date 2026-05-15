@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.18.2] — 2026-05-15
+
+### Fixed
+- **Options flow description clarified** — page 1 now reads "Press Submit to map your inverter and battery sensor entities on the next page." so users know exactly what to do to reach the entity mapping step.
+
+---
+
 ## [0.18.1] — 2026-05-15
 
 ### Fixed
