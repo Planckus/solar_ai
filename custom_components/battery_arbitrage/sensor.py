@@ -347,6 +347,18 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         suggested_display_precision=4,
         value_fn=lambda d: round(d.get("feed_in_tariff_total", 0.0), 4),
     ),
+    # Mirror sensor for min_export_price — sensors get the "dp" field in the
+    # compact entity registry display entry, so suggested_display_precision
+    # actually forces two decimal places in Lovelace (unlike NumberEntity).
+    BatteryArbitrageSensorDescription(
+        key="min_export_price_display",
+        translation_key="min_export_price_display",
+        native_unit_of_measurement="DKK/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:currency-eur-off",
+        suggested_display_precision=2,
+        value_fn=lambda d: round(float(d.get("min_export_price", 0.0)), 2),
+    ),
     # ── Grid overcurrent protection ───────────────────────────────────────
     BatteryArbitrageSensorDescription(
         key="grid_power",
