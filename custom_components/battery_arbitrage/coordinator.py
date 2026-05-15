@@ -645,8 +645,42 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         capped_charge_rate_kw = min(learned_charge_rate if learned_charge_rate > 0 else GRID_MAX_KW, grid_headroom_kw)
 
         # ---- spread calculations ----
-        # Spread = what we receive when selling (ex-VAT) minus what we pay when buying (incl. VAT)
-        grid_arbitrage_spread = export_price - buy_price_min
+        # True cost of arbitrage has two components:
+        #
+        #  1. Recharge cost: to restore what we sold we must buy back more kWh than we
+        #     exported (round-trip losses).  Cost per exported kWh = buy_price_min / efficiency.
+        #
+        #  2. House drag cost: while the battery is depleted (from now until the cheapest
+        #     recharge slot), the house must buy from the grid instead of drawing from the
+        #     battery.  We use the actual per-hour buy prices and the temperature-adaptive
+        #     charge rate to estimate when the battery can recover.
+        #
+        # house drag per hour = max(0, house_load - avg_solar) × buy_price[h]
+        # drag period         = hours from now until cheapest charge slot
+        # (solar_kwh / 24 is a flat per-hour solar estimate; conservative but avoids
+        #  requiring per-hour solar forecast that EVCC does not provide)
+
+        house_drag_cost = 0.0
+        if grid_slots and truly_exportable_kwh > 0 and learned_charge_rate > 0:
+            # Find the hour with the cheapest full buy price
+            cheapest_hour = min(
+                grid_slots,
+                key=lambda hs: (hs[1] + spot_markup + tariff_sched[hs[0]] + elafgift) * vat_factor,
+            )[0]
+            hours_until_charge = (cheapest_hour - current_local_hour) % 24
+            # hours_until_charge == 0 → cheapest slot is right now → no drag needed
+            if hours_until_charge > 0:
+                avg_solar_kw = solar_kwh / 24.0
+                net_house_kw = max(0.0, load_2h_avg - avg_solar_kw)
+                for h, spot in grid_slots:
+                    hrs_from_now = (h - current_local_hour) % 24
+                    if 0 < hrs_from_now <= hours_until_charge:
+                        buy_h = (spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor
+                        house_drag_cost += net_house_kw * buy_h
+
+        recharge_cost_per_kwh = buy_price_min / efficiency if efficiency > 0 else buy_price_min
+        house_drag_per_kwh = house_drag_cost / truly_exportable_kwh if truly_exportable_kwh > 0 else 0.0
+        grid_arbitrage_spread = export_price - recharge_cost_per_kwh - house_drag_per_kwh
         min_spread = float(self._stored.get("min_spread_arbitrage", self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE)))
         grid_arbitrage_worthwhile = grid_arbitrage_spread >= min_spread
 
