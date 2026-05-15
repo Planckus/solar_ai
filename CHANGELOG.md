@@ -9,6 +9,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.20.0] — 2026-05-15
+
+### Added
+- **15-minute price resolution** — a new switch entity "15-minute price resolution" controls the granularity of the 24h price chart. When on, the chart emits one row per native DSO slot (typically 15 minutes, showing HH:MM timestamps and up to 48 rows for the next 12 hours). When off (default), the chart shows one row per hour as before. The toggle appears directly above the price chart on the dashboard.
+
+### Changed
+- **Arbitrage model uses native slot resolution throughout** — the house drag cost and solar offset calculations now operate on the actual DSO slot granularity (15-min or hourly, whatever EVCC provides). Previously all calculations assumed 1-hour slots, which underestimated drag in 15-minute markets. Slot durations are derived automatically from the gap between consecutive EVCC forecast slots.
+- **Per-slot solar forecast in drag model** — the house load drag calculation now uses the actual per-slot solar forecast (Watts from EVCC) to offset house load for each individual slot, rather than a flat `solar_kwh / 24` average. This means drag cost is lower during daylight hours (solar covers the house) and correctly zero-adjusted at night.
+
+---
+
 ## [0.19.0] — 2026-05-15
 
 ### Changed

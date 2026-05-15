@@ -22,6 +22,7 @@ async def async_setup_entry(
     async_add_entities([
         BatteryArbitrageSwitch(coordinator, entry),
         BatteryArbitrageNotificationsSwitch(coordinator, entry),
+        BatteryArbitragePriceResolutionSwitch(coordinator, entry),
     ])
 
 
@@ -101,5 +102,45 @@ class BatteryArbitrageNotificationsSwitch(
 
     async def async_turn_off(self, **kwargs: object) -> None:
         self.coordinator._stored["notifications_enabled"] = False
+        await self.coordinator._store.async_save(self.coordinator._stored)
+        self.async_write_ha_state()
+
+
+class BatteryArbitragePriceResolutionSwitch(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SwitchEntity
+):
+    """Toggle between 15-minute and 1-hour price chart resolution.
+
+    When on, the 24h price chart sensor emits one row per native DSO slot
+    (typically 15 minutes).  When off (default) it emits one row per hour.
+    The arbitrage model always uses native resolution internally regardless
+    of this setting.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "price_resolution_15min"
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:clock-time-four-outline"
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_price_resolution_15min"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.coordinator._stored.get("price_resolution_15min", False))
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        self.coordinator._stored["price_resolution_15min"] = True
+        await self.coordinator._store.async_save(self.coordinator._stored)
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        self.coordinator._stored["price_resolution_15min"] = False
         await self.coordinator._store.async_save(self.coordinator._stored)
         self.async_write_ha_state()
