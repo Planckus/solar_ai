@@ -254,7 +254,13 @@ class BatteryArbitrageConfigNumber(
             self._attr_suggested_display_precision = display_precision
 
     async def async_added_to_hass(self) -> None:
-        """Store display precision in entity registry so the frontend picks it up."""
+        """Store display precision in entity registry so the frontend picks it up.
+
+        HA's number platform does not propagate _attr_suggested_display_precision to
+        the entity registry the way the sensor platform does.  We call
+        async_update_entity_options with the user-override key ("display_precision")
+        so the Lovelace frontend actually applies the precision when rendering the state.
+        """
         await super().async_added_to_hass()
         precision = getattr(self, "_attr_suggested_display_precision", None)
         if precision is not None:
@@ -262,7 +268,7 @@ class BatteryArbitrageConfigNumber(
             registry.async_update_entity_options(
                 self.entity_id,
                 "number",
-                {"suggested_display_precision": precision},
+                {"display_precision": precision},
             )
 
     @property
