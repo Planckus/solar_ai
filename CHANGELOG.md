@@ -9,10 +9,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.15.2] — 2026-05-15
+
+### Fixed
+- **Minimum export price now displays with two decimal places** — HA's Lovelace number formatter checks `stateObj.attributes.display_precision` when determining how many fractional digits to show. The entity now exposes `display_precision: 2` in its state attributes, so the frontend applies `{minimumFractionDigits: 2}` and the card shows `0,10` instead of `0,1`. (Previous attempts via entity registry options didn't work because HA only computes the compact `dp` field for sensor entities, not number entities.)
+
+---
+
 ## [0.15.1] — 2026-05-15
 
 ### Fixed
-- **Minimum export price displayed with two decimal places** — HA's number platform does not propagate `suggested_display_precision` to the entity registry the way the sensor platform does. Fixed by writing `display_precision` directly into the entity registry options via `async_added_to_hass`, which is the key the Lovelace frontend actually reads for number entities. The entity now shows `0,10` instead of `0,1`.
+- Number entity `async_added_to_hass` now writes `display_precision` (not `suggested_display_precision`) into the entity registry options — the key the frontend reads for user-set precision on number entities.
 
 ---
 
