@@ -9,6 +9,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.15.0] — 2026-05-15
+
+### Added
+- **Auto-fetched indfødningstarif** — Solar AI now automatically retrieves the DSO and Energinet feed-in tariffs from Energi Data Service and deducts them from the export price. For DINEL customers this covers "Nettarif indfødning C" (code `TC_IND_03`, currently 0.0063 DKK/kWh) and the Energinet "Indfødningstarif produktion" (code `40010`, currently 0.005 DKK/kWh) — a combined 0.0113 DKK/kWh that was previously missing from the sell-side calculation. Works for any DSO whose indfødningstarif record Note contains "indfødning c". Refreshed on the same daily cycle as the import tariff schedule.
+- **Feed-in tariff sensor** — new sensor `feed_in_tariff` shows the total auto-fetched indfødningstarif (DSO + Energinet) in DKK/kWh.
+
+### Changed
+- Export price formula updated: `net_export = spot_ex_vat − retailer_fee − feed_in_tariff_total`. The `export_fee` number entity now covers only the retailer/trading fee; the indfødningstarif is no longer something users need to enter manually.
+- **Today's plan now respects the minimum export price floor** — export hours shown in the plan card only include hours where the net sell price exceeds your configured minimum. Hours that would be blocked at runtime no longer appear as planned export hours.
+- **Minimum export price displays at two decimal places** — the number entity now shows and accepts values like `0.00`, `0.10` etc. (step 0.01, two-decimal display).
+
+---
+
+## [0.14.0] — 2026-05-15
+
+### Added
+- **Configurable minimum export price** — a new number entity (`min_export_price`, 0.00–2.00 DKK/kWh, step 0.01) lets you set a floor below which Solar AI will not export. At the default of 0.00 the behaviour is identical to before (only blocks when price is actually negative). Raise it to e.g. 0.50 DKK/kWh to avoid selling at times you consider unprofitable.
+
+---
+
 ## [0.13.0] — 2026-05-15
 
 ### Added
