@@ -1537,16 +1537,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         price_area: str,
         reference_dt: datetime,
     ) -> dict:
-        """Fetch day-ahead spot prices from Energi Data Service Elspotprices.
+        """Fetch day-ahead prices from Energi Data Service DayAheadPrices.
 
         Returns a dict in EVCC-compatible format:
             {"rates": [{"start": "<utc-iso>", "value": <dkk_per_kwh>}, ...]}
 
-        Nord Pool day-ahead prices are published at 13:00 CET for the next
-        calendar day.  We fetch today + tomorrow (limit=48) so the full 24-h
-        horizon is always populated once yesterday's prices have been replaced.
+        The DayAheadPrices dataset has 15-minute resolution (4 slots/hour).
+        The optimizer averages slots within each hour, so 15-min data works
+        correctly without any pre-aggregation here.
 
-        HourDK values are local Copenhagen time (CET/CEST) without timezone
+        Nord Pool day-ahead prices are published at 13:00 CET for the next
+        calendar day.  We fetch today + tomorrow (limit=192 = 4×48h) so the
+        full 24-h horizon is populated once tomorrow's prices are available.
+
+        TimeDK values are local Copenhagen time (CET/CEST) without timezone
         info; we convert to UTC using the Europe/Copenhagen zone so that DST
         transitions are handled correctly year-round.
         """
@@ -1555,31 +1559,31 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         url = (
             f"{EDS_ELSPOT_URL}"
             f'?filter={{"PriceArea":"{price_area}"}}'
-            f"&sort=HourDK%20ASC"
+            f"&sort=TimeDK%20ASC"
             f"&start={today_str}"
-            f"&limit=48"
+            f"&limit=192"
         )
         try:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 resp.raise_for_status()
                 data = await resp.json(content_type=None)
         except Exception as err:
-            _LOGGER.warning("EDS Elspotprices fetch failed (area %s): %s", price_area, err)
+            _LOGGER.warning("EDS DayAheadPrices fetch failed (area %s): %s", price_area, err)
             return {}
 
         records = data.get("records", [])
         if not records:
-            _LOGGER.warning("EDS Elspotprices: no records returned for area %s", price_area)
+            _LOGGER.warning("EDS DayAheadPrices: no records returned for area %s", price_area)
             return {}
 
         rates: list[dict] = []
         for rec in records:
-            hour_dk = rec.get("HourDK")
-            spot_dkk_mwh = rec.get("SpotPriceDKK")
-            if hour_dk is None or spot_dkk_mwh is None:
+            time_dk = rec.get("TimeDK")
+            spot_dkk_mwh = rec.get("DayAheadPriceDKK")
+            if time_dk is None or spot_dkk_mwh is None:
                 continue
             try:
-                local_dt = datetime.fromisoformat(hour_dk).replace(tzinfo=_CPH_TZ)
+                local_dt = datetime.fromisoformat(time_dk).replace(tzinfo=_CPH_TZ)
                 utc_dt = local_dt.astimezone(timezone.utc)
                 rates.append({
                     "start": utc_dt.isoformat(),
@@ -1588,8 +1592,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             except (ValueError, TypeError) as parse_err:
                 _LOGGER.debug("EDS: skipping bad record %s: %s", rec, parse_err)
 
-        _LOGGER.debug(
-            "EDS Elspotprices: area %s — %d records, %d valid rates",
+        _LOGGER.info(
+            "EDS DayAheadPrices: area %s — %d records, %d valid rates",
             price_area, len(records), len(rates),
         )
         return {"rates": rates} if rates else {}

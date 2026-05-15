@@ -167,7 +167,7 @@ ENERGINET_GLN = "5790000432752"          # Energinet — transmission/system tar
 ENERGINET_TARIFF_CODES = frozenset({"40000"})  # Transmissions nettarif only (residential; excludes indfødningstarif)
 DEFAULT_ELAFGIFT_DKK_KWH = 0.01         # Danish electricity duty (elafgift) — user-adjustable
 TARIFF_SCHEDULE_REFRESH_SECONDS = 86400  # Refresh tariff schedule daily (tariffs are stable within a day)
-EDS_ELSPOT_URL = "https://api.energidataservice.dk/dataset/Elspotprices"
+EDS_ELSPOT_URL = "https://api.energidataservice.dk/dataset/DayAheadPrices"
 
 # Spot price area (Nord Pool zone) — used by EDS Elspotprices fetch
 CONF_PRICE_AREA = "price_area"
