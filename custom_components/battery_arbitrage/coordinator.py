@@ -97,6 +97,7 @@ from .const import (
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
     DEFAULT_MAX_EXPORT_KW,
+    DEFAULT_MIN_EXPORT_PRICE,
     DEFAULT_SPOT_MARKUP,
     EFFICIENCY_MIN_TOTAL_KWH,
 )
@@ -130,6 +131,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # DSO tariff schedule: 24-entry list (index = local hour), refreshed daily
         self._tariff_schedule: list[float] = [0.0] * 24
         self._last_tariff_schedule_refresh: datetime | None = None
+        # Feed-in tariff components (flat-rate, refreshed daily with tariff schedule)
+        self._feed_in_tariff_dso: float = 0.0
+        self._feed_in_tariff_energinet: float = 0.0
         # Learning tick gate: storage-write operations run every 5 min, not every fast tick
         self._last_learning_tick: datetime | None = None
         self._vacation_mode: bool = False  # Cached between learning ticks
@@ -259,6 +263,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "elafgift": DEFAULT_ELAFGIFT_DKK_KWH,
                 "spot_markup": DEFAULT_SPOT_MARKUP,
                 "max_export_kw": DEFAULT_MAX_EXPORT_KW,
+                "min_export_price": DEFAULT_MIN_EXPORT_PRICE,
                 "notifications_enabled": False,
                 "ev_charge_hourly": [0.0] * 24,
                 "solar_daily_kwh": [],
@@ -298,6 +303,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("elafgift", DEFAULT_ELAFGIFT_DKK_KWH)
             self._stored.setdefault("spot_markup", DEFAULT_SPOT_MARKUP)
             self._stored.setdefault("max_export_kw", DEFAULT_MAX_EXPORT_KW)
+            self._stored.setdefault("min_export_price", DEFAULT_MIN_EXPORT_PRICE)
             self._stored.setdefault("notifications_enabled", False)
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
@@ -390,10 +396,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             >= TARIFF_SCHEDULE_REFRESH_SECONDS
         )
         if tariff_schedule_stale:
-            from .tariffs import fetch_tariff_schedule  # avoid circular import at module level
+            from .tariffs import fetch_tariff_schedule, fetch_feed_in_tariff  # avoid circular import at module level
             dso_gln = self.config.get(CONF_DSO_GLN, DEFAULT_DSO_GLN)
             try:
-                dso_sched, energinet_sched = await asyncio.gather(
+                dso_sched, energinet_sched, (dso_feed_in, en_feed_in) = await asyncio.gather(
                     # DSO: 24 hourly prices + genuinely varying hours → nettarif C time only
                     # (excludes Effektbetaling capacity charges and flat samplaceret band tariffs)
                     fetch_tariff_schedule(
@@ -407,10 +413,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                         session, ENERGINET_GLN, now,
                         allowed_codes=ENERGINET_TARIFF_CODES,
                     ),
+                    # Feed-in tariffs: DSO indfødning C + Energinet indfødning produktion (40010)
+                    fetch_feed_in_tariff(session, dso_gln, ENERGINET_GLN, now),
                 )
                 self._tariff_schedule = [
                     round(d + e, 4) for d, e in zip(dso_sched, energinet_sched)
                 ]
+                self._feed_in_tariff_dso = dso_feed_in
+                self._feed_in_tariff_energinet = en_feed_in
                 self._last_tariff_schedule_refresh = now
                 _LOGGER.debug(
                     "Tariff schedule refreshed (GLN %s + Energinet). "
@@ -551,8 +561,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             else 0.0
         )
         export_fee = self._stored.get("export_fee", DEFAULT_EXPORT_FEE)
-        # Raw export price before negative-price guard (used in chart / plan)
-        export_price_raw = spot_ex_vat - export_fee
+        feed_in_tariff = round(self._feed_in_tariff_dso + self._feed_in_tariff_energinet, 6)
+        # Raw export price before floor guard (used in chart / plan)
+        export_price_raw = spot_ex_vat - export_fee - feed_in_tariff
         export_price = max(0.0, export_price_raw)
 
         # ---- load model (reads from storage, always fresh) ----
@@ -665,10 +676,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
         )
 
-        # ── Negative-price guards ────────────────────────────────────────────
-        # Never export when grid is paying consumers to take power — export_price_raw ≤ 0
-        # means we'd receive nothing (or pay) for exported energy.
-        if export_price_raw <= 0.0:
+        # ── Export price floor ───────────────────────────────────────────────
+        # Never export below the user-configured minimum price floor.
+        # Default is 0.0 — blocks only when price is actually negative.
+        # Users can raise this to avoid selling at prices they consider too low.
+        min_export_price = float(self._stored.get("min_export_price", DEFAULT_MIN_EXPORT_PRICE))
+        if export_price_raw <= min_export_price:
             should_export = False
 
         # If grid is paying US to buy electricity (buy price ≤ 0), always charge if there's
@@ -687,7 +700,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         price_chart_slots: list[dict] = []
         for h, spot in grid_slots:
             buy_slot = round((spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor, 3)
-            sell_slot = round(max(0.0, spot - export_fee), 3)
+            sell_slot = round(max(0.0, spot - export_fee - feed_in_tariff), 3)
             price_chart_slots.append({"h": h, "buy": buy_slot, "sell": sell_slot})
 
         # ── Tonight's plan (best charge + export windows in next 24h) ────────
@@ -705,11 +718,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     break
             charge_hours.sort()
 
-            # Most valuable sell hours — same deduplication
+            # Most valuable sell hours — same deduplication, skipping hours below the
+            # min_export_price floor so the plan reflects what will actually happen
             sorted_by_sell = sorted(price_chart_slots, key=lambda s: -s["sell"])
             seen_sell: set[int] = set()
             export_hours = []
             for s in sorted_by_sell:
+                if s["sell"] <= min_export_price:
+                    continue  # would be blocked at runtime — exclude from plan
                 if s["h"] not in seen_sell:
                     seen_sell.add(s["h"])
                     export_hours.append(s["h"])
@@ -808,6 +824,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             grid_headroom_kw=round(grid_headroom_kw, 3),
             grid_max_kw=grid_max_kw,
             tariff_this_hour=tariff_this_hour,
+            feed_in_tariff_dso=self._feed_in_tariff_dso,
+            feed_in_tariff_energinet=self._feed_in_tariff_energinet,
+            feed_in_tariff_total=feed_in_tariff,
             capped_charge_rate_kw=round(capped_charge_rate_kw, 3),
             learned_rates=self.get_all_learned_rates(),
             learned_capacity=learned_capacity,

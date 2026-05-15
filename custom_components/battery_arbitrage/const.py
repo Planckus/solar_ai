@@ -145,6 +145,7 @@ GRID_MIN_CHARGE_KW = 0.3            # Minimum useful battery charge rate under h
 CONF_SPOT_MARKUP = "spot_markup"
 DEFAULT_SPOT_MARKUP = 0.0               # DKK/kWh — user-adjustable via number entity
 DEFAULT_MAX_EXPORT_KW = 0.0             # kW — 0 = no cap; set > 0 to limit inverter export power
+DEFAULT_MIN_EXPORT_PRICE = 0.0          # DKK/kWh — minimum net export price; blocks export below this floor
 
 # DSO tariff integration — DatahubPricelist API
 CONF_DSO_GLN = "dso_gln"

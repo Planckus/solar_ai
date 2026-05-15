@@ -9,6 +9,7 @@ from homeassistant.components.number import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfPower
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -18,6 +19,7 @@ from .const import (
     DEFAULT_ELAFGIFT_DKK_KWH,
     DEFAULT_EXPORT_FEE,
     DEFAULT_MAX_EXPORT_KW,
+    DEFAULT_MIN_EXPORT_PRICE,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_SPOT_MARKUP,
     DEFAULT_VAT_PCT,
@@ -146,6 +148,19 @@ async def async_setup_entry(
             step=0.5,
             mode=NumberMode.BOX,
         ),
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="min_export_price",
+            translation_key="min_export_price",
+            default=DEFAULT_MIN_EXPORT_PRICE,
+            icon="mdi:currency-eur-off",
+            unit="DKK/kWh",
+            min_val=0.0,
+            max_val=2.0,
+            step=0.01,
+            mode=NumberMode.BOX,
+            display_precision=2,
+        ),
     ]
     async_add_entities(entities)
 
@@ -221,6 +236,7 @@ class BatteryArbitrageConfigNumber(
         max_val: float,
         step: float,
         mode: NumberMode = NumberMode.SLIDER,
+        display_precision: int | None = None,
     ) -> None:
         super().__init__(coordinator)
         self._storage_key = storage_key
@@ -234,6 +250,20 @@ class BatteryArbitrageConfigNumber(
         self._attr_native_max_value = max_val
         self._attr_native_step = step
         self._attr_device_info = _device_info(entry)
+        if display_precision is not None:
+            self._attr_suggested_display_precision = display_precision
+
+    async def async_added_to_hass(self) -> None:
+        """Store display precision in entity registry so the frontend picks it up."""
+        await super().async_added_to_hass()
+        precision = getattr(self, "_attr_suggested_display_precision", None)
+        if precision is not None:
+            registry = er.async_get(self.hass)
+            registry.async_update_entity_options(
+                self.entity_id,
+                "number",
+                {"suggested_display_precision": precision},
+            )
 
     @property
     def native_value(self) -> float:

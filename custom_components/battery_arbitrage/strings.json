@@ -148,6 +148,7 @@
       "grid_headroom": { "name": "Grid headroom" },
       "learned_capacity": { "name": "Learned battery capacity" },
       "auto_efficiency": { "name": "Auto-detected efficiency" },
+      "feed_in_tariff": { "name": "Feed-in tariff (DSO + Energinet)" },
       "capacity_sample_count": { "name": "Capacity learning samples" },
       "pv_power": { "name": "Solar production (live)" },
       "tariff_this_hour": { "name": "Grid tariff this hour" },
@@ -185,7 +186,8 @@
       "export_fee": { "name": "Sell-side fee (per kWh)" },
       "elafgift": { "name": "Electricity duty — elafgift (DKK/kWh)" },
       "spot_markup": { "name": "Spot price markup (retailer add-on)" },
-      "max_export_kw": { "name": "Export power cap (0 = no cap)" }
+      "max_export_kw": { "name": "Export power cap (0 = no cap)" },
+      "min_export_price": { "name": "Minimum export price (0 = allow negative)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage enabled" },

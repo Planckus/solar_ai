@@ -35,6 +35,7 @@ async def _fetch_raw_records(
     start: str,
     limit: int,
     end: str | None = None,
+    sort: str | None = None,
 ) -> list[dict]:
     """Fetch raw D03 records from DatahubPricelist for *gln* starting at *start*.
 
@@ -43,6 +44,11 @@ async def _fetch_raw_records(
     for DSOs (e.g. Dinel) that pre-publish hundreds of daily records months in
     advance — without this filter those records dominate the response and push
     today's record beyond the fetch limit.
+
+    *sort* (optional) overrides the default sort order.  Use ``"ValidFrom desc"``
+    to get the most-recent records first — important for feed-in tariff queries
+    where the target record may be beyond the limit in ascending order due to
+    the large number of daily DSO records.
     """
     url = (
         f"{_DATAHUB_URL}"
@@ -52,6 +58,8 @@ async def _fetch_raw_records(
     )
     if end:
         url += f"&end={end}"
+    if sort:
+        url += f"&sort={sort}"
     try:
         async with session.get(url, timeout=_TIMEOUT) as resp:
             resp.raise_for_status()
@@ -264,3 +272,97 @@ async def fetch_tariff_schedule(
         schedule[17],
     )
     return [round(v, 4) for v in schedule]
+
+
+async def fetch_feed_in_tariff(
+    session: aiohttp.ClientSession,
+    dso_gln: str,
+    energinet_gln: str,
+    reference_dt: datetime,
+) -> tuple[float, float]:
+    """Return ``(dso_feed_in, energinet_feed_in)`` flat rates in DKK/kWh.
+
+    Fetches two flat-rate tariffs that are deducted from the gross export price:
+
+    * **DSO indfødningstariffen** — the local grid operator's per-kWh fee for
+      accepting injected power.  Selected by looking for a D03 record whose
+      ``Note`` contains ``"indfødning c"`` (case-insensitive), i.e. the C-tariff
+      residential feed-in rate.  For DINEL this is code ``TC_IND_03``.
+
+    * **Energinet indfødningstarif produktion** — the TSO's production injection
+      fee.  Selected by charge type code ``"40010"``.
+
+    Both tariffs are flat-rate (only ``Price1`` populated) and change at most a
+    few times per year, so the same two-query strategy as :func:`fetch_tariff_schedule`
+    is used for reliability.
+
+    Returns ``(0.0, 0.0)`` on API failure — the coordinator keeps the previous
+    cached values.
+    """
+    today_str = reference_dt.strftime("%Y-%m-%d")
+    tomorrow_str = (reference_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Use descending sort so the most-recent records appear first.
+    # DINEL publishes hundreds of daily records; ascending order would push the
+    # indfødningstariffen (ValidFrom 2026-05-01) beyond the 500-record limit.
+    dso_records, en_records = await asyncio.gather(
+        _fetch_raw_records(session, dso_gln, _TARIFF_LOOKBACK_START, _LOOKBACK_LIMIT,
+                           end=tomorrow_str, sort="ValidFrom desc"),
+        _fetch_raw_records(session, energinet_gln, _TARIFF_LOOKBACK_START, _LOOKBACK_LIMIT,
+                           end=tomorrow_str, sort="ValidFrom desc"),
+    )
+
+    now = reference_dt
+
+    def _first_valid_flat(records_a: list[dict], records_b: list[dict], filter_fn) -> float:
+        seen: set[tuple] = set()
+        for r in records_a + records_b:
+            key = (r.get("ChargeTypeCode"), r.get("ValidFrom"))
+            if key in seen:
+                continue
+            seen.add(key)
+
+            if not filter_fn(r):
+                continue
+
+            vf_str = r.get("ValidFrom") or ""
+            vt_str = r.get("ValidTo") or ""
+            try:
+                vf = datetime.fromisoformat(vf_str)
+                if vf.tzinfo is None:
+                    vf = vf.replace(tzinfo=timezone.utc)
+                if now < vf:
+                    continue
+            except (ValueError, TypeError):
+                continue
+
+            if vt_str:
+                try:
+                    vt = datetime.fromisoformat(vt_str)
+                    if vt.tzinfo is None:
+                        vt = vt.replace(tzinfo=timezone.utc)
+                    if now >= vt:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
+            price1 = r.get("Price1")
+            if price1 is not None:
+                return round(float(price1), 6)
+        return 0.0
+
+    def _is_dso_feed_in(r: dict) -> bool:
+        note = (r.get("Note") or "").lower()
+        return "indfødning c" in note
+
+    def _is_energinet_feed_in(r: dict) -> bool:
+        return r.get("ChargeTypeCode") == "40010"
+
+    dso_rate = _first_valid_flat(dso_records, [], _is_dso_feed_in)
+    energinet_rate = _first_valid_flat(en_records, [], _is_energinet_feed_in)
+
+    _LOGGER.debug(
+        "Feed-in tariff: DSO (GLN %s) %.4f + Energinet %.4f = %.4f DKK/kWh",
+        dso_gln, dso_rate, energinet_rate, dso_rate + energinet_rate,
+    )
+    return dso_rate, energinet_rate
