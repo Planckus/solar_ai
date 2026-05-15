@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.18.3] — 2026-05-15
+
+### Changed
+- **Removed minimum spread and minimum solar export price from setup wizard and options flow** — both values are controlled exclusively via number entities on the dashboard and were redundant in the config flow. Existing values are preserved; the number entities remain the single source of truth.
+
+---
+
 ## [0.18.2] — 2026-05-15
 
 ### Fixed
