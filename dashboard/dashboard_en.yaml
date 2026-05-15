@@ -67,6 +67,8 @@ views:
         entities:
           - entity: switch.solar_ai_15_minutters_prisoplosning
             name: "15-min price resolution"
+          - type: section
+            label: "Inactive — DSO currently provides hourly prices only. Will activate automatically with 15-min data."
       - type: markdown
         title: 24h Price Chart
         content: |

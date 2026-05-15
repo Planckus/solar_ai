@@ -173,6 +173,8 @@
       },
       "solar_28d_avg": { "name": "Solgennemsnit (28 dage)" },
       "ev_charge_probability": { "name": "EV-opladningssandsynlighed (denne time)" },
+      "house_load_this_hour": { "name": "Huslast — lært (denne time)" },
+      "ev_max_charge_rate": { "name": "EV maks. opladningshastighed (lært)" },
       "solar_forecast_24h_adjusted": { "name": "Solcelleprognose 24h (justeret)" },
       "solar_forecast_6h_adjusted": { "name": "Solcelleprognose 6h (justeret)" },
       "savings_actual_today": { "name": "Faktisk besparelse i dag" },
