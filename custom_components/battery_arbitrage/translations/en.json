@@ -99,6 +99,7 @@
     "step": {
       "init": {
         "title": "Solar AI — Parameters",
+        "description": "Step 1 of 2 — battery & trading parameters. Submit to continue to entity mapping →",
         "data": {
           "battery_floor_soc": "Minimum SoC during export (%)",
           "battery_max_soc": "Maximum SoC for grid charging (%)",
