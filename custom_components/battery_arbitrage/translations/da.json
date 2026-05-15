@@ -8,11 +8,11 @@
           "evcc_url": "EVCC URL"
         },
         "data_description": {
-          "evcc_url": "Fuld URL inkl. port, f.eks. http://192.168.1.2:7070"
+          "evcc_url": "Fuld URL inkl. port, f.eks. http://din-ha-ip:7070"
         }
       },
       "foxess": {
-        "title": "FoxESS invertér-enheder",
+        "title": "FoxESS-invertér-enheder",
         "description": "Solar AI skal styre tre FoxESS Modbus-enheder. Auto-detekterede værdier er forudfyldt.",
         "data": {
           "foxess_inverter_id": "Invertér-ID",
@@ -23,7 +23,7 @@
       },
       "stromligning": {
         "title": "Elpris-enhed",
-        "description": "Vælg Strømligning-spotpris-enheden (excl. moms).",
+        "description": "Vælg Strømligning-spotpris-enheden (ekskl. moms).",
         "data": {
           "stromligning_entity": "Spotpris-enhed"
         }
@@ -34,7 +34,7 @@
         "data": {
           "battery_capacity": "Batterikapacitet (kWh)",
           "battery_floor_soc": "Minimum SoC under eksport (%)",
-          "battery_max_soc": "Maximum SoC ved netopladning (%)",
+          "battery_max_soc": "Maksimum SoC ved netopladning (%)",
           "round_trip_efficiency": "Rundt-tur-effektivitet (%)",
           "min_spread_arbitrage": "Minimum spread for netarbitrage (DKK/kWh)",
           "min_solar_export_price": "Minimum solcelleeksportpris (DKK/kWh)",
@@ -46,7 +46,7 @@
         "data_description": {
           "battery_floor_soc": "Batteriet eksporterer ikke under denne ladetilstand",
           "battery_max_soc": "Batteriet net-oplades ikke over denne ladetilstand",
-          "round_trip_efficiency": "Opladnings- og afladningseffektivitet, typisk 85–95%",
+          "round_trip_efficiency": "Opladnings- og afladningseffektivitet, typisk 85–95 %",
           "min_spread_arbitrage": "Mindste prisforskel (sælg − billigste i vindue) for netarbitrage",
           "min_solar_export_price": "Mindste spotpris for at eksportere solcelleoverskud",
           "dso_gln": "Vælg dit distributionsnetselskab. Bruges til at hente timevise nettariffer fra Energi Data Service."
@@ -75,7 +75,7 @@
         "title": "Solar AI — indstillinger",
         "data": {
           "battery_floor_soc": "Minimum SoC under eksport (%)",
-          "battery_max_soc": "Maximum SoC ved netopladning (%)",
+          "battery_max_soc": "Maksimum SoC ved netopladning (%)",
           "round_trip_efficiency": "Rundt-tur-effektivitet (%)",
           "min_spread_arbitrage": "Minimum spread for netarbitrage (DKK/kWh)",
           "min_solar_export_price": "Minimum solcelleeksportpris (DKK/kWh)",
@@ -89,8 +89,16 @@
   },
   "entity": {
     "sensor": {
-      "mode": { "name": "Driftstilstand" },
-      "mode_reason": { "name": "Begrundelse for tilstand" },
+      "mode": {
+        "name": "Driftstilstand",
+        "state": {
+          "normal": "Selvforbrug",
+          "exporting": "Eksporterer",
+          "grid_charging": "Netopladning",
+          "disabled": "Deaktiveret"
+        }
+      },
+      "mode_reason": { "name": "Beslutningsårsag" },
       "export_price": { "name": "Eksportpris" },
       "grid_spread": { "name": "Net-arbitrage spread" },
       "price_min": { "name": "24h prisminimum" },
@@ -99,31 +107,37 @@
       "price_p25": { "name": "24h pris 25. percentil" },
       "price_p75": { "name": "24h pris 75. percentil" },
       "price_next_slot": { "name": "Næste slots pris" },
-      "solar_forecast_24h": { "name": "Solcelle-prognose 24h" },
-      "solar_forecast_6h": { "name": "Solcelle-prognose 6h" },
-      "predicted_load_24h": { "name": "Forudsagt husstand-forbrug 24h" },
+      "solar_forecast_24h": { "name": "Solcelleprognose 24h" },
+      "solar_forecast_6h": { "name": "Solcelleprognose 6h" },
+      "predicted_load_24h": { "name": "Forudsagt husforbrug 24h" },
       "exportable_kwh": { "name": "Eksporterbar energi" },
       "importable_kwh": { "name": "Importerbar energi" },
-      "load_2h_avg": { "name": "Husstand-forbrug 2h-gennemsnit" },
-      "load_28d_avg": { "name": "Husstand-forbrug 28-dages gennemsnit" },
+      "load_2h_avg": { "name": "Husforbrug 2h-gennemsnit" },
+      "load_28d_avg": { "name": "Husforbrug 28-dages gennemsnit" },
       "learned_charge_rate": { "name": "Lært opladningshastighed (aktuel temp.)" },
       "time_to_charge": { "name": "Tid til fuld opladning" },
       "cell_temp_low": { "name": "Batteritemperatur (laveste celle)" },
-      "learned_rate_below_0": { "name": "Lært opladningshastighed — under 0°C" },
-      "learned_rate_0_to_5": { "name": "Lært opladningshastighed — 0–5°C" },
-      "learned_rate_6_to_15": { "name": "Lært opladningshastighed — 6–15°C" },
-      "learned_rate_16_to_21": { "name": "Lært opladningshastighed — 16–21°C" },
-      "learned_rate_21_to_35": { "name": "Lært opladningshastighed — 21–35°C" },
-      "learned_rate_35_to_50": { "name": "Lært opladningshastighed — 35–50°C" },
-      "learned_rate_above_50": { "name": "Lært opladningshastighed — over 50°C" },
-      "evcc_battery_mode": { "name": "EVCC batteritilstand" },
-      "solar_accuracy_factor": { "name": "Solcelle-prognose nøjagtighed" },
+      "learned_rate_below_0": { "name": "Lært opladningshastighed — under 0 °C" },
+      "learned_rate_0_to_5": { "name": "Lært opladningshastighed — 0–5 °C" },
+      "learned_rate_6_to_15": { "name": "Lært opladningshastighed — 6–15 °C" },
+      "learned_rate_16_to_21": { "name": "Lært opladningshastighed — 16–21 °C" },
+      "learned_rate_21_to_35": { "name": "Lært opladningshastighed — 21–35 °C" },
+      "learned_rate_35_to_50": { "name": "Lært opladningshastighed — 35–50 °C" },
+      "learned_rate_above_50": { "name": "Lært opladningshastighed — over 50 °C" },
+      "evcc_battery_mode": { "name": "EVCC-batteritilstand" },
+      "solar_accuracy_factor": { "name": "Solcelleprognose-nøjagtighed" },
       "net_solar_for_battery": { "name": "Netto sol til batteri (24h)" },
-      "season_mode": { "name": "Sæsontilstand" },
-      "solar_28d_avg": { "name": "Sol-gennemsnit (28 dage)" },
+      "season_mode": {
+        "name": "Sæsontilstand",
+        "state": {
+          "summer": "Sommer",
+          "winter": "Vinter"
+        }
+      },
+      "solar_28d_avg": { "name": "Solgennemsnit (28 dage)" },
       "ev_charge_probability": { "name": "EV-opladningssandsynlighed (denne time)" },
-      "solar_forecast_24h_adjusted": { "name": "Solcelle-prognose 24h (justeret)" },
-      "solar_forecast_6h_adjusted": { "name": "Solcelle-prognose 6h (justeret)" },
+      "solar_forecast_24h_adjusted": { "name": "Solcelleprognose 24h (justeret)" },
+      "solar_forecast_6h_adjusted": { "name": "Solcelleprognose 6h (justeret)" },
       "savings_actual_today": { "name": "Faktisk besparelse i dag" },
       "savings_missed_today": { "name": "Forpasset besparelse i dag" },
       "savings_actual_week": { "name": "Faktisk besparelse 7 dage" },
@@ -134,13 +148,13 @@
       "grid_headroom": { "name": "Net-råderum" },
       "learned_capacity": { "name": "Lært batterikapacitet" },
       "auto_efficiency": { "name": "Auto-detekteret effektivitet" },
-      "capacity_sample_count": { "name": "Kapacitets-læringseksempler" },
+      "capacity_sample_count": { "name": "Kapacitetslærings-eksempler" },
       "pv_power": { "name": "Solcelleproduktion (live)" },
       "tariff_this_hour": { "name": "Nettarif denne time" }
     },
     "binary_sensor": {
       "should_export": { "name": "Bør eksportere" },
-      "should_grid_charge": { "name": "Bør net-oplade" },
+      "should_grid_charge": { "name": "Bør netoplade" },
       "vacation_mode": {
         "name": "Tilstedeværelse",
         "state": {
@@ -150,17 +164,17 @@
       },
       "solar_will_fill": { "name": "Sol fylder batteri" },
       "ev_connected": { "name": "EV tilsluttet" },
-      "ev_charging_now": { "name": "EV oplader (now/minpv tilstand)" },
-      "ev_charging_solar": { "name": "EV oplader (solenergi)" }
+      "ev_charging_now": { "name": "EV oplader (now/minpv-tilstand)" },
+      "ev_charging_solar": { "name": "EV på solenergi" }
     },
     "number": {
-      "charge_rate_below_0": { "name": "Maks. opladning — under 0°C" },
-      "charge_rate_0_to_5": { "name": "Maks. opladning — 0–5°C" },
-      "charge_rate_6_to_15": { "name": "Maks. opladning — 6–15°C" },
-      "charge_rate_16_to_21": { "name": "Maks. opladning — 16–21°C" },
-      "charge_rate_21_to_35": { "name": "Maks. opladning — 21–35°C" },
-      "charge_rate_35_to_50": { "name": "Maks. opladning — 35–50°C" },
-      "charge_rate_above_50": { "name": "Maks. opladning — over 50°C" },
+      "charge_rate_below_0": { "name": "Maks. opladning — under 0 °C" },
+      "charge_rate_0_to_5": { "name": "Maks. opladning — 0–5 °C" },
+      "charge_rate_6_to_15": { "name": "Maks. opladning — 6–15 °C" },
+      "charge_rate_16_to_21": { "name": "Maks. opladning — 16–21 °C" },
+      "charge_rate_21_to_35": { "name": "Maks. opladning — 21–35 °C" },
+      "charge_rate_35_to_50": { "name": "Maks. opladning — 35–50 °C" },
+      "charge_rate_above_50": { "name": "Maks. opladning — over 50 °C" },
       "floor_soc": { "name": "Minimum SoC (eksport)" },
       "max_soc": { "name": "Maksimum SoC (netopladning)" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage-spread" },
@@ -185,11 +199,11 @@
     },
     "restore_normal": {
       "name": "Gendan normal drift",
-      "description": "Annuller aktiv eksport eller netopladning og gendan Self-Use-tilstand."
+      "description": "Annuller aktiv eksport eller netopladning og gendan selvforbrugs-tilstand."
     },
     "reset_learning": {
       "name": "Nulstil lærte data",
-      "description": "Sletter alle lærte opladningshastigheder og forbrug-historik."
+      "description": "Sletter alle lærte opladningshastigheder og forbrugshistorik."
     }
   }
 }

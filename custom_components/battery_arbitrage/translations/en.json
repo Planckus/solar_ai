@@ -8,7 +8,7 @@
           "evcc_url": "EVCC URL"
         },
         "data_description": {
-          "evcc_url": "Full URL including port, e.g. http://192.168.1.2:7070"
+          "evcc_url": "Full URL including port, e.g. http://your-ha-ip:7070"
         }
       },
       "foxess": {
@@ -89,8 +89,16 @@
   },
   "entity": {
     "sensor": {
-      "mode": { "name": "Operating mode" },
-      "mode_reason": { "name": "Mode reason" },
+      "mode": {
+        "name": "Operating mode",
+        "state": {
+          "normal": "Self-use",
+          "exporting": "Exporting",
+          "grid_charging": "Grid charging",
+          "disabled": "Disabled"
+        }
+      },
+      "mode_reason": { "name": "Decision reason" },
       "export_price": { "name": "Export price" },
       "grid_spread": { "name": "Grid arbitrage spread" },
       "price_min": { "name": "24h price minimum" },
@@ -119,7 +127,13 @@
       "evcc_battery_mode": { "name": "EVCC battery mode" },
       "solar_accuracy_factor": { "name": "Solar forecast accuracy" },
       "net_solar_for_battery": { "name": "Net solar for battery (24h)" },
-      "season_mode": { "name": "Season mode" },
+      "season_mode": {
+        "name": "Season mode",
+        "state": {
+          "summer": "Summer",
+          "winter": "Winter"
+        }
+      },
       "solar_28d_avg": { "name": "Solar avg (28 days)" },
       "ev_charge_probability": { "name": "EV charge probability (this hour)" },
       "solar_forecast_24h_adjusted": { "name": "Solar forecast 24h (adjusted)" },
