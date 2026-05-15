@@ -325,6 +325,20 @@ views:
           - entity: sensor.solar_ai_forpasset_besparelse_30_dage
             name: "30 dage — forpasset (deaktiveret)"
 
+      # ── Sessionslog ────────────────────────────────────────────────────────
+      - type: markdown
+        title: Sessionslog
+        content: |
+          {% set sessions = state_attr('sensor.solar_ai_sessionslog', 'sessions') | default([]) %}
+          {% if sessions %}
+          | Tid | Type | SoC | Varighed | kWh | DKK |
+          |:----|:-----|:----|:---------|:----|:----|
+          {% for s in sessions[:15] %}{% set icon = '💰' if s.type == 'export' else '⚡' %}{% set label = 'Eksport' if s.type == 'export' else 'Oplade' %}
+          | {{ s.start_ts[11:16] }} | {{ icon }} {{ label }} | {{ s.soc_start | round(0) | int }}→{{ s.soc_end | round(0) | int }}% | {{ s.duration_min }} min | {{ s.kwh }} | {{ s.dkk }} |{% endfor %}
+          {% else %}
+          *Ingen sessioner endnu — aktivér Solar AI for at registrere eksport og opladning.*
+          {% endif %}
+
       # ── Forbrugsmodel ──────────────────────────────────────────────────────
       - type: entities
         title: Forbrugsmodel
@@ -373,6 +387,6 @@ views:
           - entity: select.foxessmodbus_work_mode
             name: Driftstilstand
           - entity: sensor.foxessmodbus_feed_in
-            name: Indspejlingseffekt
+            name: Eksporteffekt
           - entity: sensor.foxessmodbus_load_power
             name: Forbrugseffekt

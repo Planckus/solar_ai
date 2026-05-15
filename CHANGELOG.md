@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.21.4] — 2026-05-16
+
+### Added
+
+- **Session log** — Solar AI now records every export and grid-charge session with a full summary: start and end time (Copenhagen local), SoC range (start → end %), duration in minutes, estimated kWh moved, and revenue/savings in DKK. Sessions are logged on each mode transition and stored persistently across restarts (up to 500 entries). A new `sensor.solar_ai_session_log` entity exposes the count of total logged sessions as its state and the 20 most recent sessions as a `sessions` attribute. A dashboard markdown card shows the last 15 sessions in a table.
+
+---
+
 ## [0.21.3] — 2026-05-16
 
 ### Fixed

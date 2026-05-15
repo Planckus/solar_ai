@@ -156,6 +156,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._last_export_limit: int = -1
         # Day-ahead DP optimizer plan — list of {hour, action, soc, buy, sell}
         self._optimizer_plan: list[dict] = []
+        # Currently open export/charge session (closed when mode exits)
+        self._open_action: dict | None = None
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -298,6 +300,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("vacation_counter", 0)
             self._stored.setdefault("solar_accuracy_samples", [])
             self._stored.setdefault("savings_log", [])
+            self._stored.setdefault("action_log", [])
             self._stored.setdefault("ev_charge_hourly", [0.0] * 24)
             self._stored.setdefault("ev_max_kw", 0.0)
             self._stored.setdefault("house_load_hourly", [0.0] * 24)
@@ -903,6 +906,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             plan_text = "No price data"
 
         # ---- execute action (skipped when disabled — data still reported) ----
+        prev_mode = self._current_mode
         if self._enabled:
             new_mode, reason = await self._execute_decision(
                 should_export, should_grid_charge, export_price,
@@ -924,6 +928,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 reason = f"Disabled — EV typically charges now ({ev_block_prob:.0%} learned)"
             else:
                 reason = "Disabled — monitoring only"
+
+        # ---- action log: detect export/charge session transitions ----
+        if new_mode != prev_mode:
+            if prev_mode in (MODE_EXPORTING, MODE_GRID_CHARGING):
+                self._close_action_session(now, battery_soc, capacity_kwh)
+            if new_mode == MODE_EXPORTING:
+                self._open_action_session(now, "export", battery_soc, export_price)
+            elif new_mode == MODE_GRID_CHARGING:
+                current_buy_price = round(
+                    (spot_ex_vat + spot_markup + tariff_sched[current_local_hour] + elafgift)
+                    * vat_factor,
+                    4,
+                )
+                self._open_action_session(now, "charge", battery_soc, current_buy_price)
 
         # ---- export limit (every tick — enforces solar floor even when disabled) ----
         await self._maintain_export_limit(export_price_raw, min_export_price, new_mode)
@@ -1006,6 +1024,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             plan_export_hours=export_hours,
             house_load_hourly=self.get_house_load_profile(),
             ev_max_kw=float(self._stored.get("ev_max_kw", 0.0)),
+            action_log=self.get_action_log(20),
+            action_log_count=len(self._stored.get("action_log", [])),
             **savings,
         )
 
@@ -1526,6 +1546,78 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         samples.append({"f": round(forecast_w, 0), "a": round(actual_w, 0)})
         if len(samples) > SOLAR_ACCURACY_MAX_SAMPLES:
             del samples[: len(samples) - SOLAR_ACCURACY_MAX_SAMPLES]
+
+    # ------------------------------------------------------------------ #
+    # Action log (export / grid-charge session tracking)                  #
+    # ------------------------------------------------------------------ #
+
+    def _open_action_session(
+        self, now: datetime, action_type: str, soc: float, price: float
+    ) -> None:
+        """Open a new export or grid-charge session in the action log."""
+        _CPH_TZ = ZoneInfo("Europe/Copenhagen")
+        local_now = now.astimezone(_CPH_TZ)
+        self._open_action = {
+            "type": action_type,   # "export" | "charge"
+            "start_ts": local_now.strftime("%Y-%m-%dT%H:%M"),
+            "soc_start": round(soc, 1),
+            "price": round(price, 4),
+        }
+        _LOGGER.info(
+            "Action log: opening %s session at %s (SoC %.1f%%, price %.4f DKK/kWh)",
+            action_type, local_now.strftime("%H:%M"), soc, price,
+        )
+
+    def _close_action_session(
+        self, now: datetime, soc_end: float, capacity_kwh: float
+    ) -> None:
+        """Close the current open session and append the completed entry to action_log."""
+        if self._open_action is None:
+            return
+        _CPH_TZ = ZoneInfo("Europe/Copenhagen")
+        local_now = now.astimezone(_CPH_TZ)
+        start_ts: str = self._open_action["start_ts"]
+        soc_start: float = self._open_action["soc_start"]
+        price: float = self._open_action["price"]
+        action_type: str = self._open_action["type"]
+
+        # Duration in minutes
+        try:
+            start_dt = datetime.fromisoformat(start_ts).replace(tzinfo=_CPH_TZ)
+            duration_min = int((local_now - start_dt).total_seconds() / 60)
+        except Exception:
+            duration_min = 0
+
+        # kWh ≈ |ΔSoC| / 100 × capacity
+        soc_delta = abs(soc_end - soc_start)
+        kwh = round(soc_delta / 100.0 * capacity_kwh, 2)
+        dkk = round(kwh * price, 2)
+
+        entry: dict = {
+            "type": action_type,
+            "start_ts": start_ts,
+            "end_ts": local_now.strftime("%Y-%m-%dT%H:%M"),
+            "soc_start": soc_start,
+            "soc_end": round(soc_end, 1),
+            "duration_min": duration_min,
+            "price": price,
+            "kwh": kwh,
+            "dkk": dkk,
+        }
+        log: list[dict] = self._stored.setdefault("action_log", [])
+        log.append(entry)
+        if len(log) > 500:
+            del log[: len(log) - 500]
+        self._open_action = None
+        _LOGGER.info(
+            "Action log: closed %s session — SoC %.1f%%→%.1f%%, %d min, %.2f kWh, %.2f DKK",
+            action_type, soc_start, soc_end, duration_min, kwh, dkk,
+        )
+
+    def get_action_log(self, n: int = 20) -> list[dict]:
+        """Return last n action log entries, newest first."""
+        log: list[dict] = self._stored.get("action_log", [])
+        return list(reversed(log[-n:]))
 
     # ------------------------------------------------------------------ #
     # Price source: Energi Data Service Elspotprices                      #
