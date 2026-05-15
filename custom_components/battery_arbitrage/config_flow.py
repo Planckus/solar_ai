@@ -28,7 +28,7 @@ from .const import (
     CONF_MIN_SOLAR_EXPORT_PRICE,
     CONF_MIN_SPREAD_ARBITRAGE,
     CONF_ROUND_TRIP_EFFICIENCY,
-    CONF_STROMLIGNING_ENTITY,
+    CONF_SPOT_PRICE_ENTITY,
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
@@ -46,7 +46,7 @@ from .const import (
     FOXESS_FORCE_CHARGE_ENTITY,
     FOXESS_FORCE_DISCHARGE_ENTITY,
     FOXESS_WORK_MODE_ENTITY,
-    STROMLIGNING_SPOTPRICE_EX_VAT,
+    STROMLIGNING_SPOTPRICE_EX_VAT,  # used as the default entity ID hint
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ _LOGGER = logging.getLogger(__name__)
 class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the setup wizard."""
 
-    VERSION = 6
+    VERSION = 7
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -119,7 +119,7 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
             if missing:
                 errors["base"] = "entity_not_found"
             else:
-                return await self.async_step_stromligning()
+                return await self.async_step_spot_price()
 
         return self.async_show_form(
             step_id="foxess",
@@ -136,25 +136,28 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_stromligning(
+    async def async_step_spot_price(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 3: Strømligning price entity."""
+        """Step 3: Generic spot price entity (excl. VAT, in local currency/kWh).
+
+        Accepts any HA sensor — Strømligning, Tibber, or any compatible source.
+        """
         errors: dict[str, str] = {}
         detected = self._find_entity(STROMLIGNING_SPOTPRICE_EX_VAT)
 
         if user_input is not None:
-            entity = user_input[CONF_STROMLIGNING_ENTITY]
+            entity = user_input[CONF_SPOT_PRICE_ENTITY]
             if not self.hass.states.get(entity):
-                errors[CONF_STROMLIGNING_ENTITY] = "entity_not_found"
+                errors[CONF_SPOT_PRICE_ENTITY] = "entity_not_found"
             else:
-                self._data[CONF_STROMLIGNING_ENTITY] = entity
+                self._data[CONF_SPOT_PRICE_ENTITY] = entity
                 return await self.async_step_battery()
 
         return self.async_show_form(
-            step_id="stromligning",
+            step_id="spot_price",
             data_schema=vol.Schema({
-                vol.Required(CONF_STROMLIGNING_ENTITY,
+                vol.Required(CONF_SPOT_PRICE_ENTITY,
                              default=detected or STROMLIGNING_SPOTPRICE_EX_VAT): str,
             }),
             errors=errors,

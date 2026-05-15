@@ -17,9 +17,12 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Battery Arbitrage switch."""
+    """Set up Battery Arbitrage switches."""
     coordinator: BatteryArbitrageCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([BatteryArbitrageSwitch(coordinator, entry)])
+    async_add_entities([
+        BatteryArbitrageSwitch(coordinator, entry),
+        BatteryArbitrageNotificationsSwitch(coordinator, entry),
+    ])
 
 
 class BatteryArbitrageSwitch(
@@ -61,4 +64,42 @@ class BatteryArbitrageSwitch(
         # Restore the legacy automation and inverter/EVCC to normal
         await self.coordinator.async_restore_legacy_automation()
         await self.coordinator.async_restore_normal()
+        self.async_write_ha_state()
+
+
+class BatteryArbitrageNotificationsSwitch(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SwitchEntity
+):
+    """Toggle for HA persistent notifications on mode changes.
+
+    When on, Solar AI fires a persistent notification whenever it transitions
+    between Self-use / Exporting / Grid charging.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "notifications_enabled"
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:bell-outline"
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_notifications_enabled"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.coordinator._stored.get("notifications_enabled", False))
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        self.coordinator._stored["notifications_enabled"] = True
+        await self.coordinator._store.async_save(self.coordinator._stored)
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        self.coordinator._stored["notifications_enabled"] = False
+        await self.coordinator._store.async_save(self.coordinator._stored)
         self.async_write_ha_state()
