@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.16.1] — 2026-05-15
+
+### Changed
+- **Price Breakdown card — export floor indicator** — the Arbitrage-spread section now shows a second status line when a minimum export price floor is configured (> 0): it displays the current net export price and a ✅/⛔ indicator showing whether it is above or below the floor. When the floor is 0.00 (default) the line is hidden to avoid clutter.
+
+---
+
 ## [0.16.0] — 2026-05-15
 
 ### Added
