@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.21.2] — 2026-05-16
+
+### Fixed
+
+- **Sensor device class warning** — removed `device_class=ENERGY` from 10 forecast and snapshot sensors that represent estimated or available kWh values rather than cumulative energy meter readings (`solar_forecast_24h`, `solar_forecast_6h`, `solar_forecast_24h_adjusted`, `solar_forecast_6h_adjusted`, `predicted_load_24h`, `exportable_kwh`, `importable_kwh`, `net_solar_for_battery`, `solar_28d_avg`, `learned_capacity`). HA requires `state_class=total` or `total_increasing` when `device_class=energy` is used; since these sensors are not energy meters, the correct fix is to drop the device class. Units (`kWh`) and `state_class=measurement` are unchanged.
+
+---
+
 ## [0.21.1] — 2026-05-16
 
 ### Fixed
