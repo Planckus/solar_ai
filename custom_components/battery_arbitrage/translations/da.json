@@ -12,13 +12,39 @@
         }
       },
       "foxess": {
-        "title": "FoxESS-invertér-enheder",
-        "description": "Solar AI skal styre tre FoxESS Modbus-enheder. Auto-detekterede værdier er forudfyldt.",
+        "title": "Invertér-styringsenheder",
+        "description": "Vælg de enheder Solar AI bruger til at styre invertéren. Auto-detekterede værdier er forudfyldt — ret dem hvis dine entity-ID'er afviger.",
         "data": {
           "foxess_inverter_id": "Invertér-ID",
           "foxess_work_mode_entity": "Arbejdstilstand (select-enhed)",
           "foxess_force_charge_entity": "Tvungen opladningseffekt",
           "foxess_force_discharge_entity": "Tvungen afladningseffekt"
+        },
+        "data_description": {
+          "foxess_inverter_id": "FoxESS Modbus invertér-ID (hexstreng). Bruges til direkte registerskriv.",
+          "foxess_work_mode_entity": "Select-enhed til at sætte invertérens arbejdstilstand (Self Use / Feed-in First / Force Charge)",
+          "foxess_force_charge_entity": "Number-enhed til tvungen opladningseffekt (W)",
+          "foxess_force_discharge_entity": "Number-enhed til tvungen afladnings-/eksporteffekt (W)"
+        }
+      },
+      "battery_sensors": {
+        "title": "Batterisensoer-enheder",
+        "description": "Vælg de sensorer Solar AI aflæser for at overvåge batteriet. Auto-detekterede FoxESS Modbus-værdier er forudfyldt.",
+        "data": {
+          "battery_soc_entity": "Batteri-ladetilstand (%)",
+          "cell_temp_entity": "Celletemperatur (laveste)",
+          "battery_charge_entity": "Opladningseffekt (kW)",
+          "battery_discharge_entity": "Afladningseffekt (kW)",
+          "battery_charge_total_entity": "Samlet opladning (kWh, levetid)",
+          "battery_discharge_total_entity": "Samlet afladning (kWh, levetid)"
+        },
+        "data_description": {
+          "battery_soc_entity": "Sensor der rapporterer aktuel SoC i procent (0–100)",
+          "cell_temp_entity": "Sensor der rapporterer laveste celletemperatur i °C — bruges til temperaturadaptiv opladning",
+          "battery_charge_entity": "Sensor der rapporterer aktuel opladningseffekt i kW",
+          "battery_discharge_entity": "Sensor der rapporterer aktuel afladningseffekt i kW",
+          "battery_charge_total_entity": "Akkumuleret energi opladet i batteriet (kWh) — bruges til auto-detektion af rundturs-effektivitet",
+          "battery_discharge_total_entity": "Akkumuleret energi afladet fra batteriet (kWh) — bruges til auto-detektion af rundturs-effektivitet"
         }
       },
       "spot_price": {
@@ -72,7 +98,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Solar AI — indstillinger",
+        "title": "Solar AI — parametre",
         "data": {
           "battery_floor_soc": "Minimum SoC under eksport (%)",
           "battery_max_soc": "Maksimum SoC ved netopladning (%)",
@@ -83,6 +109,22 @@
           "currency": "Valuta",
           "fast_poll_interval": "Opdateringsinterval for live-data (sekunder)",
           "dso_gln": "Netselskab (DSO)"
+        }
+      },
+      "entities": {
+        "title": "Solar AI — enhedstilknytning",
+        "description": "Tilknyt Solar AI til din invertér og dine batterisensorer. Ret disse hvis dine entity-ID'er afviger fra FoxESS Modbus-standarderne.",
+        "data": {
+          "foxess_inverter_id": "Invertér-ID",
+          "foxess_work_mode_entity": "Arbejdstilstand (select-enhed)",
+          "foxess_force_charge_entity": "Tvungen opladningseffekt",
+          "foxess_force_discharge_entity": "Tvungen afladningseffekt",
+          "battery_soc_entity": "Batteri-ladetilstand (%)",
+          "cell_temp_entity": "Celletemperatur (laveste)",
+          "battery_charge_entity": "Opladningseffekt (kW)",
+          "battery_discharge_entity": "Afladningseffekt (kW)",
+          "battery_charge_total_entity": "Samlet opladning (kWh, levetid)",
+          "battery_discharge_total_entity": "Samlet afladning (kWh, levetid)"
         }
       }
     }
