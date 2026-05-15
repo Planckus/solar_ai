@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.21.3] — 2026-05-16
+
+### Fixed
+
+- **Integration fails to start when EVCC solar forecast endpoint is unavailable** — if EVCC's `/api/tariff/solar` returns 404 or any error on the first coordinator run, the integration entered `setup_retry` and all entities became unavailable. Solar forecast data is now fetched with independent error handling: a failure logs a warning and falls back to cached/empty data, without blocking the price fetch or startup. EDS spot prices and the optimizer continue to work normally.
+
+---
+
 ## [0.21.2] — 2026-05-16
 
 ### Fixed
