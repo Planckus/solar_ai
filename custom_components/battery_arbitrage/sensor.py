@@ -29,6 +29,8 @@ class BatteryArbitrageSensorDescription(SensorEntityDescription):
     # If set, overrides native_unit_of_measurement with the currency substituted in.
     # Use "{}/kWh" for price-per-energy sensors or "{}" for plain currency sensors.
     currency_unit_template: str | None = None
+    # If set, the sensor exposes these extra state attributes.
+    attrs_fn: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None
 
 
 SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
@@ -374,6 +376,28 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:transmission-tower",
         value_fn=lambda d: round(d.get("tariff_this_hour", 0.0), 4),
     ),
+    # ── 24h price chart ──────────────────────────────────────────────────
+    BatteryArbitrageSensorDescription(
+        key="price_chart",
+        translation_key="price_chart",
+        icon="mdi:chart-line",
+        # State = number of slots in the chart (useful for availability checks)
+        value_fn=lambda d: len(d.get("price_chart_slots", [])),
+        attrs_fn=lambda d: {
+            "slots": d.get("price_chart_slots", []),
+        },
+    ),
+    # ── Tonight's plan ───────────────────────────────────────────────────
+    BatteryArbitrageSensorDescription(
+        key="todays_plan",
+        translation_key="todays_plan",
+        icon="mdi:calendar-clock",
+        value_fn=lambda d: d.get("plan_text", "No data"),
+        attrs_fn=lambda d: {
+            "charge_hours": d.get("plan_charge_hours", []),
+            "export_hours": d.get("plan_export_hours", []),
+        },
+    ),
 )
 
 
@@ -428,6 +452,13 @@ class BatteryArbitrageSensor(CoordinatorEntity[BatteryArbitrageCoordinator], Sen
         if self.coordinator.data is None:
             return None
         return self.entity_description.value_fn(self.coordinator.data)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        fn = self.entity_description.attrs_fn
+        if fn is None or self.coordinator.data is None:
+            return None
+        return fn(self.coordinator.data)
 
 
 class BatteryArbitrageLearnedRateSensor(

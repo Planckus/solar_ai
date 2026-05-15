@@ -9,6 +9,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.13.0] — 2026-05-15
+
+### Added
+- **24h price chart sensor** — a new sensor (`price_chart`) carries the buy and sell price for every hour in the 24h forecast window as extra attributes (`slots`). Each slot contains `h` (hour of day), `buy` (full buy price incl. tariffs + VAT), and `sell` (net export price). A dashboard card can now read these attributes to render a visual price overview.
+- **Tonight's plan sensor** — a new sensor (`todays_plan`) summarises the three cheapest hours to charge and the three most valuable hours to export in plain text (e.g. `Charge: 23h, 00h, 01h  ·  Export: 08h, 09h, 10h`). Also exposed as `charge_hours` and `export_hours` attributes for automation use.
+- **Negative spot price handling** — Solar AI now reacts correctly when spot prices go negative. It will never export when the export price is ≤ 0 (you would be paying the grid to take your energy). When the full buy price (incl. tariffs + VAT) reaches ≤ 0, it activates grid charging immediately regardless of the spread threshold — the grid is paying you to consume.
+- **Generic spot price source** — the spot price entity is no longer tied to Strømligning. Any HA sensor that reports the current spot price excl. VAT in your local currency works: Strømligning, Tibber, or a custom template sensor. The config flow step is relabelled accordingly. `stromligning` removed from `after_dependencies` in manifest.json.
+- **Export power cap** — a new number entity (`max_export_kw`, 0–10 kW, step 0.5 kW) lets you cap how much power the inverter pushes to the grid during export sessions. Set to 0 (default) for uncapped operation. When set, Solar AI writes the value to the FoxESS force-discharge-power entity on every export activation.
+- **Mode-change notifications** — a new switch entity (`notifications_enabled`) enables Home Assistant persistent notifications whenever Solar AI transitions between operating modes. Each notification shows the new mode and the reason for the change. Off by default.
+
+### Changed
+- Config entry schema bumped to **v7**. Existing installs migrate automatically on restart: `stromligning_entity` is renamed to `spot_price_entity` preserving your current selection.
+- `strings.json` kept in sync with `en.json` (language fallback for unsupported HA languages).
+- **Dashboard — 24h price chart redesigned** — merged the colour, bar, and time into a single column, reducing from 5 columns to 3 (`Time | Buy | Sell`). Columns now align properly and the card is less cramped.
+- **Dashboard — today's plan redesigned** — replaced the plain-text entity card with a markdown card showing a two-column summary (⚡ charge hours vs 💰 export hours) plus a full 24h visual timeline grid so you can see at a glance when the battery plans to charge and export.
+
+---
+
 ## [0.12.2] — 2026-05-15
 
 ### Fixed

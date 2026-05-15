@@ -21,11 +21,11 @@
           "foxess_force_discharge_entity": "Force discharge power entity"
         }
       },
-      "stromligning": {
+      "spot_price": {
         "title": "Electricity Price Entity",
-        "description": "Select the Strømligning spot price entity (excl. VAT).",
+        "description": "Select an HA sensor that provides the current spot price excluding VAT (DKK/kWh). Works with Strømligning, Tibber, or any compatible integration.",
         "data": {
-          "stromligning_entity": "Spot price entity"
+          "spot_price_entity": "Spot price entity (excl. VAT)"
         }
       },
       "battery": {
@@ -150,7 +150,9 @@
       "auto_efficiency": { "name": "Auto-detected efficiency" },
       "capacity_sample_count": { "name": "Capacity learning samples" },
       "pv_power": { "name": "Solar production (live)" },
-      "tariff_this_hour": { "name": "Grid tariff this hour" }
+      "tariff_this_hour": { "name": "Grid tariff this hour" },
+      "price_chart": { "name": "24h price chart" },
+      "todays_plan": { "name": "Today's plan" }
     },
     "binary_sensor": {
       "should_export": { "name": "Should export" },
@@ -182,10 +184,12 @@
       "vat_pct": { "name": "Buy-side VAT (%)" },
       "export_fee": { "name": "Sell-side fee (per kWh)" },
       "elafgift": { "name": "Electricity duty — elafgift (DKK/kWh)" },
-      "spot_markup": { "name": "Spot price markup (retailer add-on)" }
+      "spot_markup": { "name": "Spot price markup (retailer add-on)" },
+      "max_export_kw": { "name": "Export power cap (0 = no cap)" }
     },
     "switch": {
-      "enabled": { "name": "Arbitrage enabled" }
+      "enabled": { "name": "Arbitrage enabled" },
+      "notifications_enabled": { "name": "Mode-change notifications" }
     }
   },
   "services": {

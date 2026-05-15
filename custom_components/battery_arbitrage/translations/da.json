@@ -21,11 +21,11 @@
           "foxess_force_discharge_entity": "Tvungen afladningseffekt"
         }
       },
-      "stromligning": {
+      "spot_price": {
         "title": "Elpris-enhed",
-        "description": "Vælg Strømligning-spotpris-enheden (ekskl. moms).",
+        "description": "Vælg en HA-sensor der leverer den aktuelle spotpris ekskl. moms (DKK/kWh). Virker med Strømligning, Tibber eller en anden kompatibel integration.",
         "data": {
-          "stromligning_entity": "Spotpris-enhed"
+          "spot_price_entity": "Spotpris-enhed (ekskl. moms)"
         }
       },
       "battery": {
@@ -150,7 +150,9 @@
       "auto_efficiency": { "name": "Auto-detekteret effektivitet" },
       "capacity_sample_count": { "name": "Kapacitetslærings-eksempler" },
       "pv_power": { "name": "Solcelleproduktion (live)" },
-      "tariff_this_hour": { "name": "Nettarif denne time" }
+      "tariff_this_hour": { "name": "Nettarif denne time" },
+      "price_chart": { "name": "24h priskort" },
+      "todays_plan": { "name": "Dagens plan" }
     },
     "binary_sensor": {
       "should_export": { "name": "Bør eksportere" },
@@ -182,10 +184,12 @@
       "vat_pct": { "name": "Moms på køb (%)" },
       "export_fee": { "name": "Salgsgebyr (pr. kWh)" },
       "elafgift": { "name": "Elafgift (DKK/kWh)" },
-      "spot_markup": { "name": "Spotpris-tillæg (elhandlertillæg)" }
+      "spot_markup": { "name": "Spotpris-tillæg (elhandlertillæg)" },
+      "max_export_kw": { "name": "Eksporteffekt-grænse (0 = ingen)" }
     },
     "switch": {
-      "enabled": { "name": "Arbitrage aktiv" }
+      "enabled": { "name": "Arbitrage aktiv" },
+      "notifications_enabled": { "name": "Notifikationer ved tilstandsskift" }
     }
   },
   "services": {
