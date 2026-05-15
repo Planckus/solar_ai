@@ -9,7 +9,6 @@ from homeassistant.components.number import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfPower
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -250,41 +249,11 @@ class BatteryArbitrageConfigNumber(
         self._attr_native_max_value = max_val
         self._attr_native_step = step
         self._attr_device_info = _device_info(entry)
-        if display_precision is not None:
-            self._attr_suggested_display_precision = display_precision
-
-    async def async_added_to_hass(self) -> None:
-        """Store display precision in entity registry so the frontend picks it up.
-
-        HA's number platform does not propagate _attr_suggested_display_precision to
-        the entity registry the way the sensor platform does.  We call
-        async_update_entity_options with the user-override key ("display_precision")
-        so the Lovelace frontend actually applies the precision when rendering the state.
-        """
-        await super().async_added_to_hass()
-        precision = getattr(self, "_attr_suggested_display_precision", None)
-        if precision is not None:
-            registry = er.async_get(self.hass)
-            registry.async_update_entity_options(
-                self.entity_id,
-                "number",
-                {"display_precision": precision},
-            )
-
-    @property
-    def extra_state_attributes(self) -> dict | None:
-        """Expose display_precision as a state attribute.
-
-        HA's getNumberFormatOptions (frontend) checks stateObj.attributes.display_precision
-        as a fallback when the entity registry display entry has no 'dp' field (which
-        is never computed for number entities, only sensors).  Returning it here makes
-        the Lovelace number formatter apply {minimumFractionDigits, maximumFractionDigits}
-        instead of the step-only {maximumFractionDigits} default.
-        """
-        precision = getattr(self, "_attr_suggested_display_precision", None)
-        if precision is not None:
-            return {"display_precision": precision}
-        return None
+        # Note: _attr_suggested_display_precision is intentionally NOT set here.
+        # HA's compact display entry (list_for_display) only exposes the "dp" field
+        # for domain=="sensor" entities.  For number entities, getNumberFormatOptions
+        # in the frontend never receives a display_precision value, so trailing zeros
+        # cannot be forced via HA's standard entity API.  This is an HA limitation.
 
     @property
     def native_value(self) -> float:
