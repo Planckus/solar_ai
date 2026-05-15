@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.18.1] — 2026-05-15
+
+### Fixed
+- **Options flow — entity mapping now discoverable** — the Parameters page (step 1 of 2) now shows a description: "Step 1 of 2 — Submit to continue to entity mapping →". Previously users had no indication a second page existed.
+
+---
+
 ## [0.18.0] — 2026-05-15
 
 ### Added
