@@ -229,7 +229,8 @@
     },
     "switch": {
       "enabled": { "name": "Arbitrage enabled" },
-      "notifications_enabled": { "name": "Mode-change notifications" }
+      "notifications_enabled": { "name": "Mode-change notifications" },
+      "price_resolution_15min": { "name": "15-minute price resolution" }
     }
   },
   "services": {
