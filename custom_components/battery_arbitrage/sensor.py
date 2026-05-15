@@ -264,6 +264,31 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:car-electric",
         value_fn=lambda d: round(d.get("ev_block_prob", 0.0) * 100, 1),
     ),
+    BatteryArbitrageSensorDescription(
+        key="house_load_this_hour",
+        translation_key="house_load_this_hour",
+        native_unit_of_measurement="kW",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:home-clock",
+        # State = learned load for the current hour; full daily profile in attributes
+        value_fn=lambda d: round(
+            (d.get("house_load_hourly") or [0.0] * 24)[
+                __import__("datetime").datetime.now().hour
+            ],
+            3,
+        ),
+        attrs_fn=lambda d: {
+            "profile_kw": d.get("house_load_hourly", [0.0] * 24),
+        },
+    ),
+    BatteryArbitrageSensorDescription(
+        key="ev_max_charge_rate",
+        translation_key="ev_max_charge_rate",
+        native_unit_of_measurement="kW",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:car-electric",
+        value_fn=lambda d: round(d.get("ev_max_kw", 0.0), 2),
+    ),
     # ── Savings tracking ──────────────────────────────────────────────────
     BatteryArbitrageSensorDescription(
         key="savings_actual_today",

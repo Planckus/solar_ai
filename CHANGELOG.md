@@ -9,6 +9,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.21.0] — 2026-05-15
+
+### Added
+
+- **Day-ahead dynamic programming optimizer** — the core decision engine has been rebuilt. Instead of comparing the current price to a 24-hour percentile and acting reactively, Solar AI now runs a backward-induction DP over all 24 future hourly slots every time prices refresh. The state is battery SoC at 1 % resolution (101 states) and the actions are CHARGE, EXPORT, or IDLE. The optimizer finds the globally optimal multi-cycle sequence — e.g. "charge at 02h and 03h, export at 11h and 17h" — by accounting for round-trip efficiency, house load, solar forecast, EV charging likelihood, and all pricing costs in one computation. The resulting plan drives `should_export` and `should_grid_charge`; all existing safety guards (SoC bounds, EV active-charging lock, EVCC override, minimum export price floor, grid headroom cap) remain as hard constraints on top.
+
+- **Per-hour house load profile learning** — alongside the existing 2h/28d rolling averages, Solar AI now maintains a 24-slot daily load profile: one learned kW value per hour of day, updated via exponential moving average with ~8-day memory per slot. The optimizer uses this profile to estimate per-slot battery drain from house load instead of a flat 24h estimate, significantly improving the accuracy of multi-cycle charge/export planning (e.g. correctly accounting for morning and evening demand peaks). Two-layer outlier guard: hard ceiling at `grid_max_kw` (physical limit) + soft ceiling at 5× the current estimate once the model is warm (rejects sensor spikes without blocking genuine large loads). Exposed as the **"House load — learned (this hour)"** sensor; full 24-slot profile is in the sensor's `profile_kw` attribute.
+
+- **EV max charge rate learning** — a new season-independent single-value model learns the car's maximum AC charge rate (~20-sample EMA). Only full-speed sessions (≥ 80 % of current learned max) are included, so summer solar-throttled sessions do not drag the estimate down. The learned value is used by the optimizer to estimate how much solar the EV will consume per hour, giving the battery an accurate picture of net solar surplus. Exposed as the **"EV max charge rate (learned)"** sensor.
+
+- **Energi Data Service spot price source** — spot prices are now fetched directly from the [Energi Data Service](https://api.energidataservice.dk) `Elspotprices` dataset (Nord Pool day-ahead, DKK/MWh → DKK/kWh) instead of EVCC's `/api/tariff/grid` endpoint. This removes the dependency on EVCC for price data and resolves the issue where EVCC returned zero rates. Copenhagen CET/CEST timezone conversion is handled correctly year-round. Today + tomorrow (up to 48 hours) are fetched in one call. EVCC grid tariff is kept as an automatic fallback if EDS is unreachable. Price zone defaults to DK2 (eastern Denmark); change via `CONF_PRICE_AREA` in `const.py` for DK1.
+
+### Changed
+
+- **Decision logic driven by optimizer plan** — `should_export` now requires the optimizer to have recommended EXPORT for the current hour (instead of checking `price ≥ p75` reactively). `should_grid_charge` now requires the optimizer to recommend CHARGE (instead of checking `buy price ≤ p25`). The reactive thresholds remain as a fallback before the first optimizer run (first hour after startup). All physical and EVCC safety guards are unchanged.
+
+- **"Today's plan" sensor updated** — charge and export hours now come directly from the optimizer's output plan rather than a simple sorted-price greedy heuristic. The plan correctly accounts for multi-cycle scenarios where the cheapest charge slot is not necessarily the first slot of the day.
+
+- **Minimum spread check in optimizer** — the DP EXPORT action is only allowed when `sell_price − best_24h_buy / efficiency ≥ min_spread`. This ensures the user-configured minimum spread threshold is respected in the plan, not just at execution time.
+
+- **Outlier protection on both learning models** — house load profile and EV max rate both apply a two-layer guard on every learning tick: (1) hard physical ceiling at `grid_max_kw` — no real load can exceed the breaker; (2) soft ceiling at 5× the current estimate once the model is warm — rejects measurement spikes while allowing genuine large loads through.
+
+---
+
 ## [0.20.1] — 2026-05-15
 
 ### Fixed
