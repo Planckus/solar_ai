@@ -115,6 +115,7 @@ views:
           {% set price_min = states('sensor.battery_arbitrage_24h_prisminimum') | float(0) %}
           {% set price_max = states('sensor.battery_arbitrage_24h_prismaksimum') | float(0) %}
           {% set p25 = states('sensor.battery_arbitrage_24h_pris_25_percentil') | float(0) %}
+          {% set min_export = states('sensor.solar_ai_minimum_eksportpris') | float(0) %}
 
           #### 📈 Salgspris (eksport)
           | | DKK/kWh |
@@ -137,6 +138,7 @@ views:
 
           #### ⚖️ Arbitrage-spread
           **{{ '%.3f' | format(spread) }} DKK/kWh** {% if spread >= min_spread %}✅ over grænse ({{ '%.2f' | format(min_spread) }}){% else %}⛔ under grænse ({{ '%.2f' | format(min_spread) }}){% endif %}
+          {% if min_export > 0 %}**{{ '%.3f' | format(export_price) }} DKK/kWh** {% if export_price > min_export %}✅ over eksportgulv ({{ '%.2f' | format(min_export) }}){% else %}⛔ under eksportgulv — blokeret ({{ '%.2f' | format(min_export) }}){% endif %}{% endif %}
 
           *24h spotinterval: {{ '%.3f' | format(price_min) }}–{{ '%.3f' | format(price_max) }} DKK/kWh · p25: {{ '%.3f' | format(p25) }} DKK/kWh*
 
