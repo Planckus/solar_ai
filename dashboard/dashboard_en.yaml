@@ -65,13 +65,13 @@ views:
       # ── 24h Price Chart ────────────────────────────────────────────────────
       - type: entities
         entities:
-          - entity: switch.battery_arbitrage_price_resolution_15min
+          - entity: switch.solar_ai_15_minutters_prisoplosning
             name: "15-min price resolution"
       - type: markdown
         title: 24h Price Chart
         content: |
           {% set slots = state_attr('sensor.solar_ai_24h_priskort', 'slots') | default([]) %}
-          {% set res15 = is_state('switch.battery_arbitrage_price_resolution_15min', 'on') %}
+          {% set res15 = is_state('switch.solar_ai_15_minutters_prisoplosning', 'on') %}
           {% set charge_hrs = state_attr('sensor.solar_ai_dagens_plan', 'charge_hours') | default([]) %}
           {% set export_hrs = state_attr('sensor.solar_ai_dagens_plan', 'export_hours') | default([]) %}
           {% if slots %}
