@@ -325,6 +325,20 @@ views:
           - entity: sensor.solar_ai_forpasset_besparelse_30_dage
             name: "30 days — missed (disabled)"
 
+      # ── Session Log ────────────────────────────────────────────────────────
+      - type: markdown
+        title: Session Log
+        content: |
+          {% set sessions = state_attr('sensor.solar_ai_sessionslog', 'sessions') | default([]) %}
+          {% if sessions %}
+          | Time | Type | SoC | Duration | kWh | DKK |
+          |:----|:-----|:----|:---------|:----|:----|
+          {% for s in sessions[:15] %}{% set icon = '💰' if s.type == 'export' else '⚡' %}{% set label = 'Export' if s.type == 'export' else 'Charge' %}
+          | {{ s.start_ts[11:16] }} | {{ icon }} {{ label }} | {{ s.soc_start | round(0) | int }}→{{ s.soc_end | round(0) | int }}% | {{ s.duration_min }} min | {{ s.kwh }} | {{ s.dkk }} |{% endfor %}
+          {% else %}
+          *No sessions yet — enable Solar AI to start logging export and charge sessions.*
+          {% endif %}
+
       # ── Load Model ─────────────────────────────────────────────────────────
       - type: entities
         title: Load Model

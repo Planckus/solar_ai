@@ -434,6 +434,17 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "export_hours": d.get("plan_export_hours", []),
         },
     ),
+    # ── Action log (export / charge session history) ──────────────────────
+    BatteryArbitrageSensorDescription(
+        key="action_log",
+        translation_key="action_log",
+        icon="mdi:history",
+        # State = total number of logged sessions
+        value_fn=lambda d: d.get("action_log_count", 0),
+        attrs_fn=lambda d: {
+            "sessions": d.get("action_log", []),
+        },
+    ),
 )
 
 

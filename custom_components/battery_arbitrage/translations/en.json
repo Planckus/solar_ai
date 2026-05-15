@@ -193,7 +193,8 @@
       "pv_power": { "name": "Solar production (live)" },
       "tariff_this_hour": { "name": "Grid tariff this hour" },
       "price_chart": { "name": "24h price chart" },
-      "todays_plan": { "name": "Today's plan" }
+      "todays_plan": { "name": "Today's plan" },
+      "action_log": { "name": "Session log" }
     },
     "binary_sensor": {
       "should_export": { "name": "Should export" },
