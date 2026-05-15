@@ -149,6 +149,7 @@
       "learned_capacity": { "name": "Lært batterikapacitet" },
       "auto_efficiency": { "name": "Auto-detekteret effektivitet" },
       "feed_in_tariff": { "name": "Indfødningstarif (DSO + Energinet)" },
+      "min_export_price_display": { "name": "Minimum eksportpris" },
       "capacity_sample_count": { "name": "Kapacitetslærings-eksempler" },
       "pv_power": { "name": "Solcelleproduktion (live)" },
       "tariff_this_hour": { "name": "Nettarif denne time" },

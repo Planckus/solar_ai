@@ -46,7 +46,7 @@ views:
             name: Net-arbitrage spread
           - entity: number.solar_ai_minimum_arbitrage_spread
             name: Spread-grænse
-          - entity: number.solar_ai_minimum_eksportpris_0_tillad_negativ
+          - entity: sensor.solar_ai_minimum_eksportpris
             name: Min. eksportpris
           - type: divider
           - entity: sensor.battery_arbitrage_24h_prisminimum
@@ -157,6 +157,8 @@ views:
             name: Salgsgebyr (ved salg)
           - entity: sensor.solar_ai_indfodningstarif_dso_energinet
             name: Indfødningstarif (auto)
+          - entity: number.solar_ai_minimum_eksportpris_0_tillad_negativ
+            name: Min. eksportpris (indstil)
           - type: divider
           - entity: sensor.solar_ai_nettarif_denne_time
             name: Nettarif denne time

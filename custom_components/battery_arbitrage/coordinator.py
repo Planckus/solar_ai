@@ -827,6 +827,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             feed_in_tariff_dso=self._feed_in_tariff_dso,
             feed_in_tariff_energinet=self._feed_in_tariff_energinet,
             feed_in_tariff_total=feed_in_tariff,
+            min_export_price=min_export_price,
             capped_charge_rate_kw=round(capped_charge_rate_kw, 3),
             learned_rates=self.get_all_learned_rates(),
             learned_capacity=learned_capacity,
