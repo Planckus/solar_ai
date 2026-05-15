@@ -193,7 +193,8 @@
       "pv_power": { "name": "Solcelleproduktion (live)" },
       "tariff_this_hour": { "name": "Nettarif denne time" },
       "price_chart": { "name": "24h priskort" },
-      "todays_plan": { "name": "Dagens plan" }
+      "todays_plan": { "name": "Dagens plan" },
+      "action_log": { "name": "Sessionslog" }
     },
     "binary_sensor": {
       "should_export": { "name": "Bør eksportere" },
