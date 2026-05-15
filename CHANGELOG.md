@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.12.2] — 2026-05-15
+
+### Fixed
+- **Dashboard markdown tables broken** — the YAML `>` (folding) block scalar was used for the markdown card content in both dashboard files, which collapses all newlines into spaces. Markdown tables require real newlines to render. Changed to `|` (literal) block scalar in `dashboard_da.yaml`, `dashboard_en.yaml`, and `battery_arbitrage_dashboard.yaml`.
+
+---
+
 ## [0.12.1] — 2026-05-15
 
 ### Fixed
