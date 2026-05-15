@@ -148,6 +148,7 @@
       "grid_headroom": { "name": "Net-råderum" },
       "learned_capacity": { "name": "Lært batterikapacitet" },
       "auto_efficiency": { "name": "Auto-detekteret effektivitet" },
+      "feed_in_tariff": { "name": "Indfødningstarif (DSO + Energinet)" },
       "capacity_sample_count": { "name": "Kapacitetslærings-eksempler" },
       "pv_power": { "name": "Solcelleproduktion (live)" },
       "tariff_this_hour": { "name": "Nettarif denne time" },
@@ -185,7 +186,8 @@
       "export_fee": { "name": "Salgsgebyr (pr. kWh)" },
       "elafgift": { "name": "Elafgift (DKK/kWh)" },
       "spot_markup": { "name": "Spotpris-tillæg (elhandlertillæg)" },
-      "max_export_kw": { "name": "Eksporteffekt-grænse (0 = ingen)" }
+      "max_export_kw": { "name": "Eksporteffekt-grænse (0 = ingen)" },
+      "min_export_price": { "name": "Minimum eksportpris (0 = tillad negativ)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage aktiv" },

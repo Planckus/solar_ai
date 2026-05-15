@@ -338,6 +338,15 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:counter",
         value_fn=lambda d: d.get("capacity_sample_count", 0),
     ),
+    BatteryArbitrageSensorDescription(
+        key="feed_in_tariff",
+        translation_key="feed_in_tariff",
+        native_unit_of_measurement="DKK/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:transmission-tower-export",
+        suggested_display_precision=4,
+        value_fn=lambda d: round(d.get("feed_in_tariff_total", 0.0), 4),
+    ),
     # ── Grid overcurrent protection ───────────────────────────────────────
     BatteryArbitrageSensorDescription(
         key="grid_power",

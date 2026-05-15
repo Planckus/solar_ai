@@ -46,6 +46,8 @@ views:
             name: Grid arbitrage spread
           - entity: number.solar_ai_minimum_arbitrage_spread
             name: Spread threshold
+          - entity: number.solar_ai_minimum_eksportpris_0_tillad_negativ
+            name: Min. export price
           - type: divider
           - entity: sensor.battery_arbitrage_24h_prisminimum
             name: 24h price minimum
@@ -98,8 +100,9 @@ views:
         content: |
           {% set spot_markup = states('number.solar_ai_spotpris_tillaeg_elhandlertillaeg') | float(0) %}
           {% set export_fee = states('number.solar_ai_salgsgebyr_pr_kwh') | float(0) %}
+          {% set feed_in = states('sensor.solar_ai_indfodningstarif_dso_energinet') | float(0) %}
           {% set export_price = states('sensor.battery_arbitrage_eksportpris') | float(0) %}
-          {% set spot_ex_vat = export_price + export_fee %}
+          {% set spot_ex_vat = export_price + export_fee + feed_in %}
           {% set tariff_total = states('sensor.solar_ai_nettarif_denne_time') | float(0) %}
           {% set elafgift = states('number.solar_ai_elafgift_dkk_kwh') | float(0) %}
           {% set network_tariff = tariff_total - elafgift %}
@@ -118,6 +121,7 @@ views:
           |:---|---:|
           | Spot price (excl. VAT) | {{ '%.3f' | format(spot_ex_vat) }} |
           | − Sell-side fee | {{ '%.3f' | format(export_fee) }} |
+          | − Feed-in tariff (DSO + Energinet) | {{ '%.3f' | format(feed_in) }} |
           | **Net export price** | **{{ '%.3f' | format(export_price) }}** |
 
           #### 🔌 Buy price (this hour)
@@ -151,6 +155,8 @@ views:
           - type: divider
           - entity: number.solar_ai_salgsgebyr_pr_kwh
             name: Sell-side fee
+          - entity: sensor.solar_ai_indfodningstarif_dso_energinet
+            name: Feed-in tariff (auto)
           - type: divider
           - entity: sensor.solar_ai_nettarif_denne_time
             name: Grid tariff this hour
@@ -210,6 +216,8 @@ views:
             name: Time to full charge
           - entity: number.solar_ai_eksporteffekt_graense_0_ingen
             name: Export power cap
+          - entity: sensor.solar_ai_auto_detekteret_effektivitet
+            name: Round-trip efficiency (auto)
           - type: divider
           - entity: sensor.foxessmodbus_battery_charge
             name: Charge power
