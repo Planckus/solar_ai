@@ -209,10 +209,6 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.All(int, vol.Range(min=50, max=100)),
                 vol.Required(CONF_ROUND_TRIP_EFFICIENCY, default=int(DEFAULT_ROUND_TRIP_EFFICIENCY * 100)):
                     vol.All(int, vol.Range(min=70, max=100)),
-                vol.Required(CONF_MIN_SPREAD_ARBITRAGE, default=DEFAULT_MIN_SPREAD_ARBITRAGE):
-                    vol.Coerce(float),
-                vol.Required(CONF_MIN_SOLAR_EXPORT_PRICE, default=DEFAULT_MIN_SOLAR_EXPORT_PRICE):
-                    vol.Coerce(float),
                 vol.Required(CONF_FORECAST_HOURS, default=DEFAULT_FORECAST_HOURS):
                     vol.All(int, vol.Range(min=4, max=48)),
                 vol.Required(CONF_CURRENCY, default=DEFAULT_CURRENCY): selector.SelectSelector(
@@ -349,12 +345,6 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                     vol.All(int, vol.Range(min=50, max=100)),
                 vol.Required(CONF_ROUND_TRIP_EFFICIENCY, default=eff_pct):
                     vol.All(int, vol.Range(min=70, max=100)),
-                vol.Required(CONF_MIN_SPREAD_ARBITRAGE,
-                             default=data.get(CONF_MIN_SPREAD_ARBITRAGE, DEFAULT_MIN_SPREAD_ARBITRAGE)):
-                    vol.Coerce(float),
-                vol.Required(CONF_MIN_SOLAR_EXPORT_PRICE,
-                             default=data.get(CONF_MIN_SOLAR_EXPORT_PRICE, DEFAULT_MIN_SOLAR_EXPORT_PRICE)):
-                    vol.Coerce(float),
                 vol.Required(CONF_FORECAST_HOURS,
                              default=data.get(CONF_FORECAST_HOURS, DEFAULT_FORECAST_HOURS)):
                     vol.All(int, vol.Range(min=4, max=48)),
