@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.12.1] — 2026-05-15
+
+### Fixed
+- **Language fallback broken** — `strings.json` (HA's fallback for unsupported languages) was out of sync with `en.json`, missing every entity and string added from v0.8.0 onwards. Any user with a non-Danish, non-English HA language would have seen missing or incorrect labels. `strings.json` is now identical to `en.json` and will be kept in sync going forward.
+
+---
+
 ## [0.12.0] — 2026-05-15
 
 ### Added
