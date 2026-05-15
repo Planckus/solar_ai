@@ -62,8 +62,6 @@
           "battery_floor_soc": "Minimum SoC under eksport (%)",
           "battery_max_soc": "Maksimum SoC ved netopladning (%)",
           "round_trip_efficiency": "Rundt-tur-effektivitet (%)",
-          "min_spread_arbitrage": "Minimum spread for netarbitrage (DKK/kWh)",
-          "min_solar_export_price": "Minimum solcelleeksportpris (DKK/kWh)",
           "forecast_hours": "Prognosehorisont (timer)",
           "currency": "Valuta",
           "fast_poll_interval": "Opdateringsinterval for live-data (sekunder)",
@@ -73,8 +71,6 @@
           "battery_floor_soc": "Batteriet eksporterer ikke under denne ladetilstand",
           "battery_max_soc": "Batteriet net-oplades ikke over denne ladetilstand",
           "round_trip_efficiency": "Opladnings- og afladningseffektivitet, typisk 85–95 %",
-          "min_spread_arbitrage": "Mindste prisforskel (sælg − billigste i vindue) for netarbitrage",
-          "min_solar_export_price": "Mindste spotpris for at eksportere solcelleoverskud",
           "dso_gln": "Vælg dit distributionsnetselskab. Bruges til at hente timevise nettariffer fra Energi Data Service."
         }
       },
@@ -104,8 +100,6 @@
           "battery_floor_soc": "Minimum SoC under eksport (%)",
           "battery_max_soc": "Maksimum SoC ved netopladning (%)",
           "round_trip_efficiency": "Rundt-tur-effektivitet (%)",
-          "min_spread_arbitrage": "Minimum spread for netarbitrage (DKK/kWh)",
-          "min_solar_export_price": "Minimum solcelleeksportpris (DKK/kWh)",
           "forecast_hours": "Prognosehorisont (timer)",
           "currency": "Valuta",
           "fast_poll_interval": "Opdateringsinterval for live-data (sekunder)",

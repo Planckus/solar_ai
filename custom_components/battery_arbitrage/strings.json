@@ -62,8 +62,6 @@
           "battery_floor_soc": "Minimum SoC during export (%)",
           "battery_max_soc": "Maximum SoC for grid charging (%)",
           "round_trip_efficiency": "Round-trip efficiency (%)",
-          "min_spread_arbitrage": "Minimum spread for grid arbitrage (DKK/kWh)",
-          "min_solar_export_price": "Minimum solar export price (DKK/kWh)",
           "forecast_hours": "Forecast horizon (hours)",
           "currency": "Currency",
           "fast_poll_interval": "Live data poll interval (seconds)",
@@ -73,8 +71,6 @@
           "battery_floor_soc": "Battery will not export below this state of charge",
           "battery_max_soc": "Battery will not grid-charge above this state of charge",
           "round_trip_efficiency": "Charge + discharge efficiency, typically 85–95%",
-          "min_spread_arbitrage": "Minimum price difference (sell − cheapest-in-window) to trigger grid arbitrage",
-          "min_solar_export_price": "Minimum spot price to export solar surplus",
           "dso_gln": "Select your distribution grid operator. Used to fetch hourly network tariffs from Energi Data Service."
         }
       },
@@ -104,8 +100,6 @@
           "battery_floor_soc": "Minimum SoC during export (%)",
           "battery_max_soc": "Maximum SoC for grid charging (%)",
           "round_trip_efficiency": "Round-trip efficiency (%)",
-          "min_spread_arbitrage": "Minimum spread for grid arbitrage (DKK/kWh)",
-          "min_solar_export_price": "Minimum solar export price (DKK/kWh)",
           "forecast_hours": "Forecast horizon (hours)",
           "currency": "Currency",
           "fast_poll_interval": "Live data poll interval (seconds)",
