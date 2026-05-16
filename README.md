@@ -177,9 +177,18 @@ You need the following already working in Home Assistant:
 | Component | Required | Purpose | Link |
 |-----------|----------|---------|------|
 | FoxESS Modbus integration | ✅ Required | Read battery SoC, temperature, power; set work mode and charge power | [GitHub](https://github.com/nathanmarlor/foxess_modbus) |
-| EVCC | ✅ Required | Solar forecast (Solcast), live grid power, EV charge power, battery mode API | [evcc.io](https://evcc.io) |
-| Solcast | ✅ Required | Solar production forecast — connected to EVCC | [solcast.com](https://solcast.com) |
+| EVCC | ✅ Required | Live grid power, EV charge power, battery mode API. (Solar forecast is optional from v0.23.0 — see below) | [evcc.io](https://evcc.io) |
+| Solar forecast source | ✅ Required (one of) | One of: **EVCC → Solcast** (default) or **Forecast.Solar** (native HA integration). Configured in the setup wizard. | [Solcast](https://solcast.com) / [Forecast.Solar HA docs](https://www.home-assistant.io/integrations/forecast_solar/) |
 | Spot price entity | ⚙️ Optional | Any HA sensor exposing the current spot price excl. VAT in DKK/kWh (e.g. [Strømligning](https://www.stromligning.dk), Tibber). If omitted, Solar AI reads the live spot price from Energi Data Service automatically — the same feed used by the optimizer | — |
+
+### Optional dashboard dependencies (HACS)
+
+The bundled dashboard YAML uses these custom Lovelace cards. Install them via HACS → Frontend before importing the dashboard, or substitute with built-in cards if you prefer not to add dependencies:
+
+| Card | Required for | Link |
+|------|--------------|------|
+| Mushroom Cards | The status chips, large tiles and headers on the Oversigt tab and section titles in Indstillinger | [GitHub](https://github.com/piitaya/lovelace-mushroom) |
+| ApexCharts Card | Time-series price/SoC overlays (optional polish — built-in `history-graph` works as a fallback) | [GitHub](https://github.com/RomRider/apexcharts-card) |
 
 ### Default FoxESS Modbus entity IDs
 

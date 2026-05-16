@@ -116,6 +116,12 @@ from .const import (
     DEFAULT_SPOT_MARKUP,
     DEFAULT_BATTERY_DEGRADATION_COST,
     DEFAULT_TERMINAL_VALUE_FALLBACK,
+    CONF_SOLAR_FORECAST_SOURCE,
+    CONF_FORECAST_SOLAR_ENTITY,
+    DEFAULT_SOLAR_FORECAST_SOURCE,
+    SOLAR_SOURCE_EVCC,
+    SOLAR_SOURCE_FORECAST_SOLAR,
+    SOLAR_SOURCE_AUTO,
     EFFICIENCY_MIN_TOTAL_KWH,
 )
 
@@ -335,13 +341,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("notify_export_stop", False)
             self._stored.setdefault("notify_charge_start", False)
             self._stored.setdefault("notify_charge_stop", False)
+            self._stored.setdefault("notify_solar_floor_blocked", False)
+            self._stored.setdefault("notify_solar_floor_resumed", False)
             self._stored.setdefault("notify_targets", [])
             self._stored.setdefault("battery_degradation_cost", DEFAULT_BATTERY_DEGRADATION_COST)
-            # v0.22.0 migration: min_spread_arbitrage slider was tightened to 0.00–0.50.
-            # Bring any pre-existing value above 0.50 into the new range so the slider
-            # and the optimizer stay in sync.
-            if float(self._stored.get("min_spread_arbitrage", 0.0)) > 0.50:
-                self._stored["min_spread_arbitrage"] = 0.50
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
 
@@ -411,12 +414,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if tariff_stale:
             price_area = self.config.get(CONF_PRICE_AREA, DEFAULT_PRICE_AREA)
 
-            # Solar forecast — best-effort; a 404 from EVCC must not block startup
+            # Solar forecast — dispatches on configured source (EVCC / forecast_solar / auto).
+            # Best-effort: a failure here must not block startup or the price fetch below.
             try:
-                solar_data = await self._fetch_json(session, f"{evcc_url}{EVCC_API_SOLAR}")
-                self._cached_solar_rates = solar_data
+                solar_data = await self._fetch_solar_forecast(session, evcc_url)
+                if solar_data and solar_data.get("rates"):
+                    self._cached_solar_rates = solar_data
+                elif solar_data is not None:
+                    _LOGGER.warning("Solar forecast returned no rates — keeping cached data")
             except Exception as solar_err:
-                _LOGGER.warning("EVCC solar forecast unavailable (%s) — using cached/empty data", solar_err)
+                _LOGGER.warning("Solar forecast fetch failed (%s) — using cached/empty data", solar_err)
 
             # EDS spot prices — primary price source; _fetch_eds_prices handles its own errors
             eds_data = await self._fetch_eds_prices(session, price_area, now)
@@ -1169,7 +1176,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         Only writes to the inverter when the limit actually changes, to avoid
         unnecessary register wear. Runs even when Solar AI is disabled so the
-        floor is always enforced.
+        floor is always enforced. Also fires mobile push notifications on
+        10000 ↔ 25 transitions when the corresponding event toggle is on.
         """
         if current_mode == MODE_GRID_CHARGING:
             limit_w = 0
@@ -1178,12 +1186,38 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         else:
             limit_w = 10000
 
-        if limit_w == self._last_export_limit:
+        prev_limit = self._last_export_limit
+        if limit_w == prev_limit:
             return  # no change — skip the write
 
         inverter_id = self.config.get("foxess_inverter_id", "")
         await self._set_export_limit(inverter_id, limit_w)
         self._last_export_limit = limit_w
+
+        # Solar floor transitions only — grid-charging entry/exit (0 W) is
+        # already covered by the existing charge-start/stop toggles.
+        if prev_limit == 10000 and limit_w == 25:
+            _LOGGER.info(
+                "Solar floor activated: price %.3f ≤ floor %.2f DKK/kWh — solar export blocked",
+                export_price_raw, min_export_price,
+            )
+            if self._stored.get("notify_solar_floor_blocked", False):
+                await self._send_mobile_notification(
+                    "☀️ Solar AI: Solareksport blokeret",
+                    f"Pris {export_price_raw:.3f} DKK/kWh er under gulv "
+                    f"{min_export_price:.2f} — solareksport stoppet",
+                )
+        elif prev_limit == 25 and limit_w == 10000:
+            _LOGGER.info(
+                "Solar floor deactivated: price %.3f > floor %.2f DKK/kWh — solar export resumed",
+                export_price_raw, min_export_price,
+            )
+            if self._stored.get("notify_solar_floor_resumed", False):
+                await self._send_mobile_notification(
+                    "☀️ Solar AI: Solareksport genoptaget",
+                    f"Pris {export_price_raw:.3f} DKK/kWh er over gulv "
+                    f"{min_export_price:.2f} — eksport aktiv igen",
+                )
 
     async def _set_work_mode(self, mode: str) -> None:
         entity = self.config.get("foxess_work_mode_entity", "select.foxessmodbus_work_mode")
@@ -1691,6 +1725,95 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         """Return last n action log entries, newest first."""
         log: list[dict] = self._stored.get("action_log", [])
         return list(reversed(log[-n:]))
+
+    # ------------------------------------------------------------------ #
+    # Solar forecast source dispatcher                                    #
+    # ------------------------------------------------------------------ #
+
+    async def _fetch_solar_forecast(
+        self, session: aiohttp.ClientSession, evcc_url: str
+    ) -> dict:
+        """Fetch the per-slot solar forecast based on the configured source.
+
+        Returns a dict in EVCC-compatible format:
+            {"rates": [{"start": "<utc-iso>", "value": <watts>}, ...]}
+
+        Source values (CONF_SOLAR_FORECAST_SOURCE):
+          - "evcc"           → EVCC /api/tariff/solar (default; Solcast underneath)
+          - "forecast_solar" → user-picked Forecast.Solar HA entity's `watts` attribute
+          - "auto"           → try EVCC first, fall back to Forecast.Solar on failure/empty
+        """
+        source = self.config.get(CONF_SOLAR_FORECAST_SOURCE, DEFAULT_SOLAR_FORECAST_SOURCE)
+        fs_entity = self.config.get(CONF_FORECAST_SOLAR_ENTITY)
+
+        async def try_evcc() -> dict:
+            try:
+                data = await self._fetch_json(session, f"{evcc_url}{EVCC_API_SOLAR}")
+                return data if data and data.get("rates") else {}
+            except Exception as err:
+                _LOGGER.debug("EVCC solar fetch failed: %s", err)
+                return {}
+
+        def try_forecast_solar() -> dict:
+            if not fs_entity:
+                _LOGGER.debug("forecast_solar entity not configured")
+                return {}
+            return self._fetch_solar_from_forecast_solar(fs_entity)
+
+        if source == SOLAR_SOURCE_EVCC:
+            return await try_evcc()
+
+        if source == SOLAR_SOURCE_FORECAST_SOLAR:
+            return try_forecast_solar()
+
+        if source == SOLAR_SOURCE_AUTO:
+            data = await try_evcc()
+            if data.get("rates"):
+                return data
+            _LOGGER.debug("EVCC solar empty/failed in auto mode — falling back to Forecast.Solar")
+            return try_forecast_solar()
+
+        _LOGGER.warning("Unknown solar forecast source '%s' — defaulting to EVCC", source)
+        return await try_evcc()
+
+    def _fetch_solar_from_forecast_solar(self, entity_id: str) -> dict:
+        """Read a Forecast.Solar HA entity's `watts` attribute and convert to EVCC format.
+
+        Forecast.Solar exposes a `watts` attribute on its energy_production_* sensors,
+        keyed by ISO timestamp (typically hourly, local-naive or with TZ). We normalise
+        to UTC ISO and emit the same {start, value} list the rest of the coordinator
+        consumes from EVCC.
+        """
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in ("unknown", "unavailable"):
+            _LOGGER.debug("forecast_solar entity %s unavailable", entity_id)
+            return {}
+
+        watts_dict = state.attributes.get("watts")
+        if not isinstance(watts_dict, dict) or not watts_dict:
+            _LOGGER.debug("forecast_solar entity %s missing/empty 'watts' attribute", entity_id)
+            return {}
+
+        _CPH_TZ = ZoneInfo("Europe/Copenhagen")
+        rates: list[dict] = []
+        for ts_str, watts in watts_dict.items():
+            try:
+                start_dt = datetime.fromisoformat(str(ts_str))
+                if start_dt.tzinfo is None:
+                    # forecast_solar usually returns local Copenhagen times without TZ
+                    start_dt = start_dt.replace(tzinfo=_CPH_TZ)
+                utc_dt = start_dt.astimezone(timezone.utc)
+                rates.append({"start": utc_dt.isoformat(), "value": float(watts)})
+            except (ValueError, TypeError) as err:
+                _LOGGER.debug("forecast_solar: skipping bad timestamp %s: %s", ts_str, err)
+
+        rates.sort(key=lambda r: r["start"])
+        if rates:
+            _LOGGER.debug(
+                "forecast_solar: read %d slots from %s (first=%s, last=%s)",
+                len(rates), entity_id, rates[0]["start"], rates[-1]["start"],
+            )
+        return {"rates": rates} if rates else {}
 
     # ------------------------------------------------------------------ #
     # Price source: Energi Data Service Elspotprices                      #

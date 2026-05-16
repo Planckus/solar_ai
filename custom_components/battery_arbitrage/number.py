@@ -74,7 +74,7 @@ async def async_setup_entry(
             icon="mdi:chart-bar",
             unit="DKK/kWh",
             min_val=0.00,
-            max_val=0.50,
+            max_val=3.00,
             step=0.05,
         ),
         BatteryArbitrageConfigNumber(

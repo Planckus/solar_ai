@@ -7,13 +7,14 @@ STORAGE_KEY = f"{DOMAIN}.data"
 
 # Config entry keys
 CONF_EVCC_URL = "evcc_url"
+CONF_SOLAR_FORECAST_SOURCE = "solar_forecast_source"
+CONF_FORECAST_SOLAR_ENTITY = "forecast_solar_entity"
 CONF_FOXESS_INVERTER_ID = "foxess_inverter_id"
 CONF_BATTERY_FLOOR_SOC = "battery_floor_soc"
 CONF_BATTERY_MAX_SOC = "battery_max_soc"
 CONF_BATTERY_CAPACITY = "battery_capacity"
 CONF_ROUND_TRIP_EFFICIENCY = "round_trip_efficiency"
 CONF_MIN_SPREAD_ARBITRAGE = "min_spread_arbitrage"
-CONF_MIN_SOLAR_EXPORT_PRICE = "min_solar_export_price"
 CONF_FORECAST_HOURS = "forecast_hours"
 CONF_DASHBOARD_URL_PATH = "dashboard_url_path"
 CONF_FOXESS_WORK_MODE_ENTITY = "foxess_work_mode_entity"
@@ -37,8 +38,16 @@ DEFAULT_BATTERY_MAX_SOC = 100
 DEFAULT_BATTERY_CAPACITY = 11.52
 DEFAULT_ROUND_TRIP_EFFICIENCY = 0.92
 DEFAULT_MIN_SPREAD_ARBITRAGE = 0.30
-DEFAULT_MIN_SOLAR_EXPORT_PRICE = 0.50
 DEFAULT_FORECAST_HOURS = 24
+# Solar forecast source: where the integration fetches the per-hour PV forecast from.
+# Options:
+#   "evcc"           — read from EVCC's /api/tariff/solar (default; Solcast under the hood)
+#   "forecast_solar" — read the `watts` attribute from a user-picked Forecast.Solar HA entity
+#   "auto"           — try EVCC first; fall back to Forecast.Solar if EVCC fails/empty
+SOLAR_SOURCE_EVCC = "evcc"
+SOLAR_SOURCE_FORECAST_SOLAR = "forecast_solar"
+SOLAR_SOURCE_AUTO = "auto"
+DEFAULT_SOLAR_FORECAST_SOURCE = SOLAR_SOURCE_EVCC
 # Battery wear cost per kWh cycled (DKK/kWh). Subtracted from CHARGE and EXPORT rewards
 # in the optimizer so the model accounts for finite cycle life. Default is calibrated
 # for residential LFP at ~2000 DKK/kWh installed cost using marginal-wear literature.

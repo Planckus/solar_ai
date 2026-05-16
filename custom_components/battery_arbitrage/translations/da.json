@@ -54,6 +54,17 @@
           "spot_price_entity": "Spotpris-enhed (ekskl. moms)"
         }
       },
+      "solar_source": {
+        "title": "Solcelleprognose-kilde",
+        "description": "Hvor skal Solar AI hente solcelleprognosen fra? EVCC læser Solcast under motorhjelmen; Forecast.Solar er en indbygget HA-integration; Auto prøver EVCC først og falder tilbage på Forecast.Solar.",
+        "data": {
+          "solar_forecast_source": "Prognose-kilde",
+          "forecast_solar_entity": "Forecast.Solar-enhed (bruges kun hvis kilden er Forecast.Solar eller Auto)"
+        },
+        "data_description": {
+          "forecast_solar_entity": "Typisk sensor.energy_production_today — Solar AI læser 'watts'-attributten time for time"
+        }
+      },
       "battery": {
         "title": "Batteri- og handelsparametre",
         "description": "Konfigurer dit batteri og arbitrage-grænseværdier.",
@@ -103,7 +114,9 @@
           "forecast_hours": "Prognosehorisont (timer)",
           "currency": "Valuta",
           "fast_poll_interval": "Opdateringsinterval for live-data (sekunder)",
-          "dso_gln": "Netselskab (DSO)"
+          "dso_gln": "Netselskab (DSO)",
+          "solar_forecast_source": "Solcelleprognose-kilde",
+          "forecast_solar_entity": "Forecast.Solar-enhed (bruges kun hvis kilden er Forecast.Solar eller Auto)"
         }
       },
       "entities": {
@@ -235,10 +248,12 @@
       "enabled": { "name": "Arbitrage aktiv" },
       "notifications_enabled": { "name": "Notifikationer ved tilstandsskift" },
       "price_resolution_15min": { "name": "15-minutters prisopløsning" },
-      "notify_export_start": { "name": "Notifikation: eksport startet" },
-      "notify_export_stop":  { "name": "Notifikation: eksport stoppet" },
-      "notify_charge_start": { "name": "Notifikation: opladning startet" },
-      "notify_charge_stop":  { "name": "Notifikation: opladning stoppet" }
+      "notify_export_start":        { "name": "Notifikation: eksport startet" },
+      "notify_export_stop":         { "name": "Notifikation: eksport stoppet" },
+      "notify_charge_start":        { "name": "Notifikation: opladning startet" },
+      "notify_charge_stop":         { "name": "Notifikation: opladning stoppet" },
+      "notify_solar_floor_blocked": { "name": "Notifikation: solareksport blokeret (prisgulv)" },
+      "notify_solar_floor_resumed": { "name": "Notifikation: solareksport genoptaget" }
     }
   },
   "services": {

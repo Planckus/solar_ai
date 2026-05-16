@@ -54,6 +54,17 @@
           "spot_price_entity": "Spot price entity (excl. VAT)"
         }
       },
+      "solar_source": {
+        "title": "Solar Forecast Source",
+        "description": "Where should Solar AI get the solar production forecast from? EVCC reads Solcast under the hood; Forecast.Solar is a native HA integration; Auto tries EVCC first and falls back to Forecast.Solar.",
+        "data": {
+          "solar_forecast_source": "Forecast source",
+          "forecast_solar_entity": "Forecast.Solar entity (only used if source is Forecast.Solar or Auto)"
+        },
+        "data_description": {
+          "forecast_solar_entity": "Typically sensor.energy_production_today — Solar AI reads the per-hour 'watts' attribute"
+        }
+      },
       "battery": {
         "title": "Battery & Trading Parameters",
         "description": "Configure your battery and the arbitrage thresholds.",
@@ -103,7 +114,9 @@
           "forecast_hours": "Forecast horizon (hours)",
           "currency": "Currency",
           "fast_poll_interval": "Live data poll interval (seconds)",
-          "dso_gln": "Grid operator (DSO)"
+          "dso_gln": "Grid operator (DSO)",
+          "solar_forecast_source": "Solar forecast source",
+          "forecast_solar_entity": "Forecast.Solar entity (only used if source is Forecast.Solar or Auto)"
         }
       },
       "entities": {
@@ -235,10 +248,12 @@
       "enabled": { "name": "Arbitrage enabled" },
       "notifications_enabled": { "name": "Mode-change notifications" },
       "price_resolution_15min": { "name": "15-minute price resolution" },
-      "notify_export_start": { "name": "Notify: export started" },
-      "notify_export_stop":  { "name": "Notify: export stopped" },
-      "notify_charge_start": { "name": "Notify: charging started" },
-      "notify_charge_stop":  { "name": "Notify: charging stopped" }
+      "notify_export_start":        { "name": "Notify: export started" },
+      "notify_export_stop":         { "name": "Notify: export stopped" },
+      "notify_charge_start":        { "name": "Notify: charging started" },
+      "notify_charge_stop":         { "name": "Notify: charging stopped" },
+      "notify_solar_floor_blocked": { "name": "Notify: solar export blocked (price floor)" },
+      "notify_solar_floor_resumed": { "name": "Notify: solar export resumed" }
     }
   },
   "services": {

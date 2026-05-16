@@ -17,6 +17,7 @@ from .const import (
     CONF_CURRENCY,
     CONF_DSO_GLN,
     CONF_FAST_POLL_INTERVAL,
+    CONF_SOLAR_FORECAST_SOURCE,
     CONF_SPOT_MARKUP,
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
@@ -25,7 +26,6 @@ from .const import (
     CONF_BATTERY_FLOOR_SOC,
     CONF_BATTERY_MAX_SOC,
     CONF_FORECAST_HOURS,
-    CONF_MIN_SOLAR_EXPORT_PRICE,
     CONF_MIN_SPREAD_ARBITRAGE,
     CONF_ROUND_TRIP_EFFICIENCY,
     DEFAULT_BATTERY_CAPACITY,
@@ -35,9 +35,9 @@ from .const import (
     DEFAULT_DSO_GLN,
     DEFAULT_FAST_POLL_SECONDS,
     DEFAULT_FORECAST_HOURS,
-    DEFAULT_MIN_SOLAR_EXPORT_PRICE,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_ROUND_TRIP_EFFICIENCY,
+    DEFAULT_SOLAR_FORECAST_SOURCE,
     DEFAULT_SPOT_MARKUP,
     FOXESS_BATTERY_CHARGE_POWER,
     FOXESS_BATTERY_CHARGE_TOTAL,
@@ -84,7 +84,6 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data.setdefault(CONF_BATTERY_MAX_SOC,         DEFAULT_BATTERY_MAX_SOC)
         new_data.setdefault(CONF_ROUND_TRIP_EFFICIENCY,   DEFAULT_ROUND_TRIP_EFFICIENCY)
         new_data.setdefault(CONF_MIN_SPREAD_ARBITRAGE,    DEFAULT_MIN_SPREAD_ARBITRAGE)
-        new_data.setdefault(CONF_MIN_SOLAR_EXPORT_PRICE,  DEFAULT_MIN_SOLAR_EXPORT_PRICE)
         new_data.setdefault(CONF_FORECAST_HOURS,          DEFAULT_FORECAST_HOURS)
 
         hass.config_entries.async_update_entry(entry, data=new_data, version=2)
@@ -148,6 +147,13 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data.setdefault(CONF_BATTERY_DISCHARGE_TOTAL_ENTITY, FOXESS_BATTERY_DISCHARGE_TOTAL)
         hass.config_entries.async_update_entry(entry, data=new_data, version=8)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v8")
+
+    if entry.version < 9:
+        # v8 → v9: add solar forecast source picker. Existing installs keep
+        # EVCC as the source so behaviour is unchanged.
+        new_data.setdefault(CONF_SOLAR_FORECAST_SOURCE, DEFAULT_SOLAR_FORECAST_SOURCE)
+        hass.config_entries.async_update_entry(entry, data=new_data, version=9)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v9")
 
     return True
 
