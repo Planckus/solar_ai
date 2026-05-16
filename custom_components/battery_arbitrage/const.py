@@ -7,8 +7,15 @@ STORAGE_KEY = f"{DOMAIN}.data"
 
 # Config entry keys
 CONF_EVCC_URL = "evcc_url"
+CONF_LIVE_DATA_SOURCE = "live_data_source"
+CONF_FOXESS_GRID_IMPORT_ENTITY = "foxess_grid_import_entity"
+CONF_FOXESS_GRID_EXPORT_ENTITY = "foxess_grid_export_entity"
+CONF_FOXESS_PV_POWER_ENTITY = "foxess_pv_power_entity"
+CONF_FOXESS_LOAD_POWER_ENTITY = "foxess_load_power_entity"
+CONF_ACKNOWLEDGE_NO_EV = "acknowledge_no_ev"
 CONF_SOLAR_FORECAST_SOURCE = "solar_forecast_source"
 CONF_FORECAST_SOLAR_ENTITY = "forecast_solar_entity"
+CONF_SOLCAST_ENTITY = "solcast_entity"
 CONF_FOXESS_INVERTER_ID = "foxess_inverter_id"
 CONF_BATTERY_FLOOR_SOC = "battery_floor_soc"
 CONF_BATTERY_MAX_SOC = "battery_max_soc"
@@ -46,8 +53,24 @@ DEFAULT_FORECAST_HOURS = 24
 #   "auto"           — try EVCC first; fall back to Forecast.Solar if EVCC fails/empty
 SOLAR_SOURCE_EVCC = "evcc"
 SOLAR_SOURCE_FORECAST_SOLAR = "forecast_solar"
+SOLAR_SOURCE_SOLCAST = "solcast"
 SOLAR_SOURCE_AUTO = "auto"
 DEFAULT_SOLAR_FORECAST_SOURCE = SOLAR_SOURCE_EVCC
+
+# Live data source: where live grid / PV / load / EV state comes from.
+#   "evcc"   — EVCC /api/state for everything (default, unchanged behaviour)
+#   "hybrid" — FoxESS Modbus sensors for grid/PV/load; EVCC for EV (loadpoints + battery mode)
+#   "foxess" — FoxESS Modbus sensors only; no EV info, no EVCC POST coordination
+LIVE_SOURCE_EVCC = "evcc"
+LIVE_SOURCE_HYBRID = "hybrid"
+LIVE_SOURCE_FOXESS = "foxess"
+DEFAULT_LIVE_DATA_SOURCE = LIVE_SOURCE_EVCC
+
+# Auto-detected default FoxESS Modbus entity IDs for live-state replacement
+DEFAULT_FOXESS_GRID_IMPORT = "sensor.foxessmodbus_grid_consumption"
+DEFAULT_FOXESS_GRID_EXPORT = "sensor.foxessmodbus_feed_in"
+DEFAULT_FOXESS_PV_POWER = "sensor.pv_power_foxessmodbus"
+DEFAULT_FOXESS_LOAD_POWER = "sensor.foxessmodbus_load_power"
 # Battery wear cost per kWh cycled (DKK/kWh). Subtracted from CHARGE and EXPORT rewards
 # in the optimizer so the model accounts for finite cycle life. Default is calibrated
 # for residential LFP at ~2000 DKK/kWh installed cost using marginal-wear literature.

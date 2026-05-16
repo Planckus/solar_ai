@@ -118,10 +118,25 @@ from .const import (
     DEFAULT_TERMINAL_VALUE_FALLBACK,
     CONF_SOLAR_FORECAST_SOURCE,
     CONF_FORECAST_SOLAR_ENTITY,
+    CONF_SOLCAST_ENTITY,
+    CONF_LIVE_DATA_SOURCE,
+    CONF_FOXESS_GRID_IMPORT_ENTITY,
+    CONF_FOXESS_GRID_EXPORT_ENTITY,
+    CONF_FOXESS_PV_POWER_ENTITY,
+    CONF_FOXESS_LOAD_POWER_ENTITY,
     DEFAULT_SOLAR_FORECAST_SOURCE,
+    DEFAULT_LIVE_DATA_SOURCE,
+    DEFAULT_FOXESS_GRID_IMPORT,
+    DEFAULT_FOXESS_GRID_EXPORT,
+    DEFAULT_FOXESS_PV_POWER,
+    DEFAULT_FOXESS_LOAD_POWER,
     SOLAR_SOURCE_EVCC,
     SOLAR_SOURCE_FORECAST_SOLAR,
+    SOLAR_SOURCE_SOLCAST,
     SOLAR_SOURCE_AUTO,
+    LIVE_SOURCE_EVCC,
+    LIVE_SOURCE_HYBRID,
+    LIVE_SOURCE_FOXESS,
     EFFICIENCY_MIN_TOTAL_KWH,
 )
 
@@ -400,11 +415,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         now = datetime.now(timezone.utc)
         forecast_hours = self.config.get("forecast_hours", 24)
 
-        # ── Fast: fetch live EVCC state every tick ───────────────────────
-        try:
-            evcc_state = await self._fetch_json(session, f"{evcc_url}{EVCC_API_STATE}")
-        except Exception as err:
-            raise UpdateFailed(f"EVCC unreachable: {err}") from err
+        # ── Fast: fetch live state every tick (dispatches on configured source) ──
+        # Returns a dict in EVCC /api/state shape: homePower, pvPower, gridPower,
+        # loadpoints (list), batteryMode. See _fetch_live_state() for the per-source
+        # logic and resilience rules.
+        evcc_state = await self._fetch_live_state(session, evcc_url)
 
         # ── Hourly: refresh tariff / price data ──────────────────────────
         tariff_stale = (
@@ -1130,7 +1145,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         inverter_id = self.config.get("foxess_inverter_id", "")
         session = async_get_clientsession(self.hass)
-        evcc_url = self.config["evcc_url"]
+        evcc_url = self.config.get("evcc_url", "")
+        # Only coordinate battery mode with EVCC when EVCC is the live-state source
+        # (EVCC-only or hybrid mode). In FoxESS-only mode we own the battery and
+        # there is no EVCC to coordinate with.
+        live_source = self.config.get(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE)
+        coordinate_with_evcc = live_source in (LIVE_SOURCE_EVCC, LIVE_SOURCE_HYBRID) and evcc_url
 
         if new_mode == MODE_EXPORTING:
             # Feed-in First: inverter pushes battery + solar to grid
@@ -1140,20 +1160,22 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             if max_export_kw > 0:
                 await self._set_discharge_power(max_export_kw)
             # Tell EVCC to hold so it doesn't fight our export
-            self._we_set_evcc_mode = True
-            await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
+            if coordinate_with_evcc:
+                self._we_set_evcc_mode = True
+                await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
 
         elif new_mode == MODE_GRID_CHARGING:
             # Force Charge: inverter charges battery from grid at grid-headroom-capped rate
             await self._set_work_mode(WORK_MODE_FORCE_CHARGE)
             await self._set_charge_power(inverter_id, max_kw=capped_charge_rate_kw)
-            self._we_set_evcc_mode = True
-            await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
+            if coordinate_with_evcc:
+                self._we_set_evcc_mode = True
+                await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
 
         elif new_mode == MODE_NORMAL:
             await self._set_work_mode(WORK_MODE_SELF_USE)
             # Release EVCC back to normal only if WE were the one who set it to hold
-            if self._we_set_evcc_mode:
+            if coordinate_with_evcc and self._we_set_evcc_mode:
                 self._we_set_evcc_mode = False
                 await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_NORMAL}")
 
@@ -1727,6 +1749,82 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         return list(reversed(log[-n:]))
 
     # ------------------------------------------------------------------ #
+    # Live state source dispatcher (EVCC / Hybrid / FoxESS)                #
+    # ------------------------------------------------------------------ #
+
+    async def _fetch_live_state(
+        self, session: aiohttp.ClientSession, evcc_url: str
+    ) -> dict:
+        """Return live grid / PV / load / EV state in EVCC /api/state shape.
+
+        Three modes (CONF_LIVE_DATA_SOURCE):
+          - "evcc"   — single GET /api/state, fatal on failure (no fallback)
+          - "hybrid" — FoxESS for grid/PV/load; EVCC for EV loadpoints + batteryMode.
+                       Soft-fails on EVCC unreachability (empties loadpoints, keeps going).
+          - "foxess" — FoxESS only; no EVCC calls at all; empty loadpoints.
+        """
+        source = self.config.get(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE)
+
+        if source == LIVE_SOURCE_EVCC:
+            try:
+                return await self._fetch_json(session, f"{evcc_url}{EVCC_API_STATE}")
+            except Exception as err:
+                raise UpdateFailed(f"EVCC unreachable: {err}") from err
+
+        # FoxESS-derived base — used by both hybrid and foxess modes
+        base = self._read_foxess_live_state()
+
+        if source == LIVE_SOURCE_FOXESS:
+            # No EV info, no EVCC coordination
+            base["loadpoints"] = []
+            base["batteryMode"] = EVCC_BATTERY_NORMAL
+            return base
+
+        # Hybrid: enrich with EVCC loadpoints + batteryMode; soft-fail on EVCC error
+        try:
+            evcc_state = await self._fetch_json(session, f"{evcc_url}{EVCC_API_STATE}")
+            base["loadpoints"] = evcc_state.get("loadpoints", []) or []
+            base["batteryMode"] = evcc_state.get("batteryMode", EVCC_BATTERY_NORMAL)
+        except Exception as err:
+            _LOGGER.warning(
+                "Hybrid mode: EVCC unreachable for EV info (%s) — "
+                "continuing with FoxESS data and empty loadpoints", err,
+            )
+            base["loadpoints"] = []
+            base["batteryMode"] = EVCC_BATTERY_NORMAL
+        return base
+
+    def _read_foxess_live_state(self) -> dict:
+        """Construct an EVCC-style live-state dict from FoxESS Modbus sensors.
+
+        Uses the direction-separated grid sensors so the conventional sign
+        question (CT clamp orientation) is irrelevant:
+            gridPower = grid_consumption − feed_in   (positive = import)
+        Returned values are in watts to match the EVCC API.
+        """
+        grid_in_kw  = self._get_float_state(
+            self.config.get(CONF_FOXESS_GRID_IMPORT_ENTITY, DEFAULT_FOXESS_GRID_IMPORT), 0.0,
+        )
+        grid_out_kw = self._get_float_state(
+            self.config.get(CONF_FOXESS_GRID_EXPORT_ENTITY, DEFAULT_FOXESS_GRID_EXPORT), 0.0,
+        )
+        pv_kw       = self._get_float_state(
+            self.config.get(CONF_FOXESS_PV_POWER_ENTITY, DEFAULT_FOXESS_PV_POWER), 0.0,
+        )
+        load_kw     = self._get_float_state(
+            self.config.get(CONF_FOXESS_LOAD_POWER_ENTITY, DEFAULT_FOXESS_LOAD_POWER), 0.0,
+        )
+        # Sensors may be unavailable on first tick — _get_float_state returns 0.0
+        # in that case so we don't crash the update.
+        return {
+            "homePower": (load_kw or 0.0) * 1000,
+            "pvPower":   (pv_kw or 0.0) * 1000,
+            "gridPower": ((grid_in_kw or 0.0) - (grid_out_kw or 0.0)) * 1000,
+            "loadpoints": [],
+            "batteryMode": EVCC_BATTERY_NORMAL,
+        }
+
+    # ------------------------------------------------------------------ #
     # Solar forecast source dispatcher                                    #
     # ------------------------------------------------------------------ #
 
@@ -1741,10 +1839,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         Source values (CONF_SOLAR_FORECAST_SOURCE):
           - "evcc"           → EVCC /api/tariff/solar (default; Solcast underneath)
           - "forecast_solar" → user-picked Forecast.Solar HA entity's `watts` attribute
-          - "auto"           → try EVCC first, fall back to Forecast.Solar on failure/empty
+          - "solcast"        → user-picked Solcast HA integration entity's `detailedForecast`
+          - "auto"           → try EVCC → Forecast.Solar → Solcast in order until one returns data
         """
         source = self.config.get(CONF_SOLAR_FORECAST_SOURCE, DEFAULT_SOLAR_FORECAST_SOURCE)
         fs_entity = self.config.get(CONF_FORECAST_SOLAR_ENTITY)
+        solcast_entity = self.config.get(CONF_SOLCAST_ENTITY)
 
         async def try_evcc() -> dict:
             try:
@@ -1760,18 +1860,31 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 return {}
             return self._fetch_solar_from_forecast_solar(fs_entity)
 
+        def try_solcast() -> dict:
+            if not solcast_entity:
+                _LOGGER.debug("solcast entity not configured")
+                return {}
+            return self._fetch_solar_from_solcast(solcast_entity)
+
         if source == SOLAR_SOURCE_EVCC:
             return await try_evcc()
 
         if source == SOLAR_SOURCE_FORECAST_SOLAR:
             return try_forecast_solar()
 
+        if source == SOLAR_SOURCE_SOLCAST:
+            return try_solcast()
+
         if source == SOLAR_SOURCE_AUTO:
             data = await try_evcc()
             if data.get("rates"):
                 return data
-            _LOGGER.debug("EVCC solar empty/failed in auto mode — falling back to Forecast.Solar")
-            return try_forecast_solar()
+            _LOGGER.debug("Auto: EVCC empty — trying Forecast.Solar")
+            data = try_forecast_solar()
+            if data.get("rates"):
+                return data
+            _LOGGER.debug("Auto: Forecast.Solar empty — trying Solcast")
+            return try_solcast()
 
         _LOGGER.warning("Unknown solar forecast source '%s' — defaulting to EVCC", source)
         return await try_evcc()
@@ -1811,6 +1924,68 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if rates:
             _LOGGER.debug(
                 "forecast_solar: read %d slots from %s (first=%s, last=%s)",
+                len(rates), entity_id, rates[0]["start"], rates[-1]["start"],
+            )
+        return {"rates": rates} if rates else {}
+
+    def _fetch_solar_from_solcast(self, entity_id: str) -> dict:
+        """Read a Solcast HA integration entity and convert to EVCC format.
+
+        The Solcast integration exposes a `detailedForecast` (30-min slots) or
+        `detailedHourly` attribute on its forecast sensors. Each entry is
+        `{"period_start": <iso>, "pv_estimate": <kWh>}` where pv_estimate is
+        the energy expected during the slot. We convert to watts:
+            watts = pv_estimate_kWh / dur_h × 1000
+        falling back to assuming the slot duration matches the gap to the
+        next slot (typically 0.5 h for Solcast's default 30-min output).
+        """
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in ("unknown", "unavailable"):
+            _LOGGER.debug("solcast entity %s unavailable", entity_id)
+            return {}
+
+        # Solcast exposes the forecast under different attribute names across
+        # versions; try the common ones in order of preference.
+        forecast = (
+            state.attributes.get("detailedForecast")
+            or state.attributes.get("detailedHourly")
+            or state.attributes.get("DetailedForecast")
+        )
+        if not isinstance(forecast, list) or not forecast:
+            _LOGGER.debug("solcast entity %s has no detailedForecast/Hourly list", entity_id)
+            return {}
+
+        # Pre-compute per-entry start times so we can derive slot duration from gaps
+        parsed: list[tuple[datetime, float]] = []
+        for item in forecast:
+            ts = item.get("period_start") or item.get("periodStart")
+            kwh = item.get("pv_estimate")
+            if ts is None or kwh is None:
+                continue
+            try:
+                dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                parsed.append((dt.astimezone(timezone.utc), float(kwh)))
+            except (ValueError, TypeError) as err:
+                _LOGGER.debug("solcast: skipping bad entry %s: %s", item, err)
+
+        parsed.sort(key=lambda x: x[0])
+        rates: list[dict] = []
+        for i, (start, kwh) in enumerate(parsed):
+            # Slot duration = gap to next entry; fall back to 0.5 h (Solcast default)
+            if i + 1 < len(parsed):
+                dur_h = (parsed[i + 1][0] - start).total_seconds() / 3600
+                if dur_h <= 0 or dur_h > 2:
+                    dur_h = 0.5
+            else:
+                dur_h = 0.5
+            watts = round(kwh / dur_h * 1000, 1)
+            rates.append({"start": start.isoformat(), "value": watts})
+
+        if rates:
+            _LOGGER.debug(
+                "solcast: read %d slots from %s (first=%s, last=%s)",
                 len(rates), entity_id, rates[0]["start"], rates[-1]["start"],
             )
         return {"rates": rates} if rates else {}

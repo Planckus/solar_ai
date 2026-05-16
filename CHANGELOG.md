@@ -9,6 +9,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.24.0] — 2026-05-16
+
+### Added — Phase A: EVCC becomes optional
+
+The integration can now run without EVCC. A new first step in the setup wizard (and a new field in the Options menu for existing installs) lets you pick the **live data source**:
+
+- **EVCC** — everything from EVCC (default; behaviour unchanged for existing installs)
+- **Hybrid** — FoxESS sensors for live grid/PV/load, EVCC for EV state (loadpoints + battery mode)
+- **FoxESS only** — no EVCC at all. Solar AI reads grid/PV/load from FoxESS Modbus sensors. No EV detection, no EVCC battery-mode coordination.
+
+#### Solar forecast source expanded
+
+Solcast HA integration is now supported as a direct source (in addition to EVCC and Forecast.Solar). The Auto fallback chain becomes EVCC → Forecast.Solar → Solcast. FoxESS-only installs see only the non-EVCC options in the dropdown.
+
+#### Hard safety check for FoxESS-only mode
+
+Selecting FoxESS-only forces the user to read a clear warning and tick a hard acknowledgement: *"I have no EV, or my EV charger is configured to avoid the house battery."* This is non-skippable because without EV charge detection the battery could grid-charge concurrently with EV charging, potentially overloading the mains breaker.
+
+#### Hybrid mode resilience
+
+When in Hybrid mode, if EVCC is unreachable on a tick, the integration logs a warning and continues with the FoxESS-derived live state and empty loadpoints — instead of dropping the whole entity. EVCC-only mode keeps its existing hard-fail behaviour.
+
+#### v9 → v10 schema migration
+
+Existing installs are automatically migrated with `live_data_source = "evcc"` so behaviour is unchanged unless explicitly switched.
+
+---
+
 ## [0.23.0] — 2026-05-16
 
 ### Added

@@ -18,6 +18,7 @@ from .const import (
     CONF_DSO_GLN,
     CONF_FAST_POLL_INTERVAL,
     CONF_SOLAR_FORECAST_SOURCE,
+    CONF_LIVE_DATA_SOURCE,
     CONF_SPOT_MARKUP,
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
@@ -38,6 +39,7 @@ from .const import (
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_ROUND_TRIP_EFFICIENCY,
     DEFAULT_SOLAR_FORECAST_SOURCE,
+    DEFAULT_LIVE_DATA_SOURCE,
     DEFAULT_SPOT_MARKUP,
     FOXESS_BATTERY_CHARGE_POWER,
     FOXESS_BATTERY_CHARGE_TOTAL,
@@ -154,6 +156,13 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data.setdefault(CONF_SOLAR_FORECAST_SOURCE, DEFAULT_SOLAR_FORECAST_SOURCE)
         hass.config_entries.async_update_entry(entry, data=new_data, version=9)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v9")
+
+    if entry.version < 10:
+        # v9 → v10: add live data source picker (EVCC / Hybrid / FoxESS).
+        # Existing installs keep EVCC as the source so behaviour is unchanged.
+        new_data.setdefault(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE)
+        hass.config_entries.async_update_entry(entry, data=new_data, version=10)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v10")
 
     return True
 
