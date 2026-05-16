@@ -36,9 +36,16 @@ DEFAULT_BATTERY_FLOOR_SOC = 50
 DEFAULT_BATTERY_MAX_SOC = 100
 DEFAULT_BATTERY_CAPACITY = 11.52
 DEFAULT_ROUND_TRIP_EFFICIENCY = 0.92
-DEFAULT_MIN_SPREAD_ARBITRAGE = 1.0
+DEFAULT_MIN_SPREAD_ARBITRAGE = 0.30
 DEFAULT_MIN_SOLAR_EXPORT_PRICE = 0.50
 DEFAULT_FORECAST_HOURS = 24
+# Battery wear cost per kWh cycled (DKK/kWh). Subtracted from CHARGE and EXPORT rewards
+# in the optimizer so the model accounts for finite cycle life. Default is calibrated
+# for residential LFP at ~2000 DKK/kWh installed cost using marginal-wear literature.
+DEFAULT_BATTERY_DEGRADATION_COST = 0.10
+# Terminal value floor: minimum DKK/kWh assumed for SoC remaining at end of horizon.
+# Used when the planning window has too little price data to estimate.
+DEFAULT_TERMINAL_VALUE_FALLBACK = 0.30
 DEFAULT_VAT_PCT = 25.0              # VAT percentage applied to buy-side prices (%)
 DEFAULT_EXPORT_FEE = 0.0            # Sell-side fee/cut taken by grid company (currency/kWh)
 DEFAULT_CURRENCY = "DKK"            # Currency label used in price sensor units
