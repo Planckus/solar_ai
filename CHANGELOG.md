@@ -9,6 +9,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.23.0] — 2026-05-16
+
+### Added
+
+- **Solar forecast source picker** — the integration no longer has to read the solar forecast from EVCC/Solcast. A new config-flow step lets you choose between:
+  - **EVCC** (default — unchanged behaviour, Solcast under the hood)
+  - **Forecast.Solar** — the native HA integration. Solar AI reads the per-hour `watts` attribute from a user-picked sensor (typically `sensor.energy_production_today`) and converts it to the same internal format.
+  - **Auto** — try EVCC first; fall back to Forecast.Solar if EVCC fails or returns empty.
+
+  Existing installs are migrated automatically to source = EVCC, so behaviour is unchanged unless you explicitly change it. The new option is also available in the integration's Options menu (Settings → Devices & Services → Solar AI → Configure).
+
+- **Solar export floor notifications** — two new mobile push toggles for when the integration blocks solar export (because the live sell price has dropped below your `min_export_price` floor) and when it resumes:
+  - "Notifikation: solareksport blokeret (prisgulv)"
+  - "Notifikation: solareksport genoptaget"
+
+  These cover a behaviour that was previously silent — the export-limit register would flip between 25 W and 10 000 W based on price, with no log entry or notification. Both toggles default to off; enable per device in the Notifikationer card.
+
+### Fixed
+
+- **OptionsFlow now actually applies changes.** Before this release, the Options form saved values to `entry.options` but the coordinator only read from `entry.data`, so OptionsFlow edits to floor/max SoC, efficiency, currency, polling interval, and DSO were silently ignored. The OptionsFlow now writes back to `entry.data` directly so changes take effect after the automatic reload. If you've ever changed something in the Options menu and noticed it didn't apply — it will now.
+
+### Removed
+
+- **Dead config field `min_solar_export_price`** — defined in `const.py` and seeded into `entry.data` by the migration, but never read anywhere. The actual minimum export price floor is and remains controlled by the `min_export_price` slider, which is wired up correctly. Removing the dead constant is a no-op for behaviour.
+
+---
+
+## [0.22.1]
+
+### Changed
+
+- **Minimum gevinst pr. kWh slider range widened back to 0.00–3.00 DKK/kWh** (was 0.00–0.50 in v0.22.0). The tighter v0.22.0 range turned out to be too restrictive for setups that want a higher safety margin. The previous one-time migration that clamped stored values above 0.50 has been removed; existing values are now preserved as-is.
+- **Dashboard restructured into 4 tabs** — Oversigt / Priser & Plan / Historik / Indstillinger. All 82 existing entities preserved, just reorganised so the daily-use overview is clean and configuration/diagnostics are tucked under the Indstillinger tab. No code changes; the dashboard YAML in `dashboard/dashboard_da.yaml` has been updated and the live Lovelace config on HA was updated via the WebSocket API.
+- **Mushroom Cards added as an optional dashboard dependency** ([github.com/piitaya/lovelace-mushroom](https://github.com/piitaya/lovelace-mushroom)) — used for the status chips and large tiles on the Oversigt tab. Install via HACS → Frontend before importing the dashboard.
+
+---
+
 ## [0.22.0] — 2026-05-16
 
 ### Changed — Optimizer rewrite (more accurate, more far-sighted)

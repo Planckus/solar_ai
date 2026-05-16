@@ -14,10 +14,12 @@ from .sensor import _device_info
 
 _NOTIFY_SWITCHES = [
     # (translation_key, stored_key, icon)
-    ("notify_export_start", "notify_export_start", "mdi:export"),
-    ("notify_export_stop",  "notify_export_stop",  "mdi:export-variant"),
-    ("notify_charge_start", "notify_charge_start", "mdi:battery-charging-50"),
-    ("notify_charge_stop",  "notify_charge_stop",  "mdi:battery-check"),
+    ("notify_export_start",        "notify_export_start",        "mdi:export"),
+    ("notify_export_stop",         "notify_export_stop",         "mdi:export-variant"),
+    ("notify_charge_start",        "notify_charge_start",        "mdi:battery-charging-50"),
+    ("notify_charge_stop",         "notify_charge_stop",         "mdi:battery-check"),
+    ("notify_solar_floor_blocked", "notify_solar_floor_blocked", "mdi:solar-power-variant-outline"),
+    ("notify_solar_floor_resumed", "notify_solar_floor_resumed", "mdi:solar-power-variant"),
 ]
 
 

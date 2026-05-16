@@ -27,13 +27,14 @@ from .const import (
     CONF_EVCC_URL,
     CONF_FAST_POLL_INTERVAL,
     CONF_FORECAST_HOURS,
+    CONF_FORECAST_SOLAR_ENTITY,
     CONF_FOXESS_FORCE_CHARGE_ENTITY,
     CONF_FOXESS_FORCE_DISCHARGE_ENTITY,
     CONF_FOXESS_INVERTER_ID,
     CONF_FOXESS_WORK_MODE_ENTITY,
-    CONF_MIN_SOLAR_EXPORT_PRICE,
     CONF_MIN_SPREAD_ARBITRAGE,
     CONF_ROUND_TRIP_EFFICIENCY,
+    CONF_SOLAR_FORECAST_SOURCE,
     CONF_SPOT_PRICE_ENTITY,
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_FLOOR_SOC,
@@ -43,9 +44,12 @@ from .const import (
     DEFAULT_EVCC_URL,
     DEFAULT_FAST_POLL_SECONDS,
     DEFAULT_FORECAST_HOURS,
-    DEFAULT_MIN_SOLAR_EXPORT_PRICE,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_ROUND_TRIP_EFFICIENCY,
+    DEFAULT_SOLAR_FORECAST_SOURCE,
+    SOLAR_SOURCE_EVCC,
+    SOLAR_SOURCE_FORECAST_SOLAR,
+    SOLAR_SOURCE_AUTO,
     DOMAIN,
     DSO_OPTIONS,
     EVCC_API_STATE,
@@ -67,7 +71,7 @@ _LOGGER = logging.getLogger(__name__)
 class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the setup wizard."""
 
-    VERSION = 8
+    VERSION = 9
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -176,7 +180,7 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         if user_input is not None:
             self._data[CONF_SPOT_PRICE_ENTITY] = user_input[CONF_SPOT_PRICE_ENTITY]
-            return await self.async_step_battery()
+            return await self.async_step_solar_source()
 
         detected = self._find_entity(STROMLIGNING_SPOTPRICE_EX_VAT)
 
@@ -185,6 +189,49 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({
                 vol.Required(CONF_SPOT_PRICE_ENTITY,
                              default=detected or STROMLIGNING_SPOTPRICE_EX_VAT):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+            }),
+        )
+
+    async def async_step_solar_source(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step: Pick the solar forecast source (EVCC / Forecast.Solar / Auto).
+
+        Keeps EVCC as the default so existing installs are unaffected. If the user
+        picks Forecast.Solar (or Auto for fallback), they also pick which HA entity
+        to read the `watts` attribute from — typically `sensor.energy_production_today`.
+        """
+        if user_input is not None:
+            self._data[CONF_SOLAR_FORECAST_SOURCE] = user_input[CONF_SOLAR_FORECAST_SOURCE]
+            # Only persist the entity if the source actually uses it
+            if user_input[CONF_SOLAR_FORECAST_SOURCE] != SOLAR_SOURCE_EVCC:
+                entity = user_input.get(CONF_FORECAST_SOLAR_ENTITY, "")
+                if entity:
+                    self._data[CONF_FORECAST_SOLAR_ENTITY] = entity
+            return await self.async_step_battery()
+
+        # Auto-detect a forecast.solar entity if present, as a friendly default
+        detected = self._find_entity("sensor.energy_production_today")
+
+        return self.async_show_form(
+            step_id="solar_source",
+            data_schema=vol.Schema({
+                vol.Required(CONF_SOLAR_FORECAST_SOURCE,
+                             default=DEFAULT_SOLAR_FORECAST_SOURCE):
+                    selector.SelectSelector(selector.SelectSelectorConfig(
+                        options=[
+                            {"value": SOLAR_SOURCE_EVCC,
+                             "label": "EVCC (Solcast)"},
+                            {"value": SOLAR_SOURCE_FORECAST_SOLAR,
+                             "label": "Forecast.Solar (HA integration)"},
+                            {"value": SOLAR_SOURCE_AUTO,
+                             "label": "Auto (EVCC, fallback Forecast.Solar)"},
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )),
+                vol.Optional(CONF_FORECAST_SOLAR_ENTITY,
+                             default=detected or ""):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             }),
         )
@@ -370,6 +417,23 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
+                vol.Required(CONF_SOLAR_FORECAST_SOURCE,
+                             default=data.get(CONF_SOLAR_FORECAST_SOURCE,
+                                              DEFAULT_SOLAR_FORECAST_SOURCE)):
+                    selector.SelectSelector(selector.SelectSelectorConfig(
+                        options=[
+                            {"value": SOLAR_SOURCE_EVCC,
+                             "label": "EVCC (Solcast)"},
+                            {"value": SOLAR_SOURCE_FORECAST_SOLAR,
+                             "label": "Forecast.Solar (HA integration)"},
+                            {"value": SOLAR_SOURCE_AUTO,
+                             "label": "Auto (EVCC, fallback Forecast.Solar)"},
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )),
+                vol.Optional(CONF_FORECAST_SOLAR_ENTITY,
+                             default=data.get(CONF_FORECAST_SOLAR_ENTITY, "")):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             }),
         )
 
@@ -379,7 +443,12 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
         """Step 2: Entity mappings — inverter controls and battery sensors."""
         if user_input is not None:
             self._data.update(user_input)
-            return self.async_create_entry(title="", data=self._data)
+            # Persist into entry.data so the coordinator reads the new values on reload.
+            # (HA's default OptionsFlow saves to entry.options which the coordinator
+            # never reads — that's why prior options-flow edits were silently no-ops.)
+            new_data = {**self._entry.data, **self._data}
+            self.hass.config_entries.async_update_entry(self._entry, data=new_data)
+            return self.async_create_entry(title="", data={})
 
         data = self._entry.data
 
