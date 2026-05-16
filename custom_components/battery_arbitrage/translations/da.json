@@ -228,12 +228,17 @@
       "elafgift": { "name": "Elafgift (DKK/kWh)" },
       "spot_markup": { "name": "Spotpris-tillæg (elhandlertillæg)" },
       "max_export_kw": { "name": "Eksporteffekt-grænse (0 = ingen)" },
-      "min_export_price": { "name": "Minimum eksportpris (0 = tillad negativ)" }
+      "min_export_price": { "name": "Minimum eksportpris (0 = tillad negativ)" },
+      "battery_degradation_cost": { "name": "Batteri-slidomkostning (DKK/kWh cyklet)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage aktiv" },
       "notifications_enabled": { "name": "Notifikationer ved tilstandsskift" },
-      "price_resolution_15min": { "name": "15-minutters prisopløsning" }
+      "price_resolution_15min": { "name": "15-minutters prisopløsning" },
+      "notify_export_start": { "name": "Notifikation: eksport startet" },
+      "notify_export_stop":  { "name": "Notifikation: eksport stoppet" },
+      "notify_charge_start": { "name": "Notifikation: opladning startet" },
+      "notify_charge_stop":  { "name": "Notifikation: opladning stoppet" }
     }
   },
   "services": {

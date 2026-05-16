@@ -9,6 +9,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.22.0] — 2026-05-16
+
+### Changed — Optimizer rewrite (more accurate, more far-sighted)
+
+This is a meaningful upgrade to the day-ahead DP optimizer. The decision quality should improve noticeably on days with large price spreads and especially in the last few hours of each day. Five things changed:
+
+1. **Native 15-minute resolution** — the optimizer now solves directly at the Nord Pool day-ahead grid (15-min slots) instead of averaging 4 slots into an hourly bucket. Short evening price spikes that only last 15–30 minutes are now visible to the planner. Solving time is still well under 100 ms even at the longer 48-h horizon.
+2. **48-hour horizon when available** — once tomorrow's day-ahead prices are published (around 13:00 CET each day), the optimizer plans across the full ~48-hour window instead of cutting off at hour 24. This lets it pre-charge tonight for tomorrow's morning peak, etc.
+3. **Terminal value at horizon end** — previously the model assigned zero value to whatever SoC remained at the end of the planning window. That caused unnecessary discharge in the last few slots. The new terminal value `(remaining usable kWh) × discharge_eff × expected_sell_price` ensures the battery preserves usable charge into the next day.
+4. **Forward-only spread check** — the "is this export profitable?" gate previously used the cheapest buy price *anywhere* in the planning window, which was overly optimistic for late-day exports (no cheap recharge available after them). The check now uses the cheapest buy *after* the candidate export slot only.
+5. **Battery degradation cost** — every CHARGE and EXPORT decision now pays a small per-kWh cycle cost (default **0.10 DKK/kWh**, configurable via a new number entity). This stops the model from approving thin arbitrage that doesn't cover the wear it causes. Calibrated for residential LFP at ~2000 DKK/kWh installed cost using marginal-wear literature.
+6. **Solar accuracy correction applied to optimizer input** — previously the learned solar accuracy factor (rolling median of actual/forecast ratio) was used only on display sensors. The DP planned against raw Solcast forecasts, which meant a systematic 20–30 % overshoot would lead the optimizer to assume more solar coverage than would actually arrive. The factor is now applied per slot inside the DP.
+7. **House grid-import cost at floor** — when battery SoC sits at floor and house load exceeds solar, the deficit is imported from the grid at the current buy price. Previously the DP didn't see this cost and effectively treated it as free. The new model adds it explicitly, making strategic CHARGE actions more attractive when high-buy hours are expected later in the day.
+8. **Solar overflow export revenue when full** — symmetric fix: when SoC sits at max and solar exceeds house load, the surplus is exported at the current sell price. The DP now counts this revenue, which makes strategic pre-emptive EXPORT (to make room for incoming solar) more attractive.
+
+### Added
+
+- **Battery wear cost setting** — new number entity `Batteri-slidomkostning` lets you tune the per-kWh degradation cost between 0.00 and 1.00 DKK/kWh. Default 0.10. Increase if you want the system to take fewer cycles; decrease (or set to 0) for maximum arbitrage activity.
+
+### Changed
+
+- **Minimum arbitrage spread slider** retuned for the new economic model. Range is now **0.00–0.50 DKK/kWh** in 0.05 steps (was 0.10–3.00), default lowered to **0.30**. With explicit degradation cost and efficiency losses now priced inside the DP, the old 1.0 default was effectively double-counting and blocking legitimate multi-cycle days. Existing installs with stored values above 0.50 are migrated down to 0.50 to keep the slider and the optimizer in sync.
+
+---
+
+## [0.21.5] — 2026-05-16
+
+### Added
+
+- **Configurable push notifications** — four new toggle switches let you choose exactly which events trigger a push notification on your iPhones (via the HA Companion app): export started, export stopped, charging started, charging stopped. Each toggle is independent — enable only the events you care about. A separate toggle is created automatically for every registered HA Companion device (iPhone, iPad, etc.) so you can pick exactly which devices receive the notifications.
+- **Session log end time** — the Sessionslog dashboard card now shows both the start time and end time ("Slut") for each session, making it easier to see how long each export or charge window ran.
+
+---
+
 ## [0.21.4] — 2026-05-16
 
 ### Added
