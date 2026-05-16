@@ -2,13 +2,37 @@
   "config": {
     "step": {
       "user": {
+        "title": "Live datakilde",
+        "description": "Hvor skal Solar AI hente live netstrøm, solcelleproduktion, husforbrug og EV-ladetilstand fra?\n\n• **EVCC** — alt fra EVCC (standard)\n• **Hybrid** — FoxESS for net/sol/forbrug, EVCC for EV-info\n• **Kun FoxESS** — ingen EVCC overhovedet (advarsel: ingen EV-koordinering)",
+        "data": {
+          "live_data_source": "Live datakilde"
+        }
+      },
+      "evcc_url": {
         "title": "EVCC-forbindelse",
-        "description": "Indtast URL'en til din EVCC-instans. Standard er {default_url}.",
+        "description": "Indtast URL'en til din EVCC-instans.",
         "data": {
           "evcc_url": "EVCC URL"
         },
         "data_description": {
           "evcc_url": "Fuld URL inkl. port, f.eks. http://din-ha-ip:7070"
+        }
+      },
+      "foxess_live_warning": {
+        "title": "⚠️ Ingen EV-koordinering tilgængelig",
+        "description": "Du har valgt **Kun FoxESS** som live datakilde. Solar AI vil IKKE kunne registrere når din elbil oplader.\n\nHvis batteriet netoplader samtidig med at elbilen trækker effekt, kan den samlede belastning overskride din hovedsikring.\n\nFortsæt kun hvis:\n• Du har INGEN elbil, ELLER\n• Din EV-lader er konfigureret til aldrig at trække fra husbatteriet\n\nDu skal bekræfte risikoen for at fortsætte.",
+        "data": {
+          "acknowledge_no_ev": "Jeg har ingen elbil, eller min EV-lader trækker ikke fra husbatteriet"
+        }
+      },
+      "foxess_live_entities": {
+        "title": "FoxESS live-sensorer",
+        "description": "Vælg de FoxESS Modbus-sensorer Solar AI skal læse live net / sol / forbrug fra. Standarder er auto-detekterede.",
+        "data": {
+          "foxess_grid_import_entity": "Net-importsensor",
+          "foxess_grid_export_entity": "Net-eksportsensor",
+          "foxess_pv_power_entity": "Solcelleeffekt-sensor",
+          "foxess_load_power_entity": "Husforbrugs-sensor"
         }
       },
       "foxess": {
@@ -96,7 +120,8 @@
     "error": {
       "evcc_unreachable": "Kunne ikke nå EVCC på den angivne URL",
       "evcc_no_battery": "EVCC er tilgængeligt, men rapporterer intet batteri",
-      "entity_not_found": "En eller flere enheder kunne ikke findes i Home Assistant"
+      "entity_not_found": "En eller flere enheder kunne ikke findes i Home Assistant",
+      "must_acknowledge_no_ev": "Du skal sætte flueben i bekræftelsen for at fortsætte"
     },
     "abort": {
       "already_configured": "Solar AI er allerede konfigureret"
@@ -116,7 +141,13 @@
           "fast_poll_interval": "Opdateringsinterval for live-data (sekunder)",
           "dso_gln": "Netselskab (DSO)",
           "solar_forecast_source": "Solcelleprognose-kilde",
-          "forecast_solar_entity": "Forecast.Solar-enhed (bruges kun hvis kilden er Forecast.Solar eller Auto)"
+          "forecast_solar_entity": "Forecast.Solar-enhed",
+          "solcast_entity": "Solcast-enhed",
+          "live_data_source": "Live datakilde",
+          "foxess_grid_import_entity": "FoxESS net-importsensor",
+          "foxess_grid_export_entity": "FoxESS net-eksportsensor",
+          "foxess_pv_power_entity": "FoxESS solcelleeffekt-sensor",
+          "foxess_load_power_entity": "FoxESS husforbrugs-sensor"
         }
       },
       "entities": {

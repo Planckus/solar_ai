@@ -2,13 +2,37 @@
   "config": {
     "step": {
       "user": {
+        "title": "Live Data Source",
+        "description": "Where should Solar AI get the live grid power, PV production, house load, and EV charging state from?\n\n• **EVCC** — everything from EVCC (default)\n• **Hybrid** — FoxESS for grid/PV/load, EVCC for EV info\n• **FoxESS only** — no EVCC at all (warning: no EV coordination)",
+        "data": {
+          "live_data_source": "Live data source"
+        }
+      },
+      "evcc_url": {
         "title": "EVCC Connection",
-        "description": "Enter the URL of your EVCC instance. The default is {default_url}.",
+        "description": "Enter the URL of your EVCC instance.",
         "data": {
           "evcc_url": "EVCC URL"
         },
         "data_description": {
           "evcc_url": "Full URL including port, e.g. http://your-ha-ip:7070"
+        }
+      },
+      "foxess_live_warning": {
+        "title": "⚠️ No EV coordination available",
+        "description": "You have selected **FoxESS only** as the live data source. Solar AI will NOT be able to detect when your EV is charging.\n\nIf the battery is grid-charging at the same time the EV is drawing power, the combined load can exceed your main breaker.\n\nOnly proceed if:\n• You do NOT have an EV, OR\n• Your EV charger is configured to never draw from the house battery\n\nYou must acknowledge this risk to continue.",
+        "data": {
+          "acknowledge_no_ev": "I have no EV, or my EV charger is configured to avoid the house battery"
+        }
+      },
+      "foxess_live_entities": {
+        "title": "FoxESS Live Sensors",
+        "description": "Pick the FoxESS Modbus sensors Solar AI should read live grid / PV / load from. Defaults are auto-detected.",
+        "data": {
+          "foxess_grid_import_entity": "Grid import sensor",
+          "foxess_grid_export_entity": "Grid export sensor",
+          "foxess_pv_power_entity": "PV power sensor",
+          "foxess_load_power_entity": "House load sensor"
         }
       },
       "foxess": {
@@ -96,7 +120,8 @@
     "error": {
       "evcc_unreachable": "Could not reach EVCC at the specified URL",
       "evcc_no_battery": "EVCC is reachable but reports no battery",
-      "entity_not_found": "One or more entities could not be found in Home Assistant"
+      "entity_not_found": "One or more entities could not be found in Home Assistant",
+      "must_acknowledge_no_ev": "You must tick the acknowledgement to continue"
     },
     "abort": {
       "already_configured": "Solar AI is already configured"
@@ -116,7 +141,13 @@
           "fast_poll_interval": "Live data poll interval (seconds)",
           "dso_gln": "Grid operator (DSO)",
           "solar_forecast_source": "Solar forecast source",
-          "forecast_solar_entity": "Forecast.Solar entity (only used if source is Forecast.Solar or Auto)"
+          "forecast_solar_entity": "Forecast.Solar entity",
+          "solcast_entity": "Solcast entity",
+          "live_data_source": "Live data source",
+          "foxess_grid_import_entity": "FoxESS grid import sensor",
+          "foxess_grid_export_entity": "FoxESS grid export sensor",
+          "foxess_pv_power_entity": "FoxESS PV power sensor",
+          "foxess_load_power_entity": "FoxESS load power sensor"
         }
       },
       "entities": {

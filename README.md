@@ -6,26 +6,27 @@
 
 ---
 
-## ✨ New in v0.21.0 — Day-ahead optimizer
+## ✨ New in v0.24.0 — EVCC is now optional
 
-The decision engine has been rebuilt from the ground up. Instead of reactive threshold comparisons, Solar AI now runs a **full 24-hour dynamic programming optimizer** every time prices refresh:
+You can now run Solar AI **without EVCC**. A new first step in the setup wizard lets you pick how live data comes in:
 
-- **Globally optimal multi-cycle planning** — finds the best combination of charge and export windows across all 24 future hours simultaneously, rather than checking one slot at a time
-- **Per-hour house load profile** — the optimizer uses a learned 24-slot daily load profile (kW per hour, ~8-day EMA) to accurately estimate battery drain per slot, replacing the flat 24h average
-- **EV solar shading model** — the optimizer accounts for how much of the solar forecast will be consumed by EV charging (learned max rate × hourly probability), giving the battery an accurate net-solar estimate per hour
-- **Direct spot price feed** — prices now come from [Energi Data Service](https://api.energidataservice.dk) (Nord Pool `DayAheadPrices`, 15-min resolution) instead of EVCC, fixing the zero-rate issue and removing a dependency on EVCC's tariff endpoint
+- **EVCC** — the original behaviour: everything from EVCC. Required if you want EV-aware coordination.
+- **Hybrid** — FoxESS Modbus for grid / PV / load, EVCC only for EV state. Best of both worlds when you have both.
+- **FoxESS only** — no EVCC at all. Solar AI reads grid / PV / load directly from the FoxESS Modbus integration. Designed for installs without an EV.
 
-See [CHANGELOG.md](CHANGELOG.md) for full details.
+Solar forecast can be fetched from EVCC, Solcast (HA integration), Forecast.Solar (HA integration), or an Auto fallback chain. See [Prerequisites](#prerequisites) for what's required in each mode.
+
+Other notable changes since v0.21.0: 15-minute DP resolution, 48-hour planning horizon, terminal value, battery degradation cost, configurable push notifications, redesigned 4-tab dashboard. See [CHANGELOG.md](CHANGELOG.md) for full history.
 
 ---
 
 ## What it does
 
-Solar AI sits between your FoxESS inverter, your EV charger (EVCC), and the electricity spot market. Every hour it:
+Solar AI sits between your FoxESS inverter, optionally your EV charger (EVCC), and the electricity spot market. Every hour it:
 
-1. **Fetches day-ahead spot prices** directly from Energi Data Service (Nord Pool) and runs a 24-hour DP optimizer to plan the best charge and export windows for the rest of the day
-2. **Every 5 minutes**: reads live battery state, solar production, grid draw, and EV charge power, then follows the plan — setting the FoxESS work mode, force-charge power, and EVCC battery mode
-3. **Learns** — refining its understanding of charge rates, solar accuracy, EV habits, and per-hour house load demand
+1. **Fetches day-ahead spot prices** directly from Energi Data Service (Nord Pool) and runs a 24- to 48-hour dynamic programming optimizer to plan the best charge and export windows for the rest of the day (and tomorrow, once published)
+2. **Every 5 minutes (configurable)**: reads live battery state, solar production, grid draw, and — if EVCC is configured — EV charge power, then follows the plan by setting the FoxESS work mode, force-charge power, and (optionally) EVCC battery mode
+3. **Learns** — refining its understanding of charge rates, solar accuracy, EV habits (if applicable), and per-hour house load demand
 
 All thresholds are adjustable via live dashboard controls. No YAML editing, no restarts needed.
 
@@ -96,9 +97,9 @@ Solar AI automatically fetches your grid operator's hourly time-of-use tariffs f
 - Toggle on/off with the **Notifications** switch in the dashboard — no restart needed
 
 ### 🌞 Solar-Aware Decision Making
-- **Solcast integration** (via EVCC) — uses your roof's 24-hour solar forecast
-- **Live solar production** — exposes EVCC's real-time PV output as a `Solar production (live)` sensor (kW)
-- **Solar accuracy learning** — compares actual PV output to Solcast forecasts over a rolling 4-day window and applies a learned correction factor (0.3–1.5×), so decisions use realistic rather than optimistic numbers
+- **Pluggable solar forecast source** — pick from EVCC (Solcast under the hood), Solcast (HA integration, direct), Forecast.Solar (HA integration), or Auto (fallback chain)
+- **Live solar production** — reads real-time PV output from FoxESS or EVCC depending on the configured live-data source (kW)
+- **Solar accuracy learning** — compares actual PV output to forecast over a rolling 4-day window and applies a learned correction factor (0.3–1.5×) inside the optimizer, so decisions use realistic rather than optimistic numbers
 - **Net solar for battery** — subtracts predicted house load from the solar forecast to compute the true surplus available for the battery. Grid charging is automatically skipped when solar will fill the battery anyway
 
 ### 🏠 House Load Model
@@ -108,7 +109,10 @@ Solar AI automatically fetches your grid operator's hourly time-of-use tariffs f
 - **Vacation / low-load detection** — if consumption drops below 25% of the 28-day baseline for 4+ hours, Solar AI enters vacation mode and applies a more conservative load estimate
 - **Outlier-resistant learning** — each learning tick applies a two-layer guard: physical ceiling at `grid_max_kw` and a soft cap at 5× the current estimate (once model is warm), preventing sensor spikes from distorting the profile
 
-### 🚗 EV-Aware Scheduling (EVCC)
+### 🚗 EV-Aware Scheduling (requires EVCC)
+
+> All features in this section are **EVCC-only** — they're available in EVCC and Hybrid live-data modes. In FoxESS-only mode, EV info is unavailable and these features are silently inactive.
+
 - **Real charging detection** — uses actual EV charge power (> 3 000 W) rather than "connected" state, so scheduled or idle sessions don't block battery operations
 - **Hourly EV pattern learning** — exponential smoothing learns when your EV typically charges, hour by hour (~8-day memory). Grid charging is skipped during hours where the EV charges ≥ 70 % of the time
 - **EV max charge rate learning** — learns the car's peak AC charge rate (~20-sample EMA) from full-speed sessions only (≥ 80 % of current learned max). Solar-throttled summer sessions are excluded so the estimate stays accurate year-round. The optimizer uses this value to compute expected EV solar consumption per hour, giving the battery an accurate net-surplus forecast
@@ -132,7 +136,7 @@ Solar AI automatically fetches your grid operator's hourly time-of-use tariffs f
 - Adapts gradually — no hard-coded calendar dates
 
 ### 🔌 Grid Overcurrent Protection
-- Reads live grid import power from EVCC every fast-poll tick
+- Reads live grid import power every fast-poll tick (from EVCC or directly from the FoxESS CT clamp, depending on configured live-data source)
 - Calculates available headroom: `limit − 0.5 kW safety margin − current grid draw`
 - Automatically caps the battery charge rate to stay within your circuit breaker limit
 - Grid charging is skipped entirely if headroom drops below 0.3 kW
@@ -172,14 +176,51 @@ All key thresholds are adjustable from the dashboard without restarting HA:
 
 ## Prerequisites
 
-You need the following already working in Home Assistant:
+### Pick your live data source first
 
-| Component | Required | Purpose | Link |
-|-----------|----------|---------|------|
-| FoxESS Modbus integration | ✅ Required | Read battery SoC, temperature, power; set work mode and charge power | [GitHub](https://github.com/nathanmarlor/foxess_modbus) |
-| EVCC | ✅ Required | Live grid power, EV charge power, battery mode API. (Solar forecast is optional from v0.23.0 — see below) | [evcc.io](https://evcc.io) |
-| Solar forecast source | ✅ Required (one of) | One of: **EVCC → Solcast** (default) or **Forecast.Solar** (native HA integration). Configured in the setup wizard. | [Solcast](https://solcast.com) / [Forecast.Solar HA docs](https://www.home-assistant.io/integrations/forecast_solar/) |
-| Spot price entity | ⚙️ Optional | Any HA sensor exposing the current spot price excl. VAT in DKK/kWh (e.g. [Strømligning](https://www.stromligning.dk), Tibber). If omitted, Solar AI reads the live spot price from Energi Data Service automatically — the same feed used by the optimizer | — |
+From v0.24.0, the integration supports three live-data modes. Pick the one that matches your setup:
+
+| Mode | When to choose | Required components |
+|---|---|---|
+| **EVCC** | You have EVCC running and want EV-aware coordination | EVCC + Solcast (via EVCC) + FoxESS Modbus |
+| **Hybrid** | You have EVCC for EV, but want more accurate live grid/PV directly from the inverter | EVCC + FoxESS Modbus + a solar forecast source (EVCC's Solcast, Solcast direct, or Forecast.Solar) |
+| **FoxESS only** | You have no EV (or your EV doesn't draw from the house battery) | FoxESS Modbus + a solar forecast source (Solcast direct or Forecast.Solar) |
+
+> ⚠️ **Warning:** If you have an EV, do not pick FoxESS-only. Without EVCC there is no way for Solar AI to detect when the EV is charging — the optimizer could grid-charge the battery at the same time, exceeding your main breaker. The setup wizard enforces a hard acknowledgement before allowing FoxESS-only.
+
+### Component checklist by mode
+
+| Component | EVCC mode | Hybrid mode | FoxESS-only mode | Link |
+|-----------|:---------:|:-----------:|:----------------:|------|
+| **FoxESS Modbus** integration | ✅ Required | ✅ Required | ✅ Required | [GitHub](https://github.com/nathanmarlor/foxess_modbus) |
+| **EVCC** | ✅ Required | ✅ Required | ❌ Not used | [evcc.io](https://evcc.io) |
+| **Solar forecast** — one of: EVCC/Solcast → Solcast HA integration → Forecast.Solar HA integration | ✅ Pick one | ✅ Pick one | ✅ Pick one (excl. EVCC) | [Solcast](https://solcast.com) / [Forecast.Solar](https://www.home-assistant.io/integrations/forecast_solar/) |
+| **Spot price entity** (Strømligning, Tibber, etc.) | ⚙️ Optional | ⚙️ Optional | ⚙️ Optional | — |
+
+If no spot price entity is configured, Solar AI reads spot prices directly from [Energi Data Service](https://api.energidataservice.dk) — the same feed the optimizer uses internally.
+
+### What works (and what doesn't) without EVCC
+
+Most features work in all three modes. The only things that require EVCC are EV-related:
+
+| Feature | EVCC | Hybrid | FoxESS-only |
+|---------|:----:|:------:|:-----------:|
+| Day-ahead DP optimizer (15-min resolution, 48-h horizon) | ✅ | ✅ | ✅ |
+| Battery floor / max SoC enforcement | ✅ | ✅ | ✅ |
+| Minimum arbitrage spread + battery wear cost | ✅ | ✅ | ✅ |
+| Solar export floor (block selling below a price) | ✅ | ✅ | ✅ |
+| Temperature-adaptive charge rate learning | ✅ | ✅ | ✅ |
+| Capacity & round-trip efficiency auto-detection | ✅ | ✅ | ✅ |
+| Solar forecast accuracy learning | ✅ | ✅ | ✅ |
+| House load profile learning | ✅ | ✅ | ✅ |
+| 30-day savings tracker | ✅ | ✅ | ✅ |
+| Session log (exports & charges) | ✅ | ✅ | ✅ |
+| Mobile push notifications | ✅ | ✅ | ✅ |
+| Live dashboard sliders / switches | ✅ | ✅ | ✅ |
+| Grid headroom overcurrent protection | ✅ | ✅ | ✅ (FoxESS CT measurement) |
+| **EV-aware optimizer scheduling** (avoids charging battery when EV is charging) | ✅ | ✅ | ❌ |
+| **EV charge probability learning** | ✅ | ✅ | ❌ (probability stays at zero) |
+| **EVCC battery-mode coordination** (tells EVCC to hold during arbitrage) | ✅ | ✅ | n/a |
 
 ### Optional dashboard dependencies (HACS)
 
@@ -227,11 +268,18 @@ Via HACS: add this repository as a custom repository and install from there.
 **Settings → Devices & Services → Add Integration → Solar AI**
 
 The setup wizard walks you through:
-1. **EVCC URL** — e.g. `http://your-ha-ip:7070`
-2. **FoxESS entities** — auto-detected; override if your names differ
-3. **Spot price entity** *(optional)* — select any HA sensor exposing hourly spot price excl. VAT in DKK/kWh. Leave blank and Solar AI will source the live price from Energi Data Service instead
-4. **Battery & trading parameters** — capacity, efficiency, initial thresholds, DSO, currency
-5. **Dashboard** — optionally link an existing Lovelace dashboard
+1. **Live data source** — pick EVCC / Hybrid / FoxESS only (see [Prerequisites](#prerequisites) for which to choose)
+2. **EVCC URL** (EVCC + Hybrid modes only) — e.g. `http://your-ha-ip:7070`
+3. **FoxESS live sensors** (Hybrid + FoxESS-only modes) — auto-detected grid_consumption, feed_in, pv_power, load_power overrides
+4. **No-EV acknowledgement** (FoxESS-only mode) — required confirmation that you have no EV / your EV doesn't draw from the house battery
+5. **FoxESS control entities** — auto-detected inverter ID, work-mode select, force-charge / force-discharge number entities
+6. **Battery sensors** — SoC, temperature, charge/discharge power, lifetime charge/discharge totals
+7. **Spot price entity** *(optional)* — any HA sensor exposing hourly spot price excl. VAT in DKK/kWh. Leave blank and Solar AI sources the live price from Energi Data Service instead
+8. **Solar forecast source** — pick EVCC / Solcast / Forecast.Solar / Auto, with optional entity overrides
+9. **Battery & trading parameters** — capacity, efficiency, initial thresholds, DSO, currency
+10. **Dashboard** — optionally link an existing Lovelace dashboard
+
+You can change any of these later via **Settings → Devices & Services → Solar AI → Configure** without re-running the wizard.
 
 ### 4. Import the dashboard
 

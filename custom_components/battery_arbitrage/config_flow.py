@@ -35,6 +35,13 @@ from .const import (
     CONF_MIN_SPREAD_ARBITRAGE,
     CONF_ROUND_TRIP_EFFICIENCY,
     CONF_SOLAR_FORECAST_SOURCE,
+    CONF_SOLCAST_ENTITY,
+    CONF_LIVE_DATA_SOURCE,
+    CONF_FOXESS_GRID_IMPORT_ENTITY,
+    CONF_FOXESS_GRID_EXPORT_ENTITY,
+    CONF_FOXESS_PV_POWER_ENTITY,
+    CONF_FOXESS_LOAD_POWER_ENTITY,
+    CONF_ACKNOWLEDGE_NO_EV,
     CONF_SPOT_PRICE_ENTITY,
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_FLOOR_SOC,
@@ -47,9 +54,18 @@ from .const import (
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_ROUND_TRIP_EFFICIENCY,
     DEFAULT_SOLAR_FORECAST_SOURCE,
+    DEFAULT_LIVE_DATA_SOURCE,
+    DEFAULT_FOXESS_GRID_IMPORT,
+    DEFAULT_FOXESS_GRID_EXPORT,
+    DEFAULT_FOXESS_PV_POWER,
+    DEFAULT_FOXESS_LOAD_POWER,
     SOLAR_SOURCE_EVCC,
     SOLAR_SOURCE_FORECAST_SOLAR,
+    SOLAR_SOURCE_SOLCAST,
     SOLAR_SOURCE_AUTO,
+    LIVE_SOURCE_EVCC,
+    LIVE_SOURCE_HYBRID,
+    LIVE_SOURCE_FOXESS,
     DOMAIN,
     DSO_OPTIONS,
     EVCC_API_STATE,
@@ -71,7 +87,7 @@ _LOGGER = logging.getLogger(__name__)
 class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the setup wizard."""
 
-    VERSION = 9
+    VERSION = 10
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -79,7 +95,38 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 1: EVCC connection."""
+        """Step 1: Live data source — EVCC, Hybrid, or FoxESS only."""
+        if user_input is not None:
+            source = user_input[CONF_LIVE_DATA_SOURCE]
+            self._data[CONF_LIVE_DATA_SOURCE] = source
+            if source == LIVE_SOURCE_FOXESS:
+                return await self.async_step_foxess_live_warning()
+            # EVCC or Hybrid both need EVCC URL
+            return await self.async_step_evcc_url()
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema({
+                vol.Required(CONF_LIVE_DATA_SOURCE,
+                             default=DEFAULT_LIVE_DATA_SOURCE):
+                    selector.SelectSelector(selector.SelectSelectorConfig(
+                        options=[
+                            {"value": LIVE_SOURCE_EVCC,
+                             "label": "EVCC (everything from EVCC)"},
+                            {"value": LIVE_SOURCE_HYBRID,
+                             "label": "Hybrid (FoxESS grid/PV, EVCC for EV)"},
+                            {"value": LIVE_SOURCE_FOXESS,
+                             "label": "FoxESS only (no EVCC — no EV coordination)"},
+                        ],
+                        mode=selector.SelectSelectorMode.LIST,
+                    )),
+            }),
+        )
+
+    async def async_step_evcc_url(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 1b: EVCC URL (only for EVCC + Hybrid modes)."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -98,15 +145,76 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_BATTERY_CAPACITY: capacity,
                     "_evcc_data": evcc_data,
                 })
+                # Hybrid mode also needs FoxESS live entities before continuing
+                if self._data.get(CONF_LIVE_DATA_SOURCE) == LIVE_SOURCE_HYBRID:
+                    return await self.async_step_foxess_live_entities()
                 return await self.async_step_foxess()
 
         return self.async_show_form(
-            step_id="user",
+            step_id="evcc_url",
+            errors=errors,
             data_schema=vol.Schema({
                 vol.Required(CONF_EVCC_URL, default=DEFAULT_EVCC_URL): str,
             }),
+        )
+
+    async def async_step_foxess_live_warning(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """FoxESS-only mode: hard acknowledgement that no EV is being managed.
+
+        Without EVCC there is no way for the integration to know that an EV
+        is plugged in or charging. If the user has an EV and Solar AI starts
+        grid-charging the battery while the EV is also drawing power, the
+        combined draw can exceed the breaker. This step refuses to continue
+        until the user explicitly ticks the acknowledgement.
+        """
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if not user_input.get(CONF_ACKNOWLEDGE_NO_EV, False):
+                errors[CONF_ACKNOWLEDGE_NO_EV] = "must_acknowledge_no_ev"
+            else:
+                self._data[CONF_ACKNOWLEDGE_NO_EV] = True
+                return await self.async_step_foxess_live_entities()
+
+        return self.async_show_form(
+            step_id="foxess_live_warning",
             errors=errors,
-            description_placeholders={"default_url": DEFAULT_EVCC_URL},
+            data_schema=vol.Schema({
+                vol.Required(CONF_ACKNOWLEDGE_NO_EV, default=False): bool,
+            }),
+        )
+
+    async def async_step_foxess_live_entities(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Pick the FoxESS sensors used for live grid / PV / load."""
+        if user_input is not None:
+            self._data.update(user_input)
+            # We need a battery capacity even without EVCC; seed default for FoxESS-only.
+            self._data.setdefault(CONF_BATTERY_CAPACITY, DEFAULT_BATTERY_CAPACITY)
+            return await self.async_step_foxess()
+
+        return self.async_show_form(
+            step_id="foxess_live_entities",
+            data_schema=vol.Schema({
+                vol.Required(CONF_FOXESS_GRID_IMPORT_ENTITY,
+                             default=self._find_entity(DEFAULT_FOXESS_GRID_IMPORT)
+                                      or DEFAULT_FOXESS_GRID_IMPORT):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_FOXESS_GRID_EXPORT_ENTITY,
+                             default=self._find_entity(DEFAULT_FOXESS_GRID_EXPORT)
+                                      or DEFAULT_FOXESS_GRID_EXPORT):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_FOXESS_PV_POWER_ENTITY,
+                             default=self._find_entity(DEFAULT_FOXESS_PV_POWER)
+                                      or DEFAULT_FOXESS_PV_POWER):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_FOXESS_LOAD_POWER_ENTITY,
+                             default=self._find_entity(DEFAULT_FOXESS_LOAD_POWER)
+                                      or DEFAULT_FOXESS_LOAD_POWER):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+            }),
         )
 
     async def async_step_foxess(
@@ -196,42 +304,67 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_solar_source(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step: Pick the solar forecast source (EVCC / Forecast.Solar / Auto).
+        """Step: Pick the solar forecast source.
 
-        Keeps EVCC as the default so existing installs are unaffected. If the user
-        picks Forecast.Solar (or Auto for fallback), they also pick which HA entity
-        to read the `watts` attribute from — typically `sensor.energy_production_today`.
+        Four options: EVCC (Solcast under the hood), Solcast direct (HA
+        integration), Forecast.Solar (HA integration), or Auto (try them all
+        in order). The Forecast.Solar and Solcast entity fields are stored
+        if provided, regardless of source — that way Auto-mode fallback works.
+
+        For FoxESS-only live-data installs the EVCC and Auto options are
+        excluded since there is no EVCC to call.
         """
         if user_input is not None:
             self._data[CONF_SOLAR_FORECAST_SOURCE] = user_input[CONF_SOLAR_FORECAST_SOURCE]
-            # Only persist the entity if the source actually uses it
-            if user_input[CONF_SOLAR_FORECAST_SOURCE] != SOLAR_SOURCE_EVCC:
-                entity = user_input.get(CONF_FORECAST_SOLAR_ENTITY, "")
-                if entity:
-                    self._data[CONF_FORECAST_SOLAR_ENTITY] = entity
+            fs_entity = user_input.get(CONF_FORECAST_SOLAR_ENTITY, "")
+            sc_entity = user_input.get(CONF_SOLCAST_ENTITY, "")
+            if fs_entity:
+                self._data[CONF_FORECAST_SOLAR_ENTITY] = fs_entity
+            if sc_entity:
+                self._data[CONF_SOLCAST_ENTITY] = sc_entity
             return await self.async_step_battery()
 
-        # Auto-detect a forecast.solar entity if present, as a friendly default
-        detected = self._find_entity("sensor.energy_production_today")
+        # Auto-detect entity defaults
+        fs_detected = self._find_entity("sensor.energy_production_today")
+        sc_detected = self._find_entity("sensor.solcast_pv_forecast_forecast_today")
+
+        # If FoxESS-only mode, EVCC and Auto options have no EVCC to call —
+        # restrict the dropdown to options that don't require EVCC.
+        live_source = self._data.get(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE)
+        if live_source == LIVE_SOURCE_FOXESS:
+            source_options = [
+                {"value": SOLAR_SOURCE_FORECAST_SOLAR,
+                 "label": "Forecast.Solar (HA integration)"},
+                {"value": SOLAR_SOURCE_SOLCAST,
+                 "label": "Solcast (HA integration)"},
+            ]
+            default_source = SOLAR_SOURCE_FORECAST_SOLAR
+        else:
+            source_options = [
+                {"value": SOLAR_SOURCE_EVCC,
+                 "label": "EVCC (Solcast via EVCC)"},
+                {"value": SOLAR_SOURCE_SOLCAST,
+                 "label": "Solcast (HA integration, direct)"},
+                {"value": SOLAR_SOURCE_FORECAST_SOLAR,
+                 "label": "Forecast.Solar (HA integration)"},
+                {"value": SOLAR_SOURCE_AUTO,
+                 "label": "Auto (EVCC → Forecast.Solar → Solcast)"},
+            ]
+            default_source = DEFAULT_SOLAR_FORECAST_SOURCE
 
         return self.async_show_form(
             step_id="solar_source",
             data_schema=vol.Schema({
-                vol.Required(CONF_SOLAR_FORECAST_SOURCE,
-                             default=DEFAULT_SOLAR_FORECAST_SOURCE):
+                vol.Required(CONF_SOLAR_FORECAST_SOURCE, default=default_source):
                     selector.SelectSelector(selector.SelectSelectorConfig(
-                        options=[
-                            {"value": SOLAR_SOURCE_EVCC,
-                             "label": "EVCC (Solcast)"},
-                            {"value": SOLAR_SOURCE_FORECAST_SOLAR,
-                             "label": "Forecast.Solar (HA integration)"},
-                            {"value": SOLAR_SOURCE_AUTO,
-                             "label": "Auto (EVCC, fallback Forecast.Solar)"},
-                        ],
+                        options=source_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )),
                 vol.Optional(CONF_FORECAST_SOLAR_ENTITY,
-                             default=detected or ""):
+                             default=fs_detected or ""):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Optional(CONF_SOLCAST_ENTITY,
+                             default=sc_detected or ""):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             }),
         )
@@ -417,22 +550,57 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
+                vol.Required(CONF_LIVE_DATA_SOURCE,
+                             default=data.get(CONF_LIVE_DATA_SOURCE,
+                                              DEFAULT_LIVE_DATA_SOURCE)):
+                    selector.SelectSelector(selector.SelectSelectorConfig(
+                        options=[
+                            {"value": LIVE_SOURCE_EVCC,
+                             "label": "EVCC (everything from EVCC)"},
+                            {"value": LIVE_SOURCE_HYBRID,
+                             "label": "Hybrid (FoxESS grid/PV, EVCC for EV)"},
+                            {"value": LIVE_SOURCE_FOXESS,
+                             "label": "FoxESS only (no EVCC — no EV coordination)"},
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )),
                 vol.Required(CONF_SOLAR_FORECAST_SOURCE,
                              default=data.get(CONF_SOLAR_FORECAST_SOURCE,
                                               DEFAULT_SOLAR_FORECAST_SOURCE)):
                     selector.SelectSelector(selector.SelectSelectorConfig(
                         options=[
                             {"value": SOLAR_SOURCE_EVCC,
-                             "label": "EVCC (Solcast)"},
+                             "label": "EVCC (Solcast via EVCC)"},
+                            {"value": SOLAR_SOURCE_SOLCAST,
+                             "label": "Solcast (HA integration, direct)"},
                             {"value": SOLAR_SOURCE_FORECAST_SOLAR,
                              "label": "Forecast.Solar (HA integration)"},
                             {"value": SOLAR_SOURCE_AUTO,
-                             "label": "Auto (EVCC, fallback Forecast.Solar)"},
+                             "label": "Auto (EVCC → Forecast.Solar → Solcast)"},
                         ],
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )),
                 vol.Optional(CONF_FORECAST_SOLAR_ENTITY,
                              default=data.get(CONF_FORECAST_SOLAR_ENTITY, "")):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Optional(CONF_SOLCAST_ENTITY,
+                             default=data.get(CONF_SOLCAST_ENTITY, "")):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Optional(CONF_FOXESS_GRID_IMPORT_ENTITY,
+                             default=data.get(CONF_FOXESS_GRID_IMPORT_ENTITY,
+                                              DEFAULT_FOXESS_GRID_IMPORT)):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Optional(CONF_FOXESS_GRID_EXPORT_ENTITY,
+                             default=data.get(CONF_FOXESS_GRID_EXPORT_ENTITY,
+                                              DEFAULT_FOXESS_GRID_EXPORT)):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Optional(CONF_FOXESS_PV_POWER_ENTITY,
+                             default=data.get(CONF_FOXESS_PV_POWER_ENTITY,
+                                              DEFAULT_FOXESS_PV_POWER)):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Optional(CONF_FOXESS_LOAD_POWER_ENTITY,
+                             default=data.get(CONF_FOXESS_LOAD_POWER_ENTITY,
+                                              DEFAULT_FOXESS_LOAD_POWER)):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             }),
         )
