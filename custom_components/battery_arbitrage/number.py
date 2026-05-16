@@ -13,6 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    DEFAULT_BATTERY_DEGRADATION_COST,
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
     DEFAULT_ELAFGIFT_DKK_KWH,
@@ -72,8 +73,8 @@ async def async_setup_entry(
             default=DEFAULT_MIN_SPREAD_ARBITRAGE,
             icon="mdi:chart-bar",
             unit="DKK/kWh",
-            min_val=0.10,
-            max_val=3.00,
+            min_val=0.00,
+            max_val=0.50,
             step=0.05,
         ),
         BatteryArbitrageConfigNumber(
@@ -156,6 +157,19 @@ async def async_setup_entry(
             unit="DKK/kWh",
             min_val=0.0,
             max_val=2.0,
+            step=0.01,
+            mode=NumberMode.BOX,
+            display_precision=2,
+        ),
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="battery_degradation_cost",
+            translation_key="battery_degradation_cost",
+            default=DEFAULT_BATTERY_DEGRADATION_COST,
+            icon="mdi:battery-heart-variant",
+            unit="DKK/kWh",
+            min_val=0.0,
+            max_val=1.0,
             step=0.01,
             mode=NumberMode.BOX,
             display_precision=2,

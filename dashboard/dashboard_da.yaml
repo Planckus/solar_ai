@@ -46,6 +46,8 @@ views:
             name: Net-arbitrage spread
           - entity: number.solar_ai_minimum_arbitrage_spread
             name: Spread-grænse
+          - entity: number.solar_ai_batteri_slidomkostning_dkk_kwh_cyklet
+            name: Batteri-slidomkostning
           - entity: sensor.solar_ai_minimum_eksportpris
             name: Min. eksportpris
           - type: divider
@@ -331,13 +333,39 @@ views:
         content: |
           {% set sessions = state_attr('sensor.solar_ai_sessionslog', 'sessions') | default([]) %}
           {% if sessions %}
-          | Tid | Type | SoC | Varighed | kWh | DKK |
-          |:----|:-----|:----|:---------|:----|:----|
+          | Start | Slut | Type | SoC | Varighed | kWh | DKK |
+          |:------|:-----|:-----|:----|:---------|:----|:----|
           {% for s in sessions[:15] %}{% set icon = '💰' if s.type == 'export' else '⚡' %}{% set label = 'Eksport' if s.type == 'export' else 'Oplade' %}
-          | {{ s.start_ts[11:16] }} | {{ icon }} {{ label }} | {{ s.soc_start | round(0) | int }}→{{ s.soc_end | round(0) | int }}% | {{ s.duration_min }} min | {{ s.kwh }} | {{ s.dkk }} |{% endfor %}
+          | {{ s.start_ts[11:16] }} | {{ s.end_ts[11:16] }} | {{ icon }} {{ label }} | {{ s.soc_start | round(0) | int }}→{{ s.soc_end | round(0) | int }}% | {{ s.duration_min }} min | {{ s.kwh }} | {{ s.dkk }} |{% endfor %}
           {% else %}
           *Ingen sessioner endnu — aktivér Solar AI for at registrere eksport og opladning.*
           {% endif %}
+
+      # ── Notifikationsindstillinger ─────────────────────────────────────────
+      - type: entities
+        title: Notifikationsindstillinger
+        icon: mdi:bell-outline
+        show_header_toggle: false
+        entities:
+          - entity: switch.solar_ai_notifikation_eksport_startet
+            name: Eksport startet
+          - entity: switch.solar_ai_notifikation_eksport_stoppet
+            name: Eksport stoppet
+          - entity: switch.solar_ai_notifikation_opladning_startet
+            name: Opladning startet
+          - entity: switch.solar_ai_notifikation_opladning_stoppet
+            name: Opladning stoppet
+          - type: divider
+          - entity: switch.solar_ai_notifikation_mp_iphone
+            name: "📱 Mikkel (MP iPhone)"
+          - entity: switch.solar_ai_notifikation_irina_iphone
+            name: "📱 Irina iPhone"
+          - entity: switch.solar_ai_notifikation_ida_iphone
+            name: "📱 Ida iPhone"
+          - entity: switch.solar_ai_notifikation_ipad_air
+            name: "📱 iPad Air"
+          - entity: switch.solar_ai_notifikation_iphone
+            name: "📱 iPhone"
 
       # ── Forbrugsmodel ──────────────────────────────────────────────────────
       - type: entities
