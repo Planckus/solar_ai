@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Configuration reference doc** (`docs/CONFIGURATION.md`) — every slider, switch, and setup-wizard field explained in plain English: what it controls, its range and default, and concrete advice on when to change it. Linked from the README.
+
 ---
 
 ## [0.24.0] — 2026-05-16
