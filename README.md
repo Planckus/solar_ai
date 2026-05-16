@@ -18,6 +18,8 @@ Solar forecast can be fetched from EVCC, Solcast (HA integration), Forecast.Sola
 
 Other notable changes since v0.21.0: 15-minute DP resolution, 48-hour planning horizon, terminal value, battery degradation cost, configurable push notifications, redesigned 4-tab dashboard. See [CHANGELOG.md](CHANGELOG.md) for full history.
 
+📖 **New:** [Configuration reference](docs/CONFIGURATION.md) — every slider, switch and setup field explained in plain English.
+
 ---
 
 ## What it does
@@ -404,9 +406,12 @@ Once per hour (when spot prices refresh):
 | `sensor.*_dagens_plan` | Tonight's plan in plain text; `charge_hours` and `export_hours` attributes |
 
 ### Number entities (live-configurable)
+
+> 📖 **Full reference:** Every slider, switch, and setup field is documented in plain English in [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — including when to change each value.
+
 | Entity | Range | Description |
 |--------|-------|-------------|
-| `number.*_minimum_arbitrage_spread` | 0.10–3.00 DKK/kWh | Spread threshold before arbitrage triggers |
+| `number.*_minimum_arbitrage_spread` | 0.00–3.00 DKK/kWh | Spread threshold before arbitrage triggers |
 | `number.*_minimum_eksportpris_*` | 0.00–2.00 DKK/kWh | Minimum export price floor (editable) |
 | `number.*_eksporteffekt_graense_*` | 0–10 kW | Max battery discharge power during export (0 = no cap) |
 | `number.*_salgsgebyr_pr_kwh` | 0.00–0.50 DKK/kWh | Sell-side fee |
