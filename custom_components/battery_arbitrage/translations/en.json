@@ -131,7 +131,7 @@
     "step": {
       "init": {
         "title": "Solar AI — Parameters",
-        "description": "Step 1 of 2 — battery & trading parameters. Press Submit to map your inverter and battery sensor entities on the next page.",
+        "description": "Step 1 of 3 — battery & trading parameters. Press Submit to continue to the OCPP / EV settings on the next page.",
         "data": {
           "battery_floor_soc": "Minimum SoC during export (%)",
           "battery_max_soc": "Maximum SoC for grid charging (%)",
@@ -150,9 +150,20 @@
           "foxess_load_power_entity": "FoxESS load power sensor"
         }
       },
+      "ocpp_settings": {
+        "title": "OCPP Settings",
+        "description": "Step 2 of 3 — EV charge controller. Leave the toggle off if you don't use Solar AI to drive an OCPP-connected EV charger. When on, Solar AI talks to the charger via the lbbrhzn/ocpp HA integration.",
+        "data": {
+          "ev_controller_enabled": "Enable EV charge controller",
+          "ev_ocpp_charge_point_id": "OCPP charge point ID (what the charger announces, e.g. 60LH132057KQ050)",
+          "ev_ocpp_status_entity": "Status sensor entity (auto-detected from charge point ID — override only if needed)",
+          "ev_ocpp_power_entity": "Power sensor entity (auto-detected from charge point ID — override only if needed)",
+          "ev_default_mode": "Default EV mode on plug-in"
+        }
+      },
       "entities": {
         "title": "Solar AI — Entity Mapping",
-        "description": "Map Solar AI to your inverter and battery sensors. Change these if your entity IDs differ from the FoxESS Modbus defaults.",
+        "description": "Step 3 of 3 — map Solar AI to your inverter and battery sensors. Change these if your entity IDs differ from the FoxESS Modbus defaults.",
         "data": {
           "foxess_inverter_id": "Inverter ID",
           "foxess_work_mode_entity": "Work mode entity",
@@ -238,7 +249,25 @@
       "tariff_this_hour": { "name": "Grid tariff this hour" },
       "price_chart": { "name": "24h price chart" },
       "todays_plan": { "name": "Today's plan" },
-      "action_log": { "name": "Session log" }
+      "action_log": { "name": "Session log" },
+      "ev_target_kw":   { "name": "EV target charge rate" },
+      "ev_target_amps": { "name": "EV target current" },
+      "ev_surplus_kw":  { "name": "EV surplus available" },
+      "ev_active_mode": { "name": "EV active mode" },
+      "ev_reason":      { "name": "EV controller reason" },
+      "solar_hourly_accuracy": { "name": "Solar hourly learning (warmed hours)" },
+      "solar_floor_log": { "name": "Solar floor log (block events)" }
+    },
+    "select": {
+      "ev_mode": {
+        "name": "EV charging mode",
+        "state": {
+          "locked":     "Locked",
+          "pv":         "Solar only",
+          "pv_battery": "Min via solar + battery",
+          "full":       "Full throttle"
+        }
+      }
     },
     "binary_sensor": {
       "should_export": { "name": "Should export" },
@@ -273,7 +302,9 @@
       "spot_markup": { "name": "Spot price markup (retailer add-on)" },
       "max_export_kw": { "name": "Export power cap (0 = no cap)" },
       "min_export_price": { "name": "Minimum export price (0 = allow negative)" },
-      "battery_degradation_cost": { "name": "Battery wear cost (DKK/kWh cycled)" }
+      "battery_degradation_cost": { "name": "Battery wear cost (DKK/kWh cycled)" },
+      "ev_min_charge_kw": { "name": "EV minimum charge rate (kW)" },
+      "ev_max_charge_kw": { "name": "EV maximum charge rate (kW)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage enabled" },
