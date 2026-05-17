@@ -42,6 +42,11 @@ from .const import (
     CONF_FOXESS_PV_POWER_ENTITY,
     CONF_FOXESS_LOAD_POWER_ENTITY,
     CONF_ACKNOWLEDGE_NO_EV,
+    CONF_EV_CONTROLLER_ENABLED,
+    CONF_EV_OCPP_CHARGE_POINT_ID,
+    CONF_EV_OCPP_STATUS_ENTITY,
+    CONF_EV_OCPP_POWER_ENTITY,
+    CONF_EV_DEFAULT_MODE,
     CONF_SPOT_PRICE_ENTITY,
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_FLOOR_SOC,
@@ -66,6 +71,12 @@ from .const import (
     LIVE_SOURCE_EVCC,
     LIVE_SOURCE_HYBRID,
     LIVE_SOURCE_FOXESS,
+    DEFAULT_EV_CONTROLLER_ENABLED,
+    DEFAULT_EV_DEFAULT_MODE,
+    EV_MODE_LOCKED,
+    EV_MODE_PV,
+    EV_MODE_PV_BATTERY,
+    EV_MODE_FULL,
     DOMAIN,
     DSO_OPTIONS,
     EVCC_API_STATE,
@@ -81,13 +92,29 @@ from .const import (
     STROMLIGNING_SPOTPRICE_EX_VAT,  # used as the default entity ID hint
 )
 
+from . import discovery
+
 _LOGGER = logging.getLogger(__name__)
+
+
+def _entity_optional(key: str, current_value: str):
+    """Voluptuous Optional for an EntitySelector that may be blank.
+
+    Don't supply `default=""` when there's no saved value: the EntitySelector
+    validator rejects empty strings, and an unset default would otherwise
+    leak `""` into the validation phase. Without a default, the frontend
+    serializes the field as null/undefined when empty and the schema treats
+    it as absent — which voluptuous handles cleanly for `vol.Optional`.
+    """
+    if current_value:
+        return vol.Optional(key, default=current_value)
+    return vol.Optional(key)
 
 
 class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the setup wizard."""
 
-    VERSION = 10
+    VERSION = 12
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -199,19 +226,19 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="foxess_live_entities",
             data_schema=vol.Schema({
                 vol.Required(CONF_FOXESS_GRID_IMPORT_ENTITY,
-                             default=self._find_entity(DEFAULT_FOXESS_GRID_IMPORT)
+                             default=discovery.discover_grid_import(self.hass)
                                       or DEFAULT_FOXESS_GRID_IMPORT):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
                 vol.Required(CONF_FOXESS_GRID_EXPORT_ENTITY,
-                             default=self._find_entity(DEFAULT_FOXESS_GRID_EXPORT)
+                             default=discovery.discover_grid_export(self.hass)
                                       or DEFAULT_FOXESS_GRID_EXPORT):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
                 vol.Required(CONF_FOXESS_PV_POWER_ENTITY,
-                             default=self._find_entity(DEFAULT_FOXESS_PV_POWER)
+                             default=discovery.discover_pv_power(self.hass)
                                       or DEFAULT_FOXESS_PV_POWER):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
                 vol.Required(CONF_FOXESS_LOAD_POWER_ENTITY,
-                             default=self._find_entity(DEFAULT_FOXESS_LOAD_POWER)
+                             default=discovery.discover_load_power(self.hass)
                                       or DEFAULT_FOXESS_LOAD_POWER):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             }),
@@ -225,10 +252,12 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
             self._data.update(user_input)
             return await self.async_step_battery_sensors()
 
-        detected_inverter_id = self._detect_inverter_id()
-        detected_work_mode = self._find_entity(FOXESS_WORK_MODE_ENTITY)
-        detected_force_charge = self._find_entity(FOXESS_FORCE_CHARGE_ENTITY)
-        detected_force_discharge = self._find_entity(FOXESS_FORCE_DISCHARGE_ENTITY)
+        # Discover by integration ownership + unique_id suffix — survives
+        # entity renames, language packs, and multi-inverter installs.
+        detected_inverter_id    = discovery.discover_inverter_id(self.hass) or self._detect_inverter_id()
+        detected_work_mode      = discovery.discover_work_mode_select(self.hass)
+        detected_force_charge   = discovery.discover_force_charge_power(self.hass)
+        detected_force_discharge = discovery.discover_force_discharge_power(self.hass)
 
         return self.async_show_form(
             step_id="foxess",
@@ -255,26 +284,30 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
             self._data.update(user_input)
             return await self.async_step_spot_price()
 
+        # Pre-fill via device-registry-aware discovery, falling back to the
+        # well-known default entity ID so the user still sees something
+        # reasonable when discovery returns None (e.g. integration not yet
+        # installed at the time the wizard is opened).
         return self.async_show_form(
             step_id="battery_sensors",
             data_schema=vol.Schema({
                 vol.Required(CONF_BATTERY_SOC_ENTITY,
-                             default=self._find_entity(FOXESS_BATTERY_SOC) or FOXESS_BATTERY_SOC):
+                             default=discovery.discover_battery_soc(self.hass) or FOXESS_BATTERY_SOC):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
                 vol.Required(CONF_CELL_TEMP_ENTITY,
-                             default=self._find_entity(FOXESS_CELL_TEMP_LOW) or FOXESS_CELL_TEMP_LOW):
+                             default=discovery.discover_cell_temp_low(self.hass) or FOXESS_CELL_TEMP_LOW):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
                 vol.Required(CONF_BATTERY_CHARGE_ENTITY,
-                             default=self._find_entity(FOXESS_BATTERY_CHARGE_POWER) or FOXESS_BATTERY_CHARGE_POWER):
+                             default=discovery.discover_battery_charge_power(self.hass) or FOXESS_BATTERY_CHARGE_POWER):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
                 vol.Required(CONF_BATTERY_DISCHARGE_ENTITY,
-                             default=self._find_entity(FOXESS_BATTERY_DISCHARGE_POWER) or FOXESS_BATTERY_DISCHARGE_POWER):
+                             default=discovery.discover_battery_discharge_power(self.hass) or FOXESS_BATTERY_DISCHARGE_POWER):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
                 vol.Required(CONF_BATTERY_CHARGE_TOTAL_ENTITY,
-                             default=self._find_entity(FOXESS_BATTERY_CHARGE_TOTAL) or FOXESS_BATTERY_CHARGE_TOTAL):
+                             default=discovery.discover_battery_charge_total(self.hass) or FOXESS_BATTERY_CHARGE_TOTAL):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
                 vol.Required(CONF_BATTERY_DISCHARGE_TOTAL_ENTITY,
-                             default=self._find_entity(FOXESS_BATTERY_DISCHARGE_TOTAL) or FOXESS_BATTERY_DISCHARGE_TOTAL):
+                             default=discovery.discover_battery_discharge_total(self.hass) or FOXESS_BATTERY_DISCHARGE_TOTAL):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             }),
         )
@@ -360,11 +393,9 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                         options=source_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )),
-                vol.Optional(CONF_FORECAST_SOLAR_ENTITY,
-                             default=fs_detected or ""):
+                _entity_optional(CONF_FORECAST_SOLAR_ENTITY, fs_detected or ""):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
-                vol.Optional(CONF_SOLCAST_ENTITY,
-                             default=sc_detected or ""):
+                _entity_optional(CONF_SOLCAST_ENTITY, sc_detected or ""):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             }),
         )
@@ -509,7 +540,7 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
             if eff > 1:
                 user_input[CONF_ROUND_TRIP_EFFICIENCY] = eff / 100
             self._data.update(user_input)
-            return await self.async_step_entities()
+            return await self.async_step_ocpp_settings()
 
         data = self._entry.data
         eff_pct = int(data.get(CONF_ROUND_TRIP_EFFICIENCY, 0.92) * 100)
@@ -580,11 +611,11 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                         ],
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )),
-                vol.Optional(CONF_FORECAST_SOLAR_ENTITY,
-                             default=data.get(CONF_FORECAST_SOLAR_ENTITY, "")):
+                _entity_optional(CONF_FORECAST_SOLAR_ENTITY,
+                                 data.get(CONF_FORECAST_SOLAR_ENTITY, "")):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
-                vol.Optional(CONF_SOLCAST_ENTITY,
-                             default=data.get(CONF_SOLCAST_ENTITY, "")):
+                _entity_optional(CONF_SOLCAST_ENTITY,
+                                 data.get(CONF_SOLCAST_ENTITY, "")):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
                 vol.Optional(CONF_FOXESS_GRID_IMPORT_ENTITY,
                              default=data.get(CONF_FOXESS_GRID_IMPORT_ENTITY,
@@ -602,6 +633,67 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                              default=data.get(CONF_FOXESS_LOAD_POWER_ENTITY,
                                               DEFAULT_FOXESS_LOAD_POWER)):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+            }),
+        )
+
+    async def async_step_ocpp_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """OCPP / EV charge controller settings.
+
+        Everything Solar AI needs to talk to the OCPP-connected charger:
+        - Master enable toggle (off by default)
+        - The OCPP charge point ID (what the charger announces)
+        - Optional explicit entity overrides for status + power sensors
+          (auto-derived from the charge point ID if left blank)
+        - Default EV mode that's applied when a vehicle plugs in fresh
+        """
+        if user_input is not None:
+            # Strip empty optional strings so defaults can apply at read time
+            cleaned = {k: v for k, v in user_input.items() if v != ""}
+            self._data.update(cleaned)
+            return await self.async_step_entities()
+
+        data = self._entry.data
+
+        # Auto-detect defaults for the entity overrides if a charge point ID
+        # is already configured.
+        current_id = data.get(CONF_EV_OCPP_CHARGE_POINT_ID, "")
+        default_status = (
+            data.get(CONF_EV_OCPP_STATUS_ENTITY)
+            or (f"sensor.{current_id.lower()}_status" if current_id else "")
+        )
+        default_power = (
+            data.get(CONF_EV_OCPP_POWER_ENTITY)
+            or (f"sensor.{current_id.lower()}_power_active_import" if current_id else "")
+        )
+
+        return self.async_show_form(
+            step_id="ocpp_settings",
+            data_schema=vol.Schema({
+                vol.Required(CONF_EV_CONTROLLER_ENABLED,
+                             default=data.get(CONF_EV_CONTROLLER_ENABLED,
+                                              DEFAULT_EV_CONTROLLER_ENABLED)):
+                    bool,
+                vol.Optional(CONF_EV_OCPP_CHARGE_POINT_ID,
+                             default=current_id):
+                    str,
+                _entity_optional(CONF_EV_OCPP_STATUS_ENTITY, default_status):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                _entity_optional(CONF_EV_OCPP_POWER_ENTITY, default_power):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                vol.Required(CONF_EV_DEFAULT_MODE,
+                             default=data.get(CONF_EV_DEFAULT_MODE,
+                                              DEFAULT_EV_DEFAULT_MODE)):
+                    selector.SelectSelector(selector.SelectSelectorConfig(
+                        options=[
+                            {"value": EV_MODE_LOCKED,     "label": "Låst (ingen opladning)"},
+                            {"value": EV_MODE_PV,         "label": "Kun solenergi"},
+                            {"value": EV_MODE_PV_BATTERY, "label": "Min via sol+batteri"},
+                            {"value": EV_MODE_FULL,       "label": "Fuld kraft"},
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )),
             }),
         )
 

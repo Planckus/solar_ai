@@ -84,6 +84,8 @@ from .const import (
     SOLAR_ACCURACY_MIN_FORECAST_W,
     SOLAR_ACCURACY_MIN_SAMPLES,
     SOLAR_ACCURACY_WINDOW,
+    SOLAR_ACCURACY_HOUR_BUCKET_MAX,
+    SOLAR_ACCURACY_HOUR_MIN_SAMPLES,
     STORAGE_KEY,
     STORAGE_VERSION,
     STROMLIGNING_SPOTPRICE_EX_VAT,
@@ -137,6 +139,29 @@ from .const import (
     LIVE_SOURCE_EVCC,
     LIVE_SOURCE_HYBRID,
     LIVE_SOURCE_FOXESS,
+    CONF_EV_CONTROLLER_ENABLED,
+    CONF_EV_OCPP_CHARGE_POINT_ID,
+    CONF_EV_OCPP_STATUS_ENTITY,
+    CONF_EV_OCPP_POWER_ENTITY,
+    CONF_EV_DEFAULT_MODE,
+    CONF_EV_MIN_CHARGE_KW,
+    CONF_EV_MAX_CHARGE_KW,
+    EV_MODE_LOCKED,
+    EV_MODE_PV,
+    EV_MODE_PV_BATTERY,
+    EV_MODE_FULL,
+    DEFAULT_EV_CONTROLLER_ENABLED,
+    DEFAULT_EV_DEFAULT_MODE,
+    DEFAULT_EV_MIN_CHARGE_KW,
+    DEFAULT_EV_MAX_CHARGE_KW,
+    EV_VOLTAGE,
+    EV_PHASES,
+    EV_OCPP_MIN_AMPS,
+    EV_OCPP_MAX_AMPS,
+    EV_HYSTERESIS_START_TICKS,
+    EV_HYSTERESIS_STOP_TICKS,
+    EV_MAX_AMP_STEP_PER_TICK,
+    EV_MIN_AMP_CHANGE,
     EFFICIENCY_MIN_TOTAL_KWH,
 )
 
@@ -181,6 +206,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._optimizer_plan: list[dict] = []
         # Currently open export/charge session (closed when mode exits)
         self._open_action: dict | None = None
+        # Currently open solar-floor-blocked event (closed when price rises
+        # back above the floor and solar export resumes)
+        self._open_floor_block: dict | None = None
+        # EV charge controller state (Phase B1)
+        self._ev_active_mode: str = EV_MODE_LOCKED          # what's running right now
+        self._ev_last_amps: int = 0                          # last A we commanded
+        self._ev_above_start_count: int = 0                 # ticks above start threshold
+        self._ev_below_stop_count: int = 0                  # ticks below stop threshold
+        self._ev_prev_connected: bool = False               # last known plug state
+        self._ev_last_reason: str = ""                      # human-readable status
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -297,6 +332,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "load_history": [],
                 "vacation_counter": 0,
                 "solar_accuracy_samples": [],
+                "solar_accuracy_by_hour": {str(h): [] for h in range(24)},
                 "savings_log": [],
                 "battery_floor_soc": int(self.config.get("battery_floor_soc", DEFAULT_BATTERY_FLOOR_SOC)),
                 "battery_max_soc": int(self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)),
@@ -313,6 +349,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "solar_daily_kwh": [],
                 "solar_today_kwh": 0.0,
                 "solar_today_date": "",
+                "ev_min_charge_kw": DEFAULT_EV_MIN_CHARGE_KW,
+                "ev_max_charge_kw": DEFAULT_EV_MAX_CHARGE_KW,
+                "ev_active_mode": self.config.get(CONF_EV_DEFAULT_MODE, DEFAULT_EV_DEFAULT_MODE),
             }
         else:
             self._stored = data
@@ -322,8 +361,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("load_history", [])
             self._stored.setdefault("vacation_counter", 0)
             self._stored.setdefault("solar_accuracy_samples", [])
+            # Per-hour buckets — keys are str("0".."23"), values are sample lists
+            self._stored.setdefault("solar_accuracy_by_hour", {str(h): [] for h in range(24)})
             self._stored.setdefault("savings_log", [])
             self._stored.setdefault("action_log", [])
+            self._stored.setdefault("solar_floor_log", [])
             self._stored.setdefault("ev_charge_hourly", [0.0] * 24)
             self._stored.setdefault("ev_max_kw", 0.0)
             self._stored.setdefault("house_load_hourly", [0.0] * 24)
@@ -360,6 +402,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("notify_solar_floor_resumed", False)
             self._stored.setdefault("notify_targets", [])
             self._stored.setdefault("battery_degradation_cost", DEFAULT_BATTERY_DEGRADATION_COST)
+            # EV charge controller (Phase B1)
+            self._stored.setdefault("ev_min_charge_kw", DEFAULT_EV_MIN_CHARGE_KW)
+            self._stored.setdefault("ev_max_charge_kw", DEFAULT_EV_MAX_CHARGE_KW)
+            # Active mode is restored if previously saved; otherwise default
+            self._stored.setdefault(
+                "ev_active_mode",
+                self.config.get(CONF_EV_DEFAULT_MODE, DEFAULT_EV_DEFAULT_MODE),
+            )
+        # Hydrate the in-memory active mode from storage
+        self._ev_active_mode = self._stored.get("ev_active_mode", EV_MODE_LOCKED)
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
 
@@ -1005,6 +1057,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
         savings = self.get_savings_summary()
 
+        # ---- EV charge controller (Phase B1) — runs every fast tick ----
+        ev_telemetry = await self._run_ev_controller(
+            evcc_state=evcc_state,
+            battery_soc=battery_soc,
+            floor_soc=float(floor_soc),
+        )
+
         # ---- save storage (learning tick only — avoids flash wear on fast ticks) ----
         if is_learning_tick:
             await self._store.async_save(self._stored)
@@ -1075,6 +1134,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             ev_max_kw=float(self._stored.get("ev_max_kw", 0.0)),
             action_log=self.get_action_log(20),
             action_log_count=len(self._stored.get("action_log", [])),
+            solar_floor_log=self.get_solar_floor_log(20),
+            solar_floor_log_count=len(self._stored.get("solar_floor_log", [])),
+            solar_hourly_factors=self.get_solar_hourly_accuracy_profile(),
+            solar_hourly_samples=self.get_solar_hourly_sample_counts(),
+            **ev_telemetry,
             **savings,
         )
 
@@ -1216,13 +1280,34 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         await self._set_export_limit(inverter_id, limit_w)
         self._last_export_limit = limit_w
 
-        # Solar floor transitions only — grid-charging entry/exit (0 W) is
-        # already covered by the existing charge-start/stop toggles.
-        if prev_limit == 10000 and limit_w == 25:
+        # ── Solar floor log ───────────────────────────────────────────────
+        # Track any entry/exit of limit_w == 25 (floor active) so the log
+        # captures blocks that were already in effect at HA startup. The
+        # original `prev_limit == 10000 and limit_w == 25` condition missed
+        # the -1 → 25 transition that happens on every restart with low price.
+        prev_was_floor = (prev_limit == 25)
+        now_is_floor   = (limit_w == 25)
+        if now_is_floor and not prev_was_floor:
             _LOGGER.info(
-                "Solar floor activated: price %.3f ≤ floor %.2f DKK/kWh — solar export blocked",
-                export_price_raw, min_export_price,
+                "Solar floor activated: price %.3f ≤ floor %.2f DKK/kWh "
+                "— solar export blocked (transition %s → 25)",
+                export_price_raw, min_export_price, prev_limit,
             )
+            self._open_floor_block(datetime.now(timezone.utc), export_price_raw, min_export_price)
+        elif prev_was_floor and not now_is_floor:
+            _LOGGER.info(
+                "Solar floor deactivated: solar export resumed "
+                "(transition 25 → %s, price %.3f, floor %.2f)",
+                limit_w, export_price_raw, min_export_price,
+            )
+            self._close_floor_block(datetime.now(timezone.utc), export_price_raw)
+
+        # ── Solar floor notifications (intentionally narrower) ───────────
+        # Notifications fire only on direct 10000↔25 transitions — i.e. the
+        # genuine "price crossed the floor" events. 0↔25 cases (grid-charge
+        # start/stop while floor is active) are already covered by the
+        # existing charge-start/stop notifications and would be noise here.
+        if prev_limit == 10000 and limit_w == 25:
             if self._stored.get("notify_solar_floor_blocked", False):
                 await self._send_mobile_notification(
                     "☀️ Solar AI: Solareksport blokeret",
@@ -1230,10 +1315,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     f"{min_export_price:.2f} — solareksport stoppet",
                 )
         elif prev_limit == 25 and limit_w == 10000:
-            _LOGGER.info(
-                "Solar floor deactivated: price %.3f > floor %.2f DKK/kWh — solar export resumed",
-                export_price_raw, min_export_price,
-            )
             if self._stored.get("notify_solar_floor_resumed", False):
                 await self._send_mobile_notification(
                     "☀️ Solar AI: Solareksport genoptaget",
@@ -1624,11 +1705,65 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 )
 
     def _update_solar_accuracy(self, forecast_w: float, actual_w: float) -> None:
-        """Append a (forecast, actual) PV power pair to the rolling sample buffer."""
+        """Append a (forecast, actual) PV power pair to the rolling sample buffer
+        AND to the per-hour bucket for the current local hour.
+
+        The per-hour buckets let the optimizer learn the *shape* of real output
+        vs forecast — orientation effects (east panels over-forecast in afternoon,
+        etc.) without the user telling us anything about the panels.
+        """
+        sample = {"f": round(forecast_w, 0), "a": round(actual_w, 0)}
+        # Global rolling buffer (existing behaviour, used as fallback)
         samples: list[dict] = self._stored.setdefault("solar_accuracy_samples", [])
-        samples.append({"f": round(forecast_w, 0), "a": round(actual_w, 0)})
+        samples.append(sample)
         if len(samples) > SOLAR_ACCURACY_MAX_SAMPLES:
             del samples[: len(samples) - SOLAR_ACCURACY_MAX_SAMPLES]
+        # Per-hour bucket
+        hour_key = str(datetime.now().hour)
+        by_hour: dict = self._stored.setdefault("solar_accuracy_by_hour", {})
+        bucket: list[dict] = by_hour.setdefault(hour_key, [])
+        bucket.append(sample)
+        if len(bucket) > SOLAR_ACCURACY_HOUR_BUCKET_MAX:
+            del bucket[: len(bucket) - SOLAR_ACCURACY_HOUR_BUCKET_MAX]
+
+    def get_solar_accuracy_factor_for_hour(self, hour: int) -> float:
+        """Per-hour accuracy correction. Falls back to the global factor if the
+        hour bucket hasn't warmed up yet.
+
+        Result is clamped to [0.3, 1.5] so a single bad sample can't push the
+        optimizer into pathological behaviour.
+        """
+        by_hour: dict = self._stored.get("solar_accuracy_by_hour", {})
+        bucket: list[dict] = by_hour.get(str(hour), [])
+        ratios: list[float] = []
+        for s in bucket:
+            f = s.get("f", 0)
+            a = s.get("a", 0)
+            if f >= SOLAR_ACCURACY_COMPARISON_W:
+                ratios.append(a / f)
+        if len(ratios) >= SOLAR_ACCURACY_HOUR_MIN_SAMPLES:
+            return round(max(0.3, min(1.5, statistics.median(ratios))), 3)
+        return self.get_solar_accuracy_factor()
+
+    def get_solar_hourly_accuracy_profile(self) -> list[float]:
+        """Return 24 hourly accuracy factors. Hours without enough data fall
+        back to the global factor. Used for diagnostics + the dashboard sensor."""
+        return [self.get_solar_accuracy_factor_for_hour(h) for h in range(24)]
+
+    def get_solar_hourly_sample_counts(self) -> list[int]:
+        """Return 24 sample counts (only samples where forecast ≥ comparison
+        threshold, i.e. only daylight samples that contribute to the median).
+        Useful as a warm-up progress indicator on the dashboard.
+        """
+        by_hour: dict = self._stored.get("solar_accuracy_by_hour", {})
+        counts: list[int] = []
+        for h in range(24):
+            bucket = by_hour.get(str(h), [])
+            counts.append(sum(
+                1 for s in bucket
+                if s.get("f", 0) >= SOLAR_ACCURACY_COMPARISON_W
+            ))
+        return counts
 
     # ------------------------------------------------------------------ #
     # Action log (export / grid-charge session tracking)                  #
@@ -1747,6 +1882,303 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         """Return last n action log entries, newest first."""
         log: list[dict] = self._stored.get("action_log", [])
         return list(reversed(log[-n:]))
+
+    # ── Solar export floor log (block / resume events) ────────────────────
+    # Mirrors the action-log pattern: a session is opened when the live sell
+    # price drops below the floor and solar export gets capped at 25 W; closed
+    # when the price rises back above the floor and full export resumes.
+
+    def _open_floor_block(
+        self, now: datetime, price: float, floor: float,
+    ) -> None:
+        _CPH_TZ = ZoneInfo("Europe/Copenhagen")
+        local_now = now.astimezone(_CPH_TZ)
+        self._open_floor_block = {
+            "start_ts": local_now.strftime("%Y-%m-%dT%H:%M"),
+            "price_at_start": round(price, 4),
+            "floor": round(floor, 4),
+        }
+        _LOGGER.info(
+            "Solar floor log: opening block at %s (price %.4f ≤ floor %.2f DKK/kWh)",
+            local_now.strftime("%H:%M"), price, floor,
+        )
+
+    def _close_floor_block(self, now: datetime, price: float) -> None:
+        if self._open_floor_block is None:
+            return
+        _CPH_TZ = ZoneInfo("Europe/Copenhagen")
+        local_now = now.astimezone(_CPH_TZ)
+        start_ts: str = self._open_floor_block["start_ts"]
+        try:
+            start_dt = datetime.fromisoformat(start_ts).replace(tzinfo=_CPH_TZ)
+            duration_min = int((local_now - start_dt).total_seconds() / 60)
+        except Exception:
+            duration_min = 0
+
+        entry: dict = {
+            "start_ts": start_ts,
+            "end_ts": local_now.strftime("%Y-%m-%dT%H:%M"),
+            "duration_min": duration_min,
+            "price_at_start": self._open_floor_block.get("price_at_start", 0.0),
+            "price_at_end":   round(price, 4),
+            "floor":          self._open_floor_block.get("floor", 0.0),
+        }
+        log: list[dict] = self._stored.setdefault("solar_floor_log", [])
+        log.append(entry)
+        if len(log) > 500:
+            del log[: len(log) - 500]
+        self._open_floor_block = None
+        _LOGGER.info(
+            "Solar floor log: closed block — %d min "
+            "(price %.3f → %.3f, floor %.2f)",
+            duration_min, entry["price_at_start"], entry["price_at_end"], entry["floor"],
+        )
+
+    def get_solar_floor_log(self, n: int = 20) -> list[dict]:
+        """Return last n solar-floor block entries, newest first."""
+        log: list[dict] = self._stored.get("solar_floor_log", [])
+        return list(reversed(log[-n:]))
+
+    # ------------------------------------------------------------------ #
+    # EV charge controller (Phase B1 — OCPP-driven dynamic surplus tracker) #
+    # ------------------------------------------------------------------ #
+
+    async def _run_ev_controller(
+        self,
+        evcc_state: dict,
+        battery_soc: float,
+        floor_soc: float,
+    ) -> dict:
+        """Run the 4-mode EV charge controller for one tick.
+
+        Reads live solar / load / battery state, computes the target charge
+        rate from the active mode, applies hysteresis + rate-of-change limits,
+        and writes via the OCPP integration's service call. Returns a dict of
+        telemetry keys merged into the coordinator result for the visibility
+        sensors to consume.
+        """
+        # Master gate — feature is opt-in. Existing installs default OFF.
+        if not self.config.get(CONF_EV_CONTROLLER_ENABLED, DEFAULT_EV_CONTROLLER_ENABLED):
+            return {"ev_enabled": False, "ev_reason": "EV controller disabled"}
+
+        charger_id = self.config.get(CONF_EV_OCPP_CHARGE_POINT_ID, "")
+        if not charger_id:
+            return {"ev_enabled": False, "ev_reason": "No OCPP charge point ID configured"}
+
+        # Detect plug-in event and reset active mode to user's default
+        ocpp_status = self._get_ocpp_status(charger_id)
+        ev_connected = ocpp_status in (
+            "Preparing", "Charging", "SuspendedEV", "SuspendedEVSE", "Finishing",
+        )
+        if ev_connected and not self._ev_prev_connected:
+            default_mode = self.config.get(CONF_EV_DEFAULT_MODE, DEFAULT_EV_DEFAULT_MODE)
+            self._ev_active_mode = default_mode
+            self._stored["ev_active_mode"] = default_mode
+            self._ev_above_start_count = 0
+            self._ev_below_stop_count = 0
+            _LOGGER.info("EV plugged in (%s) — resetting mode to %s", charger_id, default_mode)
+        self._ev_prev_connected = ev_connected
+
+        if not ev_connected:
+            self._ev_last_amps = 0
+            self._ev_last_reason = f"EV not connected (status: {ocpp_status})"
+            return self._ev_telemetry(0.0, 0, 0.0, ocpp_status)
+
+        # ── Compute target ────────────────────────────────────────────────
+        home_power_w = evcc_state.get("homePower", 0) or 0
+        pv_power_w   = evcc_state.get("pvPower", 0) or 0
+        ev_current_kw = self._get_ocpp_power_kw(charger_id)
+        house_load_kw = home_power_w / 1000.0
+        solar_kw      = pv_power_w / 1000.0
+        # Surplus = solar minus non-EV portion of house load
+        non_ev_load_kw   = max(0.0, house_load_kw - ev_current_kw)
+        solar_surplus_kw = max(0.0, solar_kw - non_ev_load_kw)
+
+        min_kw = float(self._stored.get("ev_min_charge_kw", DEFAULT_EV_MIN_CHARGE_KW))
+        max_kw = float(self._stored.get("ev_max_charge_kw", DEFAULT_EV_MAX_CHARGE_KW))
+
+        target_kw, reason = self._compute_ev_target_kw(
+            self._ev_active_mode, solar_surplus_kw, battery_soc, floor_soc, min_kw, max_kw,
+        )
+        target_amps = self._kw_to_amps(target_kw)
+
+        # ── Hysteresis (anti-flap) ────────────────────────────────────────
+        final_amps = self._apply_ev_hysteresis(target_amps)
+
+        # ── Rate-of-change limit (smooth ramp) ────────────────────────────
+        if final_amps > 0 and self._ev_last_amps > 0:
+            step = EV_MAX_AMP_STEP_PER_TICK
+            if final_amps > self._ev_last_amps + step:
+                final_amps = self._ev_last_amps + step
+            elif final_amps < self._ev_last_amps - step:
+                final_amps = self._ev_last_amps - step
+
+        # ── Send OCPP write only when the change is meaningful ────────────
+        send = False
+        if final_amps == 0 and self._ev_last_amps > 0:
+            send = True  # stopping
+        elif final_amps > 0 and self._ev_last_amps == 0:
+            send = True  # starting
+        elif abs(final_amps - self._ev_last_amps) >= EV_MIN_AMP_CHANGE:
+            send = True  # significant change
+
+        if send:
+            await self._set_ocpp_charge_rate(charger_id, final_amps)
+            self._ev_last_amps = final_amps
+
+        self._ev_last_reason = reason
+        return self._ev_telemetry(target_kw, final_amps, solar_surplus_kw, reason)
+
+    def _compute_ev_target_kw(
+        self, mode: str, solar_surplus: float, battery_soc: float,
+        floor_soc: float, min_kw: float, max_kw: float,
+    ) -> tuple[float, str]:
+        """Pure mode→target translation. Returns (target_kw, human-readable reason)."""
+        if mode == EV_MODE_LOCKED:
+            return 0.0, "Mode: Låst — ingen opladning"
+
+        if mode == EV_MODE_FULL:
+            return max_kw, f"Mode: Fuld kraft — {max_kw:.1f} kW"
+
+        if mode == EV_MODE_PV:
+            if solar_surplus >= min_kw:
+                target = min(solar_surplus, max_kw)
+                return target, (
+                    f"PV: {solar_surplus:.1f} kW overskud → {target:.1f} kW"
+                )
+            return 0.0, (
+                f"PV: overskud {solar_surplus:.1f} kW < min {min_kw:.1f} kW — stoppet"
+            )
+
+        if mode == EV_MODE_PV_BATTERY:
+            if solar_surplus >= min_kw:
+                target = min(solar_surplus, max_kw)
+                return target, (
+                    f"PV+batteri: {solar_surplus:.1f} kW overskud → {target:.1f} kW"
+                )
+            # Solar can't reach min — can the battery help?
+            if battery_soc > floor_soc:
+                return min_kw, (
+                    f"PV+batteri: sol {solar_surplus:.1f} kW utilstrækkelig, "
+                    f"batteri dækker forskel → {min_kw:.1f} kW"
+                )
+            return 0.0, (
+                f"PV+batteri: sol {solar_surplus:.1f} kW < min og batteri ved gulv — stoppet"
+            )
+
+        return 0.0, f"Ukendt mode: {mode}"
+
+    @staticmethod
+    def _kw_to_amps(kw: float) -> int:
+        """Convert target kW to 3-phase line current (A), clamped to OCPP limits.
+
+        Danish 3-phase wye system: P = 3 × V_phase × I (cos φ ≈ 1 for EVs).
+        With V_phase = 230 V → P = 690 × I W → I = P / 690.
+        Equivalently P = √3 × V_LL × I with V_LL = 400 V.
+
+        Verification: 6 A → 4.14 kW (matches DEFAULT_EV_MIN_CHARGE_KW),
+                     16 A → 11.04 kW (matches DEFAULT_EV_MAX_CHARGE_KW).
+        """
+        if kw <= 0:
+            return 0
+        amps = int(round(kw * 1000.0 / (EV_VOLTAGE * EV_PHASES)))
+        return max(EV_OCPP_MIN_AMPS, min(EV_OCPP_MAX_AMPS, amps))
+
+    def _apply_ev_hysteresis(self, target_amps: int) -> int:
+        """Anti-flap: require N consecutive ticks above/below threshold before
+        toggling between charging and stopped. No hysteresis on amperage
+        adjustments while already charging.
+        """
+        if target_amps == 0:
+            # Wanting to stop
+            if self._ev_last_amps > 0:
+                self._ev_below_stop_count += 1
+                self._ev_above_start_count = 0
+                if self._ev_below_stop_count >= EV_HYSTERESIS_STOP_TICKS:
+                    return 0
+                return self._ev_last_amps  # keep going until confirmed
+            return 0
+        # Wanting to charge
+        if self._ev_last_amps == 0:
+            self._ev_above_start_count += 1
+            self._ev_below_stop_count = 0
+            if self._ev_above_start_count >= EV_HYSTERESIS_START_TICKS:
+                return target_amps
+            return 0  # not confirmed yet, stay stopped
+        # Already charging — track amperage live, no hysteresis
+        self._ev_above_start_count = 0
+        self._ev_below_stop_count = 0
+        return target_amps
+
+    async def _set_ocpp_charge_rate(self, charger_id: str, amps: int) -> None:
+        """Call the OCPP integration's set_charge_rate service."""
+        try:
+            await self.hass.services.async_call(
+                "ocpp", "set_charge_rate",
+                {"devid": charger_id, "limit_amps": amps},
+                blocking=False,
+            )
+            _LOGGER.info(
+                "EV controller: set %s to %d A (%.1f kW target)",
+                charger_id, amps, amps * EV_VOLTAGE * EV_PHASES / 1000.0,
+            )
+        except Exception as err:
+            _LOGGER.warning("OCPP set_charge_rate failed for %s: %s", charger_id, err)
+
+    def _get_ocpp_status(self, charger_id: str) -> str:
+        """Read the OCPP integration's status sensor for the configured charger.
+
+        Uses an explicit user override if provided, otherwise derives the entity
+        ID from the charge point ID using the `lbbrhzn/ocpp` integration's
+        naming convention (`sensor.<id-lowercase>_status`).
+        """
+        eid = (
+            self.config.get(CONF_EV_OCPP_STATUS_ENTITY)
+            or f"sensor.{charger_id.lower()}_status"
+        )
+        state = self.hass.states.get(eid)
+        return state.state if state and state.state not in ("unknown", "unavailable") else "Unavailable"
+
+    def _get_ocpp_power_kw(self, charger_id: str) -> float:
+        """Read the OCPP integration's live charge power sensor (returns kW).
+
+        Uses an explicit user override if provided, otherwise derives the entity
+        ID from the charge point ID (`sensor.<id-lowercase>_power_active_import`).
+        Watts are normalised to kW.
+        """
+        eid = (
+            self.config.get(CONF_EV_OCPP_POWER_ENTITY)
+            or f"sensor.{charger_id.lower()}_power_active_import"
+        )
+        return self._get_float_state(eid, 0.0) / 1000.0
+
+    def _ev_telemetry(
+        self, target_kw: float, target_amps: int, surplus_kw: float, reason: str,
+    ) -> dict:
+        """Build the telemetry dict consumed by the visibility sensors."""
+        return {
+            "ev_enabled": True,
+            "ev_active_mode": self._ev_active_mode,
+            "ev_target_kw": round(target_kw, 2),
+            "ev_target_amps": target_amps,
+            "ev_surplus_kw": round(surplus_kw, 2),
+            "ev_reason": reason,
+            "ev_last_commanded_amps": self._ev_last_amps,
+        }
+
+    def set_ev_mode(self, new_mode: str) -> None:
+        """Public setter used by the mode select entity."""
+        if new_mode not in (EV_MODE_LOCKED, EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL):
+            _LOGGER.warning("EV controller: unknown mode '%s' ignored", new_mode)
+            return
+        self._ev_active_mode = new_mode
+        self._stored["ev_active_mode"] = new_mode
+        # Reset hysteresis counters so the new mode takes effect on the next tick
+        self._ev_above_start_count = 0
+        self._ev_below_stop_count = 0
+        # Persist asynchronously
+        if self.hass:
+            self.hass.async_create_task(self._store.async_save(self._stored))
 
     # ------------------------------------------------------------------ #
     # Live state source dispatcher (EVCC / Hybrid / FoxESS)                #
@@ -2166,13 +2598,26 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         """
         # ── Build per-slot data ───────────────────────────────────────────
         # Each slot keeps its native duration (typically 0.25 h for 15-min
-        # day-ahead prices). Solar is mapped to slot by start timestamp and
-        # corrected by the learned accuracy factor (rolling median of
-        # actual/forecast ratio). This keeps the optimizer honest when
-        # Solcast is systematically over- or under-forecasting for this site.
-        _acc = max(0.0, float(solar_accuracy_factor))
+        # day-ahead prices). Solar is mapped to slot by start timestamp.
+        #
+        # Per-slot accuracy correction: the optimizer now applies a HOUR-OF-DAY
+        # specific factor learned from observation, falling back to the global
+        # factor for hours that haven't warmed up yet. This captures the
+        # orientation effect (east panels over-forecast in afternoon, west
+        # panels in morning, etc.) without any user input about panel layout.
+        global_acc = max(0.0, float(solar_accuracy_factor))
+        # Precompute hourly factors (clamped, rounded already by getter)
+        hourly_acc: list[float] = self.get_solar_hourly_accuracy_profile() if hasattr(self, "get_solar_hourly_accuracy_profile") else [global_acc] * 24
+
+        def _slot_factor(slot_start_dt):
+            try:
+                h = slot_start_dt.astimezone().hour
+            except Exception:
+                return global_acc
+            return max(0.0, float(hourly_acc[h] if 0 <= h < 24 else global_acc))
+
         solar_kw_by_start: dict = {
-            s[0]: (s[4] / 1000.0) * _acc for s in solar_slot_data
+            s[0]: (s[4] / 1000.0) * _slot_factor(s[0]) for s in solar_slot_data
         }
 
         ev_block_prob_threshold = EV_CHARGE_BLOCK_PROBABILITY

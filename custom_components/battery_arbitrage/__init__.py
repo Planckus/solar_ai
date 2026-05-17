@@ -19,6 +19,8 @@ from .const import (
     CONF_FAST_POLL_INTERVAL,
     CONF_SOLAR_FORECAST_SOURCE,
     CONF_LIVE_DATA_SOURCE,
+    CONF_EV_CONTROLLER_ENABLED,
+    CONF_EV_DEFAULT_MODE,
     CONF_SPOT_MARKUP,
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
@@ -40,6 +42,8 @@ from .const import (
     DEFAULT_ROUND_TRIP_EFFICIENCY,
     DEFAULT_SOLAR_FORECAST_SOURCE,
     DEFAULT_LIVE_DATA_SOURCE,
+    DEFAULT_EV_CONTROLLER_ENABLED,
+    DEFAULT_EV_DEFAULT_MODE,
     DEFAULT_SPOT_MARKUP,
     FOXESS_BATTERY_CHARGE_POWER,
     FOXESS_BATTERY_CHARGE_TOTAL,
@@ -58,6 +62,7 @@ PLATFORMS = [
     Platform.BINARY_SENSOR,
     Platform.NUMBER,
     Platform.SWITCH,
+    Platform.SELECT,
 ]
 
 
@@ -163,6 +168,21 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data.setdefault(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE)
         hass.config_entries.async_update_entry(entry, data=new_data, version=10)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v10")
+
+    if entry.version < 11:
+        # v10 → v11: add EV charge controller default mode (Phase B1).
+        # Existing installs default to "locked" so no surprise behaviour.
+        new_data.setdefault(CONF_EV_DEFAULT_MODE, DEFAULT_EV_DEFAULT_MODE)
+        hass.config_entries.async_update_entry(entry, data=new_data, version=11)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v11")
+
+    if entry.version < 12:
+        # v11 → v12: EV charge controller becomes opt-in. Existing installs get
+        # ev_controller_enabled = False — the controller stays inert until the
+        # user explicitly turns it on in Options.
+        new_data.setdefault(CONF_EV_CONTROLLER_ENABLED, DEFAULT_EV_CONTROLLER_ENABLED)
+        hass.config_entries.async_update_entry(entry, data=new_data, version=12)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v12")
 
     return True
 

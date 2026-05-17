@@ -445,6 +445,83 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "sessions": d.get("action_log", []),
         },
     ),
+    # ── EV charge controller (Phase B1) ──────────────────────────────────
+    BatteryArbitrageSensorDescription(
+        key="ev_target_kw",
+        translation_key="ev_target_kw",
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:car-electric",
+        value_fn=lambda d: round(d.get("ev_target_kw", 0.0), 2),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="ev_target_amps",
+        translation_key="ev_target_amps",
+        native_unit_of_measurement="A",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:current-ac",
+        value_fn=lambda d: int(d.get("ev_target_amps", 0)),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="ev_surplus_kw",
+        translation_key="ev_surplus_kw",
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:solar-power-variant",
+        value_fn=lambda d: round(d.get("ev_surplus_kw", 0.0), 2),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="ev_active_mode",
+        translation_key="ev_active_mode",
+        icon="mdi:car-electric-outline",
+        value_fn=lambda d: d.get("ev_active_mode", "locked"),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="ev_reason",
+        translation_key="ev_reason",
+        icon="mdi:information-outline",
+        value_fn=lambda d: d.get("ev_reason", "EV controller inactive"),
+    ),
+    # ── Solar floor log (block/resume events due to price floor) ─────────
+    BatteryArbitrageSensorDescription(
+        key="solar_floor_log",
+        translation_key="solar_floor_log",
+        icon="mdi:solar-power-variant-outline",
+        # State = total number of recorded floor-block events
+        value_fn=lambda d: d.get("solar_floor_log_count", 0),
+        attrs_fn=lambda d: {
+            "events": d.get("solar_floor_log", []),
+        },
+    ),
+    # ── Solar hourly learning diagnostic (Phase B1 — adaptive accuracy) ────
+    BatteryArbitrageSensorDescription(
+        key="solar_hourly_accuracy",
+        translation_key="solar_hourly_accuracy",
+        icon="mdi:chart-bell-curve",
+        # State = number of hours (0–24) whose bucket has enough samples to
+        # have learned a per-hour factor. The rest still use the global
+        # fallback. A simple warm-up progress indicator.
+        value_fn=lambda d: sum(
+            1 for c in d.get("solar_hourly_samples", []) if c >= 8
+        ),
+        attrs_fn=lambda d: {
+            "hourly_factors": {
+                str(h): round(f, 3)
+                for h, f in enumerate(d.get("solar_hourly_factors", []))
+            },
+            "hourly_samples": {
+                str(h): c
+                for h, c in enumerate(d.get("solar_hourly_samples", []))
+            },
+            "global_factor": round(d.get("solar_accuracy_factor", 1.0), 3),
+            "total_samples": sum(d.get("solar_hourly_samples", [])),
+            "warmup_complete": all(
+                c >= 8 for c in d.get("solar_hourly_samples", [])
+            ) if d.get("solar_hourly_samples") else False,
+        },
+    ),
 )
 
 

@@ -13,6 +13,19 @@ CONF_FOXESS_GRID_EXPORT_ENTITY = "foxess_grid_export_entity"
 CONF_FOXESS_PV_POWER_ENTITY = "foxess_pv_power_entity"
 CONF_FOXESS_LOAD_POWER_ENTITY = "foxess_load_power_entity"
 CONF_ACKNOWLEDGE_NO_EV = "acknowledge_no_ev"
+# EV charge controller (Phase B1) — drives an OCPP-connected EV charger
+# (e.g. FoxESS L11PMC) directly from Solar AI's solar surplus tracker.
+CONF_EV_CONTROLLER_ENABLED   = "ev_controller_enabled"
+CONF_EV_OCPP_CHARGE_POINT_ID = "ev_ocpp_charge_point_id"
+# Optional explicit overrides for the OCPP integration's sensor entity names.
+# If left blank Solar AI derives them from the charge point ID:
+#   status:  sensor.<id-lowercase>_status
+#   power:   sensor.<id-lowercase>_power_active_import
+CONF_EV_OCPP_STATUS_ENTITY   = "ev_ocpp_status_entity"
+CONF_EV_OCPP_POWER_ENTITY    = "ev_ocpp_power_entity"
+CONF_EV_DEFAULT_MODE         = "ev_default_mode"
+CONF_EV_MIN_CHARGE_KW        = "ev_min_charge_kw"
+CONF_EV_MAX_CHARGE_KW        = "ev_max_charge_kw"
 CONF_SOLAR_FORECAST_SOURCE = "solar_forecast_source"
 CONF_FORECAST_SOLAR_ENTITY = "forecast_solar_entity"
 CONF_SOLCAST_ENTITY = "solcast_entity"
@@ -71,6 +84,36 @@ DEFAULT_FOXESS_GRID_IMPORT = "sensor.foxessmodbus_grid_consumption"
 DEFAULT_FOXESS_GRID_EXPORT = "sensor.foxessmodbus_feed_in"
 DEFAULT_FOXESS_PV_POWER = "sensor.pv_power_foxessmodbus"
 DEFAULT_FOXESS_LOAD_POWER = "sensor.foxessmodbus_load_power"
+
+# EV charge controller defaults
+# Modes:
+#   "locked"       — no charging (current = 0)
+#   "pv"           — solar surplus only; stops if surplus < min
+#   "pv_battery"   — like pv, but battery may discharge to hit min if needed;
+#                    never pulls grid for the EV. Stops at battery floor.
+#   "full"         — charge at max; battery and grid cover whatever solar can't.
+EV_MODE_LOCKED      = "locked"
+EV_MODE_PV          = "pv"
+EV_MODE_PV_BATTERY  = "pv_battery"
+EV_MODE_FULL        = "full"
+DEFAULT_EV_DEFAULT_MODE = EV_MODE_LOCKED   # safe choice on first connect
+DEFAULT_EV_CONTROLLER_ENABLED = False       # opt-in feature
+# 3-phase Danish standard: 230 V × √3 × A → kW
+EV_VOLTAGE = 230.0
+EV_PHASES  = 3
+EV_OCPP_MIN_AMPS = 6        # IEC 61851 minimum
+EV_OCPP_MAX_AMPS = 16       # typical home 3-phase max
+# 6 A × 230 V × √3 ≈ 2.39 kW per phase * 3 phases? Actually:
+# 3-phase line-to-neutral 230 V, line current 6 A:
+#   P = √3 × V_LL × I = √3 × 400 × 6 ≈ 4.14 kW
+# We work in kW for user-facing limits and convert to amps when commanding OCPP.
+DEFAULT_EV_MIN_CHARGE_KW = 4.14   # 3-phase 6 A
+DEFAULT_EV_MAX_CHARGE_KW = 11.0   # 3-phase 16 A
+# Hysteresis / anti-flap defaults
+EV_HYSTERESIS_START_TICKS = 2     # ticks above start threshold before resuming
+EV_HYSTERESIS_STOP_TICKS  = 2     # ticks below stop threshold before stopping
+EV_MAX_AMP_STEP_PER_TICK  = 2     # max ramp rate (A) per coordinator tick
+EV_MIN_AMP_CHANGE         = 1     # don't bother sending OCPP write below this delta
 # Battery wear cost per kWh cycled (DKK/kWh). Subtracted from CHARGE and EXPORT rewards
 # in the optimizer so the model accounts for finite cycle life. Default is calibrated
 # for residential LFP at ~2000 DKK/kWh installed cost using marginal-wear literature.
@@ -145,6 +188,11 @@ SOLAR_ACCURACY_MIN_FORECAST_W = 50   # Only sample when meaningful production ex
 SOLAR_ACCURACY_MIN_SAMPLES = 12      # Need ≥ 1 hour of daylight data before applying factor
 SOLAR_ACCURACY_COMPARISON_W = 100    # Min forecast to include in ratio calculation
 SOLAR_ACCURACY_WINDOW = 576          # Use last 4 days (576 × 5 min) for the ratio
+# Per-hour solar accuracy buckets — learns shape (e.g. east vs south vs west
+# orientation) from observation without requiring panel-spec input.
+SOLAR_ACCURACY_HOUR_BUCKET_MAX = 168  # 7 days × 24 samples max per hour bucket
+SOLAR_ACCURACY_HOUR_MIN_SAMPLES = 8   # Need ≥ 8 daylight samples per hour before trusting bucket
+# Hour buckets fall back to the global rolling median until they warm up.
 
 # Coordinator update intervals
 DEFAULT_FAST_POLL_SECONDS = 30       # Live EVCC data poll (configurable)

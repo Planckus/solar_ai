@@ -7,9 +7,76 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
+---
 
-- **Configuration reference doc** (`docs/CONFIGURATION.md`) — every slider, switch, and setup-wizard field explained in plain English: what it controls, its range and default, and concrete advice on when to change it. Linked from the README.
+## [0.25.5] — 2026-05-17
+
+This release bundles several layers of new functionality: Phase B1 (the EV charge controller), adaptive solar learning, two new persistent logs, a redesigned 3-step OptionsFlow, and device-registry-aware entity discovery. The intermediate v0.25.1–v0.25.4 versions are folded into this release because they were all bug-fixes/iteration on top of v0.25.0 features and never shipped externally.
+
+### Added — Phase B1: OCPP-driven EV charge controller (opt-in)
+
+- **4 charging modes** selectable via `select.solar_ai_ev_mode`:
+  - **Låst** — no charging
+  - **Kun solenergi** — solar surplus only; stops below minimum
+  - **Min via sol+batteri** — tops up to minimum with battery; never grid
+  - **Fuld kraft** — max charge rate from any source
+- **Dynamic surplus tracker** — ramps the OCPP current setpoint between 4.14 kW (3-phase 6 A) and 11 kW (3-phase 16 A) every coordinator tick, adapting in real-time to solar variation
+- **Anti-flap hysteresis** — 2-tick (60 s) confirmation window before start/stop transitions; 2 A max ramp per tick; 1 A minimum change to trigger an OCPP write
+- **User-pickable default mode** that takes effect when a vehicle plugs in fresh
+- **Min/max charge rate sliders** (defaults: 4.14 / 11.0 kW for 3-phase 16 A)
+- **5 visibility sensors**: `ev_target_kw`, `ev_target_amps`, `ev_surplus_kw`, `ev_active_mode`, `ev_reason`
+- **Opt-in toggle** — feature is OFF by default. Existing installs see no behaviour change until the user explicitly flips `Enable EV charge controller (OCPP)` in Options.
+
+### Added — Dedicated OCPP Settings pane in OptionsFlow
+
+OptionsFlow restructured into 3 steps: Parameters → **OCPP Settings** (new) → Entity Mapping. The new pane consolidates everything Solar AI needs to drive an OCPP-connected charger:
+
+- Master enable toggle (off by default)
+- OCPP charge point ID (what the charger announces, e.g. `60LH132057KQ050`)
+- Optional status / power sensor entity overrides (auto-derived from the charge point ID)
+- Default EV mode on plug-in
+
+### Added — Adaptive per-hour solar forecast correction
+
+- **24 hour-of-day accuracy buckets** — Solar AI now learns a separate forecast→actual ratio for each hour, instead of one global ratio. Captures the shape difference between forecast and reality (e.g. east panels under-shoot afternoon forecasts) **without the user telling Solar AI anything about panel count, orientation, tilt, or shading**.
+- Optimizer applies hour-specific factor per slot when building DP input; falls back to the global ratio for hours with fewer than 8 daylight samples.
+- **Self-tuning** — ~7 days of daylight observations to fully populate the buckets. No configuration required.
+- **`sensor.solar_ai_solar_hourly_learning`** exposes the 24 learned factors + sample counts as attributes. State = number of hours warmed up (0–24).
+
+### Added — Solar floor event log
+
+- **`sensor.solar_ai_solgulv_log_blokering`** — persistent record of every time the solar export floor activated and resumed. Paired block→resume sessions with `start_ts`, `end_ts`, `duration_min`, `price_at_start`, `price_at_end`, `floor`. State = total event count; last 20 events as the `events` attribute. Up to 500 entries retained.
+
+### Added — Device-registry-aware entity discovery
+
+- **New `discovery.py` module** finds FoxESS Modbus entities by their stable `unique_id` suffix rather than hard-coded `entity_id` strings. Survives entity renames, multi-inverter installs, language packs, and integration version changes.
+- Setup wizard now uses discovery to pre-fill every FoxESS entity field. New users with a default FoxESS Modbus install go from "12 manual entity dropdowns" to "all fields pre-filled correctly".
+
+### Added — Configuration reference doc
+
+- **`docs/CONFIGURATION.md`** — every slider, switch, and setup-wizard field explained in plain English: what it controls, its range and default, and concrete advice on when to change it. Linked from the README.
+
+### Added — Dashboard
+
+- **New "EV / OCPP" tab** on the dashboard exposing the mode selector, live target / surplus values, min/max sliders, EV-connection status, and a pointer to the OCPP Settings pane.
+- **New "Logs" tab** consolidating the Session log, Solar floor block log, and Savings totals in a single place.
+
+### Fixed
+
+- **Solar floor log missed blocks that were active at HA startup.** Original logic only opened a block on a `10000 → 25` transition, but in-memory state resets to `-1` on every restart. Fixed to track any entry/exit of the floor-active state (limit == 25), regardless of where it transitions from. Notifications still only fire on direct `10000 ↔ 25` to avoid noise during grid-charge transitions.
+- **OptionsFlow refused to submit when Forecast.Solar / Solcast entity fields were left blank.** The schema's `default=""` was being validated by the EntitySelector as "neither valid entity ID nor valid UUID". A new `_entity_optional` helper omits the default when no value is saved; combined with HA's frontend treating null/empty as absent for `vol.Optional`, the form now submits cleanly. Same fix applied to the setup-wizard solar source step and the OCPP Settings step's status/power entity overrides.
+
+### Migrations
+
+- **v9 → v10** seeds `live_data_source = "evcc"` for existing installs (v0.24.0 carry-over)
+- **v10 → v11** seeds `ev_default_mode = "locked"`
+- **v11 → v12** seeds `ev_controller_enabled = false`
+
+### Setup requirements (one-time, only when EV controller is enabled)
+
+- Requires the [lbbrhzn/ocpp](https://github.com/lbbrhzn/ocpp) HA integration installed
+- L11PMC's OCPP backend must be repointed from EVCC to `ws://<ha-ip>:9000/<charger-id>/`
+- EVCC must release the OCPP socket (stop the loadpoint or stop EVCC entirely)
 
 ---
 
