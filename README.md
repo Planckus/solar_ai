@@ -6,6 +6,22 @@
 
 ---
 
+## ✨ New in v0.28.x — Solcast 48-h forecast, EV session log, polish
+
+Live-operation fixes and visibility upgrades after the first days of real use:
+
+- **Solcast as a first-class forecast source** — supports both the `today` and `tomorrow` Solcast HA sensors. The optimizer now plans against a true 48-hour PV forecast (previously capped at 24 h via Forecast.Solar).
+- **Solcelleprognose 48 h chart** on the EV / OCPP tab — two-series ApexCharts plot (raw Solcast vs the per-hour adjusted forecast the optimizer plans against), plus today-remaining-kWh and tomorrow-expected-kWh totals above it.
+- **EV charge session log** with grid vs solar energy split — each completed session records start/stop, duration, total kWh, *and* how much came from local solar surplus vs the grid. Rendered as a history table on the Logs tab.
+- **"Bil tilsluttet" Mushroom card** on the EV / OCPP tab — at-a-glance "is a car plugged in?" status with charge-power readout while a session is running.
+- **Live anti-flap countdown** — "Starter om X sek" / "Stopper om X sek" timers in the EV tab now compute against a fixed-target timestamp instead of a coordinator-tick integer, so the displayed remaining seconds is accurate at the moment you look at it instead of frozen until the next 30-s tick.
+- **Solar-only restart fix** — after a cool-down stop, the controller now correctly re-fires `RemoteStartTransaction` from any plugged-in OCPP state (was previously stuck if the charger lingered in `Finishing` or `Charging`).
+- **EV-load no longer double-counted** in house-load learning — the controller subtracts the active EV draw before learning, so leaving the car plugged in doesn't inflate your "predicted house load 24 h".
+
+See [CHANGELOG.md](CHANGELOG.md) for the full v0.28.x breakdown.
+
+---
+
 ## ✨ New in v0.27.x — Embedded OCPP server + active EV control
 
 Solar AI now ships its own **OCPP 1.6 server** built in. Point your EV charger (FoxESS L11PMC, or any OCPP 1.6 compatible model) at `ws://<ha-ip>:9000/charger/` and Solar AI drives it directly — no `lbbrhzn/ocpp` HACS integration required. The EV controller has four selectable modes:
@@ -221,10 +237,22 @@ From v0.24.0, the integration supports three live-data modes. Pick the one that 
 |-----------|:---------:|:-----------:|:----------------:|------|
 | **FoxESS Modbus** integration | ✅ Required | ✅ Required | ✅ Required | [GitHub](https://github.com/nathanmarlor/foxess_modbus) |
 | **EVCC** | ✅ Required | ✅ Required | ❌ Not used | [evcc.io](https://evcc.io) |
-| **Solar forecast** — one of: EVCC/Solcast → Solcast HA integration → Forecast.Solar HA integration | ✅ Pick one | ✅ Pick one | ✅ Pick one (excl. EVCC) | [Solcast](https://solcast.com) / [Forecast.Solar](https://www.home-assistant.io/integrations/forecast_solar/) |
+| **Solar forecast** — one of: EVCC/Solcast → Solcast HA integration (both today + tomorrow entities) → Forecast.Solar HA integration | ✅ Pick one | ✅ Pick one | ✅ Pick one (excl. EVCC) | [Solcast](https://solcast.com) / [Forecast.Solar](https://www.home-assistant.io/integrations/forecast_solar/) |
 | **Spot price entity** (Strømligning, Tibber, etc.) | ⚙️ Optional | ⚙️ Optional | ⚙️ Optional | — |
 
 If no spot price entity is configured, Solar AI reads spot prices directly from [Energi Data Service](https://api.energidataservice.dk) — the same feed the optimizer uses internally.
+
+#### Solcast HA integration — two-entity wiring (v0.28.0+)
+
+The Solcast HA integration creates **one entity per forecast day** (typically `sensor.solcast_pv_forecast_forecast_today` and `sensor.solcast_pv_forecast_forecast_tomorrow`). To get a full 48-hour forecast, Solar AI now reads **both** entities — set them in *Settings → Solar AI → Configure → Solar forecast source*:
+
+| Field | Set to |
+|---|---|
+| **Solar forecast source** | `solcast` |
+| **Solcast (today)** | `sensor.solcast_pv_forecast_forecast_today` |
+| **Solcast (tomorrow)** | `sensor.solcast_pv_forecast_forecast_tomorrow` |
+
+If you leave the tomorrow field blank, Solar AI falls back to a 24-h forecast (today only) — the optimizer still works but won't see tomorrow's sun. Once tomorrow is wired, the DP optimizer plans against the full 48-h horizon and avoids unnecessary night-time grid charges when the next day is sunny.
 
 ### What works (and what doesn't) without EVCC
 
@@ -249,14 +277,16 @@ Most features work in all three modes. The only things that require EVCC are EV-
 | **EV charge probability learning** | ✅ | ✅ | ❌ (probability stays at zero) |
 | **EVCC battery-mode coordination** (tells EVCC to hold during arbitrage) | ✅ | ✅ | n/a |
 
-### Optional dashboard dependencies (HACS)
+### Dashboard dependencies (HACS)
 
-The bundled dashboard YAML uses these custom Lovelace cards. Install them via HACS → Frontend before importing the dashboard, or substitute with built-in cards if you prefer not to add dependencies:
+The bundled dashboard uses two custom Lovelace cards. **Install both via HACS → Frontend before importing the dashboard** — several tabs render blank or as "Custom element doesn't exist" without them:
 
 | Card | Required for | Link |
 |------|--------------|------|
-| Mushroom Cards | The status chips, large tiles and headers on the Oversigt tab and section titles in Indstillinger | [GitHub](https://github.com/piitaya/lovelace-mushroom) |
-| ApexCharts Card | Time-series price/SoC overlays (optional polish — built-in `history-graph` works as a fallback) | [GitHub](https://github.com/RomRider/apexcharts-card) |
+| **Mushroom Cards** | Køb/Salg chips and large tiles on Oversigt, section titles in Indstillinger, "Bil tilsluttet" status card on the EV / OCPP tab | [GitHub](https://github.com/piitaya/lovelace-mushroom) |
+| **ApexCharts Card** | 24-h price overlay on Priser & Plan **and** the 48-h Solcelleprognose chart on EV / OCPP. As of v0.28.2 this card is no longer optional — the Solcelleprognose chart will display "Custom element doesn't exist" without it | [GitHub](https://github.com/RomRider/apexcharts-card) |
+
+After installing both via HACS, hard-refresh the browser (⌘+Shift+R / Ctrl+Shift+R) before importing the dashboard YAML.
 
 ### Default FoxESS Modbus entity IDs
 
