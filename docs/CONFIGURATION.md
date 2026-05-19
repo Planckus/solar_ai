@@ -38,7 +38,7 @@ These are asked once during installation. Most can be changed later in **Setting
 
 ### EVCC URL
 
-**What it controls:** The full URL of your EVCC instance, including port (e.g. `http://192.168.1.50:7070`).
+**What it controls:** The full URL of your EVCC instance, including port (e.g. `http://your-ha-ip:7070` or `http://homeassistant.local:7070`).
 
 **When asked:** Only in EVCC and Hybrid modes.
 

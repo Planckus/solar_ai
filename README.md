@@ -6,19 +6,26 @@
 
 ---
 
-## ✨ New in v0.24.0 — EVCC is now optional
+## ✨ New in v0.27.x — Embedded OCPP server + active EV control
 
-You can now run Solar AI **without EVCC**. A new first step in the setup wizard lets you pick how live data comes in:
+Solar AI now ships its own **OCPP 1.6 server** built in. Point your EV charger (FoxESS L11PMC, or any OCPP 1.6 compatible model) at `ws://<ha-ip>:9000/charger/` and Solar AI drives it directly — no `lbbrhzn/ocpp` HACS integration required. The EV controller has four selectable modes:
 
-- **EVCC** — the original behaviour: everything from EVCC. Required if you want EV-aware coordination.
-- **Hybrid** — FoxESS Modbus for grid / PV / load, EVCC only for EV state. Best of both worlds when you have both.
-- **FoxESS only** — no EVCC at all. Solar AI reads grid / PV / load directly from the FoxESS Modbus integration. Designed for installs without an EV.
+- **Låst** — no charging
+- **Kun solenergi** — pure solar-surplus tracking (excess fractional amps go to house battery, not the EV)
+- **Min via sol + batteri** — solar first, battery tops up to minimum
+- **Fuld kraft** — max power; house battery is **locked from discharging** so the EV's grid demand can't raid it
 
-Solar forecast can be fetched from EVCC, Solcast (HA integration), Forecast.Solar (HA integration), or an Auto fallback chain. See [Prerequisites](#prerequisites) for what's required in each mode.
+Other highlights since v0.25.5:
 
-Other notable changes since v0.21.0: 15-minute DP resolution, 48-hour planning horizon, terminal value, battery degradation cost, configurable push notifications, redesigned 4-tab dashboard. See [CHANGELOG.md](CHANGELOG.md) for full history.
+- **Battery-priority slider** — in `Kun solenergi` mode, the EV waits until the house battery reaches a configurable SoC (default 80%) before consuming solar surplus
+- **Time-based anti-flap** — configurable start / stop windows protect against cloud-flicker; user-initiated mode changes respond immediately
+- **Whole-amp dropdowns** for min / max charge rate with kW equivalents shown ("8 A (5.52 kW)")
+- **OCPP `TriggerMessage` + persisted metadata** — charger sensors stay populated across HA restarts; no charger reboot needed
+- **Energy-flow Lovelace card** — Danish EVCC-style In/Out summary on Oversigt + EV / OCPP tabs
 
-📖 **New:** [Configuration reference](docs/CONFIGURATION.md) — every slider, switch and setup field explained in plain English.
+Other notable changes since v0.24.0: device-registry-aware entity discovery, adaptive per-hour solar accuracy learning, solar floor event log. See [CHANGELOG.md](CHANGELOG.md) for full history.
+
+📖 [Configuration reference](docs/CONFIGURATION.md) — every slider, switch and setup field explained in plain English.
 
 ---
 
@@ -27,7 +34,7 @@ Other notable changes since v0.21.0: 15-minute DP resolution, 48-hour planning h
 Solar AI sits between your FoxESS inverter, optionally your EV charger (EVCC), and the electricity spot market. Every hour it:
 
 1. **Fetches day-ahead spot prices** directly from Energi Data Service (Nord Pool) and runs a 24- to 48-hour dynamic programming optimizer to plan the best charge and export windows for the rest of the day (and tomorrow, once published)
-2. **Every 5 minutes (configurable)**: reads live battery state, solar production, grid draw, and — if EVCC is configured — EV charge power, then follows the plan by setting the FoxESS work mode, force-charge power, and (optionally) EVCC battery mode
+2. **Every 30 seconds (configurable, 10–300 s)**: reads live battery state, solar production, grid draw, and — if EVCC is configured — EV charge power, then follows the plan by setting the FoxESS work mode, force-charge power, and (optionally) EVCC battery mode
 3. **Learns** — refining its understanding of charge rates, solar accuracy, EV habits (if applicable), and per-hour house load demand
 
 All thresholds are adjustable via live dashboard controls. No YAML editing, no restarts needed.
@@ -115,12 +122,30 @@ Solar AI automatically fetches your grid operator's hourly time-of-use tariffs f
 
 > All features in this section are **EVCC-only** — they're available in EVCC and Hybrid live-data modes. In FoxESS-only mode, EV info is unavailable and these features are silently inactive.
 
-- **Real charging detection** — uses actual EV charge power (> 3 000 W) rather than "connected" state, so scheduled or idle sessions don't block battery operations
+- **Real charging detection** — uses actual EV charge power (default > 3 000 W, configurable 500–10 000 W in *OCPP Settings*) rather than "connected" state, so scheduled or idle sessions don't block battery operations
 - **Hourly EV pattern learning** — exponential smoothing learns when your EV typically charges, hour by hour (~8-day memory). Grid charging is skipped during hours where the EV charges ≥ 70 % of the time
 - **EV max charge rate learning** — learns the car's peak AC charge rate (~20-sample EMA) from full-speed sessions only (≥ 80 % of current learned max). Solar-throttled summer sessions are excluded so the estimate stays accurate year-round. The optimizer uses this value to compute expected EV solar consumption per hour, giving the battery an accurate net-surplus forecast
 - **Battery-bypass model** — the optimizer knows that the EV never charges from the battery (EVCC setting). Solar allocated to the EV is correctly subtracted from what is available to charge the battery, not from battery discharge
-- **EV on Solar sensor** — binary sensor that activates when the EV is charging in EVCC's `pv` mode with real solar power flowing (> 3 000 W)
+- **EV on Solar sensor** — binary sensor that activates when the EV is charging in EVCC's `pv` mode with real solar power flowing (above the configurable detection threshold; default 3 000 W)
 - **EVCC battery mode coordination** — sets EVCC battery mode to *hold* during export/charging and restores *normal* when done. Respects EVCC if it has independently taken control of the battery
+
+### ⚡ EV Charge Controller (OCPP-driven, opt-in)
+
+> Optional active control over an OCPP-connected EV charger (e.g. FoxESS L11PMC). **As of v0.27.0, Solar AI ships its own embedded OCPP 1.6 server** — no separate HACS integration required. Point your charger's backend URL to `ws://<ha-ip>:9000/<cpid>/` and you're done. Disabled by default — enable in *Settings → Solar AI → Configure → OCPP Settings*. If you previously used `lbbrhzn/ocpp`, see the **migration notes** in [CHANGELOG.md](CHANGELOG.md#0270--2026-05-18).
+
+- **4 charging modes** selectable from the dashboard:
+  - **Låst** — no charging
+  - **Kun solenergi** — pure solar surplus tracking; stops below minimum
+  - **Min via sol + batteri** — tops up to minimum with battery when surplus is too low; never grid; stops at battery floor
+  - **Fuld kraft** — max charge rate from any source
+- **Dynamic surplus tracking** — re-evaluates every loop tick (default 10 s, configurable 5–60 s) and ramps the OCPP current setpoint between 6 A (4.14 kW) and 16 A (11 kW) at most 2 A per tick. Subtracts the EV's current draw from house load when measuring surplus, so the controller doesn't chase its own tail
+- **Time-based anti-flap (cloud-tolerant)**:
+  - **Start window** (default 60 s, configurable 10–600 s) — solar surplus must hold above the minimum charge rate for this long before charging starts. Stops a passing patch of clear sky from triggering a 30-second session
+  - **Stop window** (default 180 s, configurable 30–1800 s) — surplus must stay below the minimum for this long before charging stops. After stop, a new start requires another full start-window of sustained surplus — never drops out for a passing cloud
+  - After-stop reset: the start counter is cleared, so the system requires evidence of stable sun before re-arming
+- **Decoupled control loop** — runs as its own asyncio task at the configured cadence, independent of the main coordinator fast-poll. Pick a loop interval that matches your charger's OCPP write tolerance
+- **`sensor.solar_ai_ev_status`** — state machine indicator (`IDLE` / `ARMING` / `CHARGING` / `COOLING`) plus countdown attributes. Dashboard card renders *"Starter om 23 sek"* / *"Stopper om 142 sek"* so you can see exactly why the controller is being patient during cloud-flicker
+- **Smart OCPP writes** — only sends `set_charge_rate` on start, stop, or ≥ 1 A change. Avoids hammering the charger with no-op commands
 
 ### 🔋 Self-Calibrating Battery Model
 - **Auto-detected round-trip efficiency** — reads FoxESS lifetime charge/discharge totals (`discharge ÷ charge`) and uses the real measured efficiency instead of a manual estimate. Falls back to the configured value until 100 kWh of lifetime data is available
@@ -283,7 +308,29 @@ The setup wizard walks you through:
 
 You can change any of these later via **Settings → Devices & Services → Solar AI → Configure** without re-running the wizard.
 
-### 4. Import the dashboard
+### 4. Connect your EV charger (optional)
+
+If you have an OCPP 1.6-compatible EV charger and want Solar AI to drive it (the **EV Charge Controller** feature):
+
+1. **In Solar AI's OCPP Settings** (Configure → Step 2):
+   - ✅ Enable EV charge controller
+   - ✅ Use Solar AI's embedded OCPP server (default — no separate integration needed)
+   - **OCPP server port**: `9000` (default; user-configurable)
+   - **Charge point ID (CPID)**: pick a lowercase identifier like `charger` or `foxess_l11pmc`
+2. **On the charger** (FoxESS app / charger web UI):
+   - **OCPP backend URL** → `ws://<ha-ip>:9000/` ← *(note: trailing slash, NO CPID in the URL)*
+   - **Charger ID** field → the same string you set as CPID in HA (e.g. `charger`)
+   - Some FoxESS firmware appends the Charger ID to the URL automatically — that's why the URL ends at the port and the CPID goes in the separate field. Verify the final URL the charger reports is `ws://<ha-ip>:9000/<cpid>/`
+   - Authentication: leave blank (LAN-only, no auth needed)
+   - Save and **power-cycle the charger** to force a fresh OCPP connection
+3. **Verify the connection** — within 30–60 seconds you should see:
+   - `sensor.solar_ai_lader_status` flip from `Unavailable` to `Available` (or `Preparing` if a car is already plugged in)
+   - `sensor.solar_ai_lader_info` populate with vendor / model / firmware / serial
+   - The EV / OCPP dashboard tab's *"📡 OCPP: ✅ Forbundet"* line appear
+
+The embedded server handles non-standard OCPP frames defensively (the FoxESS L11PMC's empty-`[]` keepalives are silently ignored) and survives HA restarts by persisting charger metadata to storage + sending `TriggerMessage` on reconnect.
+
+### 5. Import the dashboard
 
 Two dashboard files are included:
 
@@ -294,7 +341,7 @@ Two dashboard files are included:
 
 Import via **Settings → Dashboards → Add Dashboard → From YAML**.
 
-### 5. Set your electricity cost parameters
+### 6. Set your electricity cost parameters
 
 In the dashboard, set the **Priskonfiguration / Price Configuration** card values to match your electricity contract:
 
@@ -306,7 +353,7 @@ In the dashboard, set the **Priskonfiguration / Price Configuration** card value
 
 The **indfødningstarif** (DSO + Energinet feed-in production tariff) is fetched and deducted automatically — no manual entry needed.
 
-### 6. Start monitoring, then enable
+### 7. Start monitoring, then enable
 
 The system starts in **monitoring-only mode** (switch off). Watch the *Decision reason* sensor for a few days to see what Solar AI *would* do. When you're satisfied, flip the **Arbitrage enabled** switch.
 
@@ -494,6 +541,15 @@ All settings are available in **Settings → Devices & Services → Solar AI →
 | Grid operator (DSO) | Dinel (Jutland/Fyn) | Options flow | DSO for hourly network tariff and indfødningstarif data |
 | Currency | DKK | Options flow | Price and savings sensor currency (DKK, EUR, SEK, NOK, GBP) |
 | Live data poll interval | 30 s | Options flow | How often EVCC live state is fetched (10–300 s) |
+| Embedded OCPP server | **On** (v0.27.0+) | Options flow → OCPP Settings | Solar AI hosts its own OCPP 1.6 server. Turn off to use lbbrhzn/ocpp instead |
+| Embedded OCPP port | 9000 | Options flow → OCPP Settings | TCP port the embedded server listens on (1024–65535) |
+| EV controller enabled | Off (opt-in) | Options flow → OCPP Settings | Master gate for the OCPP-driven EV charge controller |
+| EV control loop interval | 10 s | Options flow → OCPP Settings | How often the EV controller re-evaluates surplus (5–60 s) |
+| EV start window | 60 s | Options flow → OCPP Settings | Sustained-surplus seconds before charging starts (10–600 s) |
+| EV stop window | 180 s | Options flow → OCPP Settings | Sustained-shortage seconds before charging stops (30–1800 s) |
+| EV charging detection threshold | 3 000 W | Options flow → OCPP Settings | Above this charge power, the EV is considered truly charging (500–10 000 W) |
+| EV default mode on plug-in | Låst (locked) | Options flow → OCPP Settings | Mode applied when a vehicle is freshly connected |
+| EV min / max charge rate | 4.14 / 11.0 kW | Dashboard sliders | OCPP current setpoint range (mapped to 6 A / 16 A on 3-phase) |
 | Spot price area | DK2 | `CONF_PRICE_AREA` in `const.py` | Nord Pool price zone for Energi Data Service (`DK1` = Jutland/Fyn, `DK2` = Zealand/Copenhagen). Change in `const.py` — config-flow selection coming in a future version |
 
 ---

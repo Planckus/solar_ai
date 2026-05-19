@@ -152,13 +152,19 @@
       },
       "ocpp_settings": {
         "title": "OCPP Settings",
-        "description": "Step 2 of 3 — EV charge controller. Leave the toggle off if you don't use Solar AI to drive an OCPP-connected EV charger. When on, Solar AI talks to the charger via the lbbrhzn/ocpp HA integration.",
+        "description": "Step 2 of 3 — EV charge controller. Solar AI hosts its own embedded OCPP 1.6 server (no separate HACS integration needed). Point your charger's backend URL to ws://<ha-ip>:<port>/<cpid>/. Turn off the embedded server only if you want to use lbbrhzn/ocpp instead.",
         "data": {
+          "ocpp_embedded": "Use Solar AI's embedded OCPP server (recommended)",
+          "ocpp_port": "Embedded OCPP server port (default 9000, range 1024–65535)",
           "ev_controller_enabled": "Enable EV charge controller",
-          "ev_ocpp_charge_point_id": "OCPP charge point ID (what the charger announces, e.g. 60LH132057KQ050)",
-          "ev_ocpp_status_entity": "Status sensor entity (auto-detected from charge point ID — override only if needed)",
-          "ev_ocpp_power_entity": "Power sensor entity (auto-detected from charge point ID — override only if needed)",
-          "ev_default_mode": "Default EV mode on plug-in"
+          "ev_ocpp_charge_point_id": "Charge point ID (CPID) — used as URL path and entity prefix (e.g. charger, foxess_l11pmc)",
+          "ev_ocpp_status_entity": "Status sensor entity (only used if embedded server is OFF — override only if needed)",
+          "ev_ocpp_power_entity": "Power sensor entity (only used if embedded server is OFF — override only if needed)",
+          "ev_default_mode": "Default EV mode on plug-in",
+          "ev_control_interval_seconds": "Control loop interval (seconds, 5–60) — how often the charger is re-evaluated",
+          "ev_start_window_seconds": "Start window (seconds, 10–600) — surplus must hold this long before charging starts",
+          "ev_stop_window_seconds": "Stop window (seconds, 30–1800) — surplus must stay below min this long before charging stops",
+          "ev_charge_threshold_w": "EV charging detection threshold (W, 500–10000) — above this the EV is considered truly charging"
         }
       },
       "entities": {
@@ -255,8 +261,16 @@
       "ev_surplus_kw":  { "name": "EV surplus available" },
       "ev_active_mode": { "name": "EV active mode" },
       "ev_reason":      { "name": "EV controller reason" },
+      "ev_status":      { "name": "EV status" },
       "solar_hourly_accuracy": { "name": "Solar hourly learning (warmed hours)" },
-      "solar_floor_log": { "name": "Solar floor log (block events)" }
+      "solar_floor_log": { "name": "Solar floor log (block events)" },
+      "charger_status": { "name": "Charger status" },
+      "charger_power": { "name": "Charger power" },
+      "charger_session_energy": { "name": "Charger session energy" },
+      "charger_session_duration": { "name": "Charger session duration" },
+      "charger_lifetime_energy": { "name": "Charger lifetime energy" },
+      "charger_info": { "name": "Charger info" },
+      "charger_session_log": { "name": "Charger session log" }
     },
     "select": {
       "ev_mode": {
@@ -266,6 +280,47 @@
           "pv":         "Solar only",
           "pv_battery": "Min via solar + battery",
           "full":       "Full throttle"
+        }
+      },
+      "ev_default_mode": {
+        "name": "Default EV mode on plug-in",
+        "state": {
+          "locked":     "Locked",
+          "pv":         "Solar only",
+          "pv_battery": "Min via solar + battery",
+          "full":       "Full throttle"
+        }
+      },
+      "ev_min_amps": {
+        "name": "EV minimum charge rate",
+        "state": {
+          "6":  "6 A (4.14 kW)",
+          "7":  "7 A (4.83 kW)",
+          "8":  "8 A (5.52 kW)",
+          "9":  "9 A (6.21 kW)",
+          "10": "10 A (6.90 kW)",
+          "11": "11 A (7.59 kW)",
+          "12": "12 A (8.28 kW)",
+          "13": "13 A (8.97 kW)",
+          "14": "14 A (9.66 kW)",
+          "15": "15 A (10.35 kW)",
+          "16": "16 A (11.04 kW)"
+        }
+      },
+      "ev_max_amps": {
+        "name": "EV maximum charge rate",
+        "state": {
+          "6":  "6 A (4.14 kW)",
+          "7":  "7 A (4.83 kW)",
+          "8":  "8 A (5.52 kW)",
+          "9":  "9 A (6.21 kW)",
+          "10": "10 A (6.90 kW)",
+          "11": "11 A (7.59 kW)",
+          "12": "12 A (8.28 kW)",
+          "13": "13 A (8.97 kW)",
+          "14": "14 A (9.66 kW)",
+          "15": "15 A (10.35 kW)",
+          "16": "16 A (11.04 kW)"
         }
       }
     },
@@ -304,7 +359,8 @@
       "min_export_price": { "name": "Minimum export price (0 = allow negative)" },
       "battery_degradation_cost": { "name": "Battery wear cost (DKK/kWh cycled)" },
       "ev_min_charge_kw": { "name": "EV minimum charge rate (kW)" },
-      "ev_max_charge_kw": { "name": "EV maximum charge rate (kW)" }
+      "ev_max_charge_kw": { "name": "EV maximum charge rate (kW)" },
+      "ev_battery_priority_soc": { "name": "Battery-first threshold (%) — EV waits until house battery reaches this SoC" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage enabled" },

@@ -19,6 +19,7 @@ from .const import (
     DEFAULT_ELAFGIFT_DKK_KWH,
     DEFAULT_EV_MIN_CHARGE_KW,
     DEFAULT_EV_MAX_CHARGE_KW,
+    DEFAULT_EV_BATTERY_PRIORITY_SOC,
     DEFAULT_EXPORT_FEE,
     DEFAULT_MAX_EXPORT_KW,
     DEFAULT_MIN_EXPORT_PRICE,
@@ -202,6 +203,21 @@ async def async_setup_entry(
             step=0.1,
             mode=NumberMode.BOX,
             display_precision=2,
+        ),
+        # Battery-priority SoC threshold (v0.26.4) — EV waits until house
+        # battery reaches this SoC before consuming solar surplus.
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="ev_battery_priority_soc",
+            translation_key="ev_battery_priority_soc",
+            default=DEFAULT_EV_BATTERY_PRIORITY_SOC,
+            icon="mdi:battery-arrow-up",
+            unit="%",
+            min_val=50,
+            max_val=100,
+            step=1,
+            mode=NumberMode.SLIDER,
+            display_precision=0,
         ),
     ]
     async_add_entities(entities)
