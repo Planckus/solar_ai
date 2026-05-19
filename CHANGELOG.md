@@ -9,6 +9,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.27.8] — 2026-05-19
+
+Dashboard polish — terminology.
+
+### Changed
+
+- Charger card title renamed from *"Foxess lader"* (FoxESS-specific) to *"EV-charger"* (vendor-neutral). The integration works with any OCPP 1.6-compatible charger via the embedded server, not just FoxESS L11PMC — the title now reflects that.
+
+### Note
+
+Applied to the live Lovelace dashboard via the WebSocket `lovelace/config/save` API. Reference `dashboard/*.yaml` files in the repo were not affected.
+
+### Files touched
+
+`manifest.json`, `CHANGELOG.md`.
+
+---
+
 ## [0.27.7] — 2026-05-19
 
 Dashboard polish — Foxess lader card icon mapping.
