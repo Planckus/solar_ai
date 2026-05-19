@@ -170,6 +170,7 @@ from .const import (
     CONF_EV_BATTERY_PRIORITY_SOC,
     CONF_OCPP_EMBEDDED,
     CONF_OCPP_PORT,
+    CONF_OCPP_RESTART_STRICT,
     DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
     DEFAULT_EV_START_WINDOW_SECONDS,
     DEFAULT_EV_STOP_WINDOW_SECONDS,
@@ -2370,18 +2371,22 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             cp = self.ocpp_server.get(charger_id)
             if cp is not None:
                 want_charging = final_amps > 0
-                # v0.28.1 fix: broaden the "cable plugged" check from
-                # {Preparing, SuspendedEV, SuspendedEVSE} to the full
-                # ev_connected set. After a cool-down stop the charger
-                # frequently lingers in "Finishing" (and some firmwares stay
-                # in "Charging" with our 0 A profile still applied) — both
-                # were excluded by the old narrow check, so a fresh
-                # RemoteStartTransaction never went out when the sun came
-                # back. With session_active gating the start, this is safe:
-                # we only ever fire when there's no active transaction.
-                cable_plugged = cp.status in (
-                    "Preparing", "Charging", "SuspendedEV", "SuspendedEVSE", "Finishing",
-                )
+                # v0.28.1 fix, v0.28.7 made configurable: the "cable
+                # plugged" state set for RemoteStartTransaction. Lenient
+                # (default) includes Charging and Finishing in addition
+                # to the OCPP 1.6 spec set (Preparing, SuspendedEV,
+                # SuspendedEVSE) because the FoxESS L11PMC lingers in
+                # Finishing after a cool-down stop and in Charging with
+                # a 0 A profile applied. Strict restricts to the spec
+                # set for spec-compliant chargers.
+                if self.config.get(CONF_OCPP_RESTART_STRICT, False):
+                    cable_plugged = cp.status in (
+                        "Preparing", "SuspendedEV", "SuspendedEVSE",
+                    )
+                else:
+                    cable_plugged = cp.status in (
+                        "Preparing", "Charging", "SuspendedEV", "SuspendedEVSE", "Finishing",
+                    )
                 if want_charging and cable_plugged and not cp.session_active:
                     await cp.remote_start_transaction(id_tag="solar_ai")
                 elif (not want_charging) and cp.session_active and cp.session_transaction_id:

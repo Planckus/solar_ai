@@ -54,12 +54,16 @@ from .const import (
     CONF_EV_CHARGE_THRESHOLD_W,
     CONF_OCPP_EMBEDDED,
     CONF_OCPP_PORT,
+    CONF_OCPP_RESTART_STRICT,
+    CONF_OCPP_REMOTE_START_COOLDOWN_S,
     DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
     DEFAULT_EV_START_WINDOW_SECONDS,
     DEFAULT_EV_STOP_WINDOW_SECONDS,
     DEFAULT_EV_CHARGE_THRESHOLD_W,
     DEFAULT_OCPP_EMBEDDED,
     DEFAULT_OCPP_PORT,
+    DEFAULT_OCPP_RESTART_STRICT,
+    DEFAULT_OCPP_REMOTE_START_COOLDOWN_S,
     CONF_SPOT_PRICE_ENTITY,
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_FLOOR_SOC,
@@ -739,6 +743,19 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                              default=data.get(CONF_EV_CHARGE_THRESHOLD_W,
                                               DEFAULT_EV_CHARGE_THRESHOLD_W)):
                     vol.All(vol.Coerce(int), vol.Range(min=500, max=10000)),
+                # ── OCPP charger compatibility (v0.28.7) ────────────────
+                # Strict = restart only from spec-compliant plugged-in
+                # states. Lenient (default) also restarts from Charging
+                # and Finishing for chargers (e.g. FoxESS L11PMC) that
+                # linger in non-spec states after a cool-down stop.
+                vol.Required(CONF_OCPP_RESTART_STRICT,
+                             default=data.get(CONF_OCPP_RESTART_STRICT,
+                                              DEFAULT_OCPP_RESTART_STRICT)):
+                    bool,
+                vol.Required(CONF_OCPP_REMOTE_START_COOLDOWN_S,
+                             default=data.get(CONF_OCPP_REMOTE_START_COOLDOWN_S,
+                                              DEFAULT_OCPP_REMOTE_START_COOLDOWN_S)):
+                    vol.All(vol.Coerce(int), vol.Range(min=5, max=300)),
             }),
         )
 
