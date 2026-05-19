@@ -256,6 +256,7 @@
       "tariff_this_hour": { "name": "Grid tariff this hour" },
       "price_chart": { "name": "24h price chart" },
       "solar_forecast_48h_chart": { "name": "Solar forecast 48h (chart)" },
+      "solar_forecast_error_now": { "name": "Solar forecast error (now)" },
       "solar_today_remaining_kwh": { "name": "Solar: rest of today" },
       "solar_tomorrow_kwh": { "name": "Solar: expected tomorrow" },
       "todays_plan": { "name": "Today's plan" },
