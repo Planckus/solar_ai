@@ -1,225 +1,212 @@
-# Solar AI — Configuration Reference
+# Configuration reference
 
-Every slider, switch, and setup field explained in plain English. Use this as a lookup when you're configuring or tweaking the integration.
-
-This reference assumes you know what a battery SoC is and that electricity has a price. It does **not** explain how the optimizer works internally — that's covered in the [README](../README.md) and [CHANGELOG](../CHANGELOG.md).
+Every setup field, slider, and switch with its value range, effect, and when to change it. Use this as a lookup. For how the optimiser works internally, see the [README](../README.md) and [CHANGELOG](../CHANGELOG.md).
 
 ---
 
-## Table of contents
+## Contents
 
-- [Setup wizard fields](#setup-wizard-fields)
-- [Number sliders](#number-sliders)
+- [Setup wizard](#setup-wizard)
+- [Number entities](#number-entities)
   - [Battery thresholds](#battery-thresholds)
   - [Pricing parameters](#pricing-parameters)
-  - [Optimizer parameters](#optimizer-parameters)
+  - [Optimiser parameters](#optimiser-parameters)
   - [Learned charge rates](#learned-charge-rates)
 - [Switches](#switches)
   - [Master controls](#master-controls)
   - [Notification events](#notification-events)
   - [Notification devices](#notification-devices)
-- [How to change settings after install](#how-to-change-settings-after-install)
+- [Changing settings after install](#changing-settings-after-install)
+- [Storage layout](#storage-layout)
 
 ---
 
-## Setup wizard fields
+## Setup wizard
 
-These are asked once during installation. Most can be changed later in **Settings → Devices & Services → Solar AI → Configure**.
+Most fields can be changed later in *Settings → Devices & Services → Solar AI → Configure*.
 
 ### Live data source
 
-**What it controls:** Where Solar AI reads live grid power, PV production, house load, and EV charging state from.
+Where the integration reads live grid power, PV production, house load, and EV charging state from.
 
-- **EVCC** *(default)* — Everything from EVCC. Required if you want EV-aware coordination.
-- **Hybrid** — FoxESS Modbus for grid / PV / load (more accurate), EVCC for EV state.
-- **FoxESS only** — No EVCC. No EV detection. Requires explicit acknowledgement.
-
-**When to change:** Switch to Hybrid if you have EVCC but want better live grid/PV measurement. Switch to FoxESS-only if you don't have EVCC at all.
+| Mode | Source | When to pick |
+|---|---|---|
+| EVCC (default) | Everything from EVCC | EV-aware coordination is wanted |
+| Hybrid | FoxESS Modbus for grid / PV / load, EVCC for EV state | EVCC is installed but FoxESS-direct measurements are more accurate for your setup |
+| FoxESS only | No EVCC. No EV-aware scheduling. Requires explicit acknowledgement. | No EVCC available |
 
 ### EVCC URL
 
-**What it controls:** The full URL of your EVCC instance, including port (e.g. `http://your-ha-ip:7070` or `http://homeassistant.local:7070`).
-
-**When asked:** Only in EVCC and Hybrid modes.
+The full URL of the EVCC instance, including port. Example: `http://your-ha-ip:7070` or `http://homeassistant.local:7070`. Asked only in EVCC and Hybrid modes.
 
 ### FoxESS live sensors
 
-**Auto-detected sensors** for live grid / PV / load when in Hybrid or FoxESS-only mode:
+Auto-detected in Hybrid and FoxESS-only modes. Override only if FoxESS Modbus entity names differ from defaults.
 
-- `foxess_grid_import_entity` — defaults to `sensor.foxessmodbus_grid_consumption`. Always positive when importing from the grid.
-- `foxess_grid_export_entity` — defaults to `sensor.foxessmodbus_feed_in`. Always positive when exporting to the grid.
-- `foxess_pv_power_entity` — defaults to `sensor.pv_power_foxessmodbus`. Combined PV1 + PV2 production.
-- `foxess_load_power_entity` — defaults to `sensor.foxessmodbus_load_power`. House consumption.
-
-**When to change:** Only if your FoxESS Modbus integration uses non-default entity names.
+| Field | Default | Sign convention |
+|---|---|---|
+| `foxess_grid_import_entity` | `sensor.foxessmodbus_grid_consumption` | Positive when importing from grid |
+| `foxess_grid_export_entity` | `sensor.foxessmodbus_feed_in` | Positive when exporting to grid |
+| `foxess_pv_power_entity` | `sensor.pv_power_foxessmodbus` | Combined PV1 + PV2 |
+| `foxess_load_power_entity` | `sensor.foxessmodbus_load_power` | House consumption |
 
 ### Solar forecast source
 
-**What it controls:** Where the day's PV production forecast comes from.
+Where the PV production forecast comes from.
 
-- **EVCC** *(default if you have EVCC)* — Solcast forecast via EVCC.
-- **Solcast** — Solcast HA integration directly (no EVCC needed).
-- **Forecast.Solar** — Forecast.Solar HA integration directly (free tier OK).
-- **Auto** — Try EVCC → Forecast.Solar → Solcast in order.
+| Source | Notes |
+|---|---|
+| EVCC (default if EVCC is present) | Solcast forecast via EVCC |
+| Solcast | Solcast HA integration directly. Set both `today` and `tomorrow` entities for a 48-hour horizon. |
+| Forecast.Solar | Forecast.Solar HA integration directly. Free tier works. |
+| Auto | Try EVCC → Forecast.Solar → Solcast in order |
 
-**When to change:** Pick Solcast or Forecast.Solar if you want to drop the EVCC middleman. Pick Auto for resilience against any single source going down.
+### Spot price entity (optional)
 
-### Spot price entity *(optional)*
+The HA sensor exposing the current spot price (excluding VAT, DKK/kWh). Works with Strømligning, Tibber, or any compatible source.
 
-**What it controls:** The HA sensor Solar AI reads to get the current spot price (excluding VAT, in DKK/kWh). Works with Strømligning, Tibber, or any compatible source.
-
-**When to change / Leave blank:** Leave blank and Solar AI fetches the live spot price directly from Energi Data Service — the same feed the optimizer uses internally.
+If left blank, the integration fetches the live spot price directly from Energi Data Service.
 
 ### FoxESS control entities
 
-The select / number entities Solar AI uses to drive the inverter:
+Auto-detected; override only if the inverter setup differs.
 
-- `foxess_inverter_id` — the hex string ID of your FoxESS Modbus inverter
-- `foxess_work_mode_entity` — `select.foxessmodbus_work_mode`, used to switch between Self Use / Feed-in First / Force Charge
-- `foxess_force_charge_entity` — `number.foxessmodbus_force_charge_power`, sets the Force Charge wattage
-- `foxess_force_discharge_entity` — `number.foxessmodbus_force_discharge_power`, sets the Force Discharge wattage (export power cap)
-
-**When to change:** Only if your inverter setup differs from the FoxESS Modbus defaults.
+| Field | Description |
+|---|---|
+| `foxess_inverter_id` | Hex string ID of the FoxESS Modbus inverter |
+| `foxess_work_mode_entity` | `select.foxessmodbus_work_mode`. Used to switch between Self-Use / Feed-in First / Force Charge. |
+| `foxess_force_charge_entity` | `number.foxessmodbus_force_charge_power`. Sets Force Charge wattage. |
+| `foxess_force_discharge_entity` | `number.foxessmodbus_force_discharge_power`. Sets Force Discharge wattage (export power cap). |
 
 ### Battery sensors
 
-Sensors Solar AI reads to monitor the battery:
-
-- `battery_soc_entity` — current SoC (%)
-- `cell_temp_entity` — lowest cell temperature (°C), used for temperature-adaptive charge rates
-- `battery_charge_entity` — instantaneous charge power (kW)
-- `battery_discharge_entity` — instantaneous discharge power (kW)
-- `battery_charge_total_entity` — lifetime charge total (kWh), used to auto-detect round-trip efficiency
-- `battery_discharge_total_entity` — lifetime discharge total (kWh), same purpose
-
-**When to change:** Only if your FoxESS Modbus entity names differ from the defaults.
+| Field | Used for |
+|---|---|
+| `battery_soc_entity` | Current SoC (%) |
+| `cell_temp_entity` | Lowest cell temperature (°C). Drives temperature-adaptive charge rates. |
+| `battery_charge_entity` | Instantaneous charge power (kW) |
+| `battery_discharge_entity` | Instantaneous discharge power (kW) |
+| `battery_charge_total_entity` | Lifetime charge total (kWh). Drives auto-detected round-trip efficiency. |
+| `battery_discharge_total_entity` | Lifetime discharge total (kWh) |
 
 ### Battery capacity
 
-**What it controls:** Total usable battery capacity in kWh (e.g. `2.9` for a 2.9 kWh pack). Auto-detected from EVCC when available; otherwise enter manually.
+Total usable battery capacity in kWh (e.g. `11.52`). Auto-detected from EVCC when available; otherwise enter manually. Change only when the battery is replaced or expanded.
 
-**When to change:** Only if you replace or expand your battery.
+### Battery thresholds at setup
 
-### Battery thresholds & trading parameters (asked at setup)
+These appear in the wizard but are also live-adjustable as number entities. See [Number entities](#number-entities) below.
 
-These appear in the setup wizard but are also live-adjustable as sliders. See the [Number sliders](#number-sliders) section below for full explanations.
-
-- Minimum SoC (export) — `battery_floor_soc`
-- Maximum SoC (grid charge) — `battery_max_soc`
+- Minimum SoC (export)
+- Maximum SoC (grid charge)
 - Round-trip efficiency
 - Forecast horizon (hours)
 - Currency
 - Live data poll interval (seconds)
 - Grid operator (DSO)
 
-### Dashboard *(optional)*
+### Dashboard (optional)
 
-**What it controls:** If you import the bundled Lovelace dashboard, Solar AI can link to it from the integration page.
-
-**When to change:** Leave blank if you don't want a quick-link in the integration UI, or set it after importing the dashboard.
+Linking the bundled Lovelace dashboard from the integration page. Leave blank to skip.
 
 ---
 
-## Number sliders
+## Number entities
 
-All sliders are live-configurable from the dashboard's **Indstillinger** tab. Changes apply on the next optimizer tick (within seconds) — no restart needed.
+All number entities are editable from the *Indstillinger* tab. Changes apply on the next optimiser tick (within seconds). No restart needed.
 
 ### Battery thresholds
 
 #### Minimum SoC (export) — `battery_floor_soc`
 
-- **Range:** 10–90 %
-- **Default:** 50 %
-- **What it controls:** Solar AI will never export battery energy below this SoC. Acts as a hard floor.
-- **When to lower:** If you have a small battery and want to extract more value from arbitrage.
-- **When to raise:** If you want a guaranteed reserve for outages or evening house load.
+- Range: 10–90%
+- Default: 50%
+- Effect: the integration will not export battery energy below this SoC. Acts as a hard floor.
+- Lower it: small battery, more arbitrage activity wanted.
+- Raise it: keep a guaranteed reserve for outages or evening load.
 
 #### Maximum SoC (grid charge) — `battery_max_soc`
 
-- **Range:** 50–100 %
-- **Default:** 100 %
-- **What it controls:** Solar AI will never grid-charge the battery above this SoC. Caps how full it'll pull the battery from cheap grid hours.
-- **When to lower:** If you want to leave headroom for incoming solar production (so solar doesn't get wasted to the grid).
+- Range: 50–100%
+- Default: 100%
+- Effect: the integration will not grid-charge the battery above this SoC.
+- Lower it: leave headroom for incoming solar so solar production is not wasted to the grid.
 
-#### Export power cap (0 = no cap) — `max_export_kw`
+#### Export power cap — `max_export_kw`
 
-- **Range:** 0–10 kW
-- **Default:** 0 (no cap)
-- **What it controls:** Maximum export power Solar AI will write to the inverter's Force Discharge register. 0 means use the inverter's own maximum.
-- **When to change:** If your contract limits export, or you want to throttle export to fit within other constraints.
+- Range: 0–10 kW
+- Default: 0 (no cap)
+- Effect: maximum export power written to the inverter's Force Discharge register. 0 means use the inverter's own maximum.
+- Change it: if the contract limits export, or to throttle export within other constraints.
 
 #### Grid import limit — `grid_max_kw`
 
-- **Range:** 5–63 kW
-- **Default:** 17 kW
-- **What it controls:** Your main breaker's capacity. Used to cap battery grid-charge power so EV + battery + house combined never exceed the breaker.
-- **When to change:** Match your actual fuse rating. Get it wrong and you might trip the breaker.
+- Range: 5–63 kW
+- Default: 17 kW
+- Effect: breaker capacity. Used to cap battery grid-charge power so EV + battery + house combined never exceed the breaker.
+- Change it: match the actual fuse rating. An incorrect value can trip the breaker.
 
 ### Pricing parameters
 
-These all feed into the buy-price and sell-price formulas the optimizer uses.
+These feed into the buy-price and sell-price formulas the optimiser uses.
 
 #### Buy-side VAT — `vat_pct`
 
-- **Range:** 0–25 %
-- **Default:** 25 % (Danish standard)
-- **What it controls:** VAT percentage applied to the buy-side price total. Affects every CHARGE decision.
-- **When to change:** Match your local VAT rate.
+- Range: 0–25%
+- Default: 25% (Denmark)
+- Effect: VAT percentage applied to the buy-side price total.
 
 #### Spot price markup — `spot_markup`
 
-- **Range:** 0.00–0.50 DKK/kWh
-- **Default:** 0 DKK/kWh
-- **What it controls:** Your electricity retailer's per-kWh fee added on top of the raw spot price. Effectively raises the buy price the optimizer sees.
-- **When to change:** Whenever your retailer changes their markup.
+- Range: 0.00–0.50 DKK/kWh
+- Default: 0 DKK/kWh
+- Effect: retailer's per-kWh fee added on top of the raw spot price. Raises the buy price the optimiser sees.
 
-#### Electricity duty (elafgift) — `elafgift`
+#### Elafgift — `elafgift`
 
-- **Range:** 0.00–1.00 DKK/kWh
-- **Default:** 0.95 DKK/kWh (Danish 2024–2025 rate)
-- **What it controls:** Government electricity duty added to buy-side cost.
-- **When to change:** When the government changes the duty (typically January each year).
+- Range: 0.00–3.00 DKK/kWh
+- Default: 0.01 DKK/kWh
+- Effect: Danish electricity duty added to the buy-side cost. Change when the duty is updated (typically January).
 
-#### Sell-side fee — `export_fee`
+#### Seller-side fee — `export_fee`
 
-- **Range:** 0.00–0.10 DKK/kWh
-- **Default:** 0 DKK/kWh
-- **What it controls:** Per-kWh cut your grid company takes from your export revenue. Reduces the sell price the optimizer sees.
-- **When to change:** If your retailer or DSO levies an export fee.
+- Range: 0.00–0.50 DKK/kWh
+- Default: 0 DKK/kWh
+- Effect: per-kWh cut on export revenue. Reduces the sell price the optimiser sees.
 
-#### Minimum export price (0 = allow negative) — `min_export_price`
+#### Minimum export price — `min_export_price`
 
-- **Range:** 0.00–2.00 DKK/kWh
-- **Default:** 0.05 DKK/kWh
-- **What it controls:** Hard floor on solar export. If the live sell price drops below this, Solar AI blocks solar export at the inverter (sets export limit to 25 W). Prevents giving solar away during very low-price hours.
-- **When to lower / raise:** Set to 0 if you don't mind exporting at any positive price. Raise if you'd rather store/throttle solar than sell it cheaply.
+- Range: 0.00–2.00 DKK/kWh
+- Default: 0.00 DKK/kWh
+- Effect: hard floor on export. If the live sell price drops below this, the integration blocks both battery and solar export at the inverter (export limit register set to 25 W).
+- 0.00 blocks only negative or zero prices. Raise it to keep solar self-consumed rather than sold cheaply.
 
-### Optimizer parameters
+### Optimiser parameters
 
-#### Minimum gevinst pr. kWh — `min_spread_arbitrage`
+#### Minimum arbitrage spread — `min_spread_arbitrage`
 
-- **Range:** 0.00–3.00 DKK/kWh (0.05 steps)
-- **Default:** 0.30 DKK/kWh
-- **What it controls:** Hard gate on EXPORT decisions. The optimizer only sells from the battery if `(sell price after fees) − (recharge cost after losses)` is at least this much. Higher = more conservative.
-- **When to lower:** If you're missing legitimate arbitrage opportunities — useful when the battery wear cost is doing the heavy lifting.
-- **When to raise:** If you want a larger safety margin on top of the wear cost.
+- Range: 0.00–3.00 DKK/kWh (0.05 steps)
+- Default: 1.00 DKK/kWh
+- Effect: hard gate on EXPORT decisions. The optimiser only sells from the battery if `(sell price after fees) − (recharge cost after losses)` is at least this much.
+- Lower it: capture more legitimate arbitrage when the battery wear cost is doing the heavy lifting.
+- Raise it: larger safety margin on top of the wear cost.
 
-#### Batteri-slidomkostning — `battery_degradation_cost`
+#### Battery degradation cost — `battery_degradation_cost`
 
-- **Range:** 0.00–1.00 DKK/kWh (0.01 steps)
-- **Default:** 0.10 DKK/kWh
-- **What it controls:** Per-kWh cost added to both CHARGE and EXPORT decisions inside the optimizer. Models the wear-and-tear of cycling the battery. Higher = the optimizer takes fewer cycles.
-- **How to set it:** Roughly `(battery_cost_per_kWh) / (cycle_life × depth_of_discharge)`. For typical residential LFP at ~2 000 DKK/kWh: ~0.10–0.30 is reasonable. Set to 0 for maximum activity (and faster wear).
+- Range: 0.00–1.00 DKK/kWh (0.01 steps)
+- Default: 0.10 DKK/kWh
+- Effect: per-kWh cost added to both CHARGE and EXPORT decisions inside the optimiser. Models battery wear.
+- Estimation: `(battery_cost_per_kWh) / (cycle_life × depth_of_discharge)`. For typical residential LFP at ~2000 DKK/kWh, 0.10–0.30 is reasonable. 0 = maximum activity, faster wear.
 
 ### Learned charge rates
 
-These auto-calibrate as your battery runs Force Charge sessions. You can see them under **Indstillinger → Lærte opladningshastigheder**.
+These auto-calibrate from Force Charge sessions. Visible under *Indstillinger → Lærte opladningshastigheder*.
 
-- **Range:** 0.00–10 kW per slider
-- **Defaults:** 1 kW (warm bucket); ~0.5–0.8 kW (cold buckets)
-- **What they control:** The maximum charge rate Solar AI tells the inverter to use, by temperature bucket. Cold cells charge slower than warm ones — Solar AI learns the actual achievable rate per bucket from real Force Charge data.
-- **Buckets:** under 0 °C / 0–5 °C / 6–15 °C / 16–21 °C / 21–35 °C / 35–50 °C / over 50 °C
-- **When to override manually:** Only if the learning produced an obviously wrong value (e.g. due to an inverter firmware quirk). Normally let it self-calibrate.
+- Range: 0.00–10 kW per slider
+- Defaults: 1 kW (warm bucket); 0.5–0.8 kW (cold buckets)
+- Effect: the maximum charge rate written to the inverter, by temperature bucket. The integration learns the actual achievable rate per bucket from observed Force Charge data.
+- Buckets: `< 0`, `0–5`, `6–15`, `16–21`, `21–35`, `35–50`, `> 50 °C`
+- Override only if learning produced a clearly wrong value (e.g. inverter firmware quirk).
 
 ---
 
@@ -227,85 +214,68 @@ These auto-calibrate as your battery runs Force Charge sessions. You can see the
 
 ### Master controls
 
-#### Solar AI on/off — `arbitrage_aktiv`
+#### Arbitrage active — `arbitrage_aktiv`
 
-- **What it controls:** The integration's master switch. When OFF, Solar AI keeps reading data and updating sensors but **does not change the inverter work mode or EVCC battery mode**. All decisions are shown ("would export" / "would grid-charge") but never executed.
-- **When to use:** Turn off during testing, when you want manual control, or during initial learning periods.
+The master switch. When off, the integration keeps reading data and updating sensors but does not change the inverter work mode or EVCC battery mode. Decisions are still reported (`would export`, `would grid-charge`) but not executed.
 
-#### Notifikationer ved tilstandsskift — `notifications_enabled`
+Use off during testing, during initial learning, or for manual control.
 
-- **What it controls:** When ON, Solar AI fires a **persistent HA notification** (the bell icon in HA, not a mobile push) whenever it transitions between Self-use, Exporting, and Grid Charging modes.
-- **When to enable:** If you want a visible HA-internal record of mode changes. Independent from the mobile push notifications below.
+#### Notifications on mode change — `notifications_enabled`
 
-#### 15-minutters prisopløsning — `price_resolution_15min`
+When on, a persistent HA notification fires on every transition between Self-Use, Exporting, and Grid Charging modes. This is independent of the mobile push notifications below.
 
-- **What it controls:** When ON, the 24h price chart sensor emits one row per native 15-minute slot. When OFF (default), it deduplicates to one row per hour.
-- **When to enable:** If your dashboard's price card supports finer resolution. The optimizer always uses native resolution internally regardless of this toggle.
+#### 15-minute price resolution — `price_resolution_15min`
+
+When on, the 24-h price chart sensor emits one row per native 15-minute slot. When off (default), it deduplicates to one row per hour. The optimiser always uses native resolution internally regardless of this toggle.
 
 ### Notification events
 
-Six toggles controlling which events trigger a mobile push notification. All default to OFF.
+Six toggles. All default to off. Each controls whether the corresponding event fires a mobile push notification.
 
-#### Eksport startet — `notify_export_start`
-
-Fires when Solar AI transitions **into** EXPORTING mode (i.e. the battery starts selling to the grid for arbitrage). Note: this is **not** the same as solar surplus exporting passively — only when Solar AI's optimizer actively decides to discharge the battery.
-
-#### Eksport stoppet — `notify_export_stop`
-
-Fires when Solar AI transitions **out of** EXPORTING mode. Notification includes the session summary (start/end SoC, kWh exported, DKK earned).
-
-#### Opladning startet — `notify_charge_start`
-
-Fires when Solar AI transitions **into** GRID_CHARGING mode (i.e. the battery starts charging from the grid at a cheap-price hour).
-
-#### Opladning stoppet — `notify_charge_stop`
-
-Fires when Solar AI exits GRID_CHARGING. Includes session summary.
-
-#### Solareksport blokeret (prisgulv) — `notify_solar_floor_blocked`
-
-Fires when the live sell price drops **below** your `min_export_price` floor and Solar AI blocks solar export at the inverter (export limit register flips from 10 000 W → 25 W).
-
-#### Solareksport genoptaget — `notify_solar_floor_resumed`
-
-Fires on the reverse transition: live sell price rises above the floor, solar export is re-enabled (25 W → 10 000 W).
+| Switch | Fires when |
+|---|---|
+| `notify_export_start` | The integration transitions into EXPORTING mode (battery starts selling to the grid). This is different from passive solar export. |
+| `notify_export_stop` | The integration exits EXPORTING. Notification includes session summary (start/end SoC, kWh exported, DKK earned). |
+| `notify_charge_start` | The integration transitions into GRID_CHARGING (battery starts charging from the grid). |
+| `notify_charge_stop` | The integration exits GRID_CHARGING. Includes session summary. |
+| `notify_solar_floor_blocked` | Live sell price drops below `min_export_price`; export limit register flips from 10000 W to 25 W. |
+| `notify_solar_floor_resumed` | Sell price recovers above the floor; export limit register flips back to 10000 W. |
 
 ### Notification devices
 
-One toggle per registered HA Companion mobile device (auto-discovered from your `notify.mobile_app_*` services). All default to OFF.
+One toggle per registered HA Companion mobile device (auto-discovered from `notify.mobile_app_*` services). All default to off.
 
-- **What they control:** Which devices receive the push notifications you enabled above. Toggle on the devices you want notifications on. If no devices are toggled on, no notification is sent regardless of event toggles.
-- **Example:** If you want your phone to get notifications, toggle **Notifikation: My Phone**. If you also want another device's, toggle that too.
+These select which devices receive the notifications enabled above. If no device is toggled on, no notification is sent regardless of the event switches.
 
 ---
 
-## How to change settings after install
+## Changing settings after install
 
-### Sliders & switches
+### Number entities and switches
 
-All sliders and switches are available on the **Indstillinger** tab of the bundled dashboard. Changes are saved instantly and applied on the next optimizer tick (within seconds for the fast loop, within an hour for parameters that only affect the day-ahead plan).
+All number entities and switches are on the *Indstillinger* tab of the bundled dashboard. Changes are saved instantly and apply on the next optimiser tick (within seconds for fast-loop parameters, within an hour for parameters that only affect the day-ahead plan).
 
 ### Setup-wizard fields (entity mappings, EVCC URL, source pickers, etc.)
 
-Open **Settings → Devices & Services → Solar AI → Configure**. The Options form lets you change any of the wizard fields. Save triggers an automatic reload — no HA restart needed.
+*Settings → Devices & Services → Solar AI → Configure*. The Options form covers every wizard field. Save triggers an automatic reload — no HA restart needed.
 
-### Battery thresholds at startup
+### Battery thresholds at first startup
 
-The first time the integration starts, the battery thresholds (floor SoC, max SoC, etc.) are seeded from the values entered in the setup wizard. After that, the slider values take over — the wizard values are no longer consulted. To reset, use the Options form.
+The first time the integration runs, battery thresholds (floor SoC, max SoC, etc.) are seeded from the wizard values. After that, the number-entity values take over and the wizard values are no longer consulted. To reset, use the Options form.
 
 ---
 
-## Where the values are stored
+## Storage layout
 
 Two distinct stores, for two distinct kinds of value:
 
-| Stored where | What's there | Survives restart? |
+| Stored in | Contents | Survives restart |
 |---|---|---|
-| `entry.data` (HA config entry) | One-time setup choices: EVCC URL, FoxESS entity IDs, currency, DSO, live-data source, solar source, etc. | ✅ |
-| `_stored` (local JSON in HA storage) | Live-adjustable values: all sliders, switches, learning models (charge rates, capacity samples, savings log, action log, etc.) | ✅ |
+| `entry.data` (HA config entry) | One-time setup choices: EVCC URL, FoxESS entity IDs, currency, DSO, live-data source, solar forecast source | Yes |
+| `_stored` (local JSON in HA storage) | Live-adjustable values: number entities, switches, learning models (charge rates, capacity samples, savings log, action log) | Yes |
 
-If you ever uninstall and reinstall the integration without removing the config entry, the learning models persist across the reinstall.
+Uninstalling and reinstalling the integration without removing the config entry preserves the learning models.
 
 ---
 
-*Last updated for v0.24.0. If a setting is missing from this doc, file an issue.*
+*Last updated for v0.28.x. If a setting is missing, file an issue.*

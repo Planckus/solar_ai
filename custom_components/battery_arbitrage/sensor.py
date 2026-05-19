@@ -445,6 +445,25 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "tomorrow_raw_kwh":        d.get("solar_tomorrow_raw_kwh", 0.0),
         },
     ),
+    # ── Short-term solar correction (v0.28.6) ─────────────────────────────
+    # State = current intra-hour residual as a percentage deviation from
+    # Solcast for the most recent closed 15-min slot, rounded.
+    #   factor > 1 → actual > forecast (sun better than predicted)
+    #   factor < 1 → actual < forecast (cloudier than predicted)
+    BatteryArbitrageSensorDescription(
+        key="solar_forecast_error_now",
+        translation_key="solar_forecast_error_now",
+        native_unit_of_measurement="%",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:chart-bell-curve",
+        value_fn=lambda d: round((d.get("solar_short_term_factor", 1.0) - 1.0) * 100.0, 1),
+        attrs_fn=lambda d: {
+            "factor": d.get("solar_short_term_factor", 1.0),
+            "samples": d.get("solar_short_term_samples", 0),
+            "recent": d.get("solar_short_term_recent", []),
+            "decay_hours": d.get("solar_short_term_decay_h", 2.0),
+        },
+    ),
     # ── Daily kWh forecast totals (v0.28.3, adjusted) ─────────────────────
     BatteryArbitrageSensorDescription(
         key="solar_today_remaining_kwh",
