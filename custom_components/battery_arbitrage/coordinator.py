@@ -244,6 +244,27 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # charge from solar — only the discharge path is blocked.
         self._ev_battery_locked: bool = False
         self._ev_battery_lock_prev_a: float | None = None
+        # ── Short-term solar correction (v0.28.6) ────────────────────────
+        # Intra-hour Kalman-style residual: compare actual mean PV in each
+        # closed 15-min slot against the Solcast forecast for that slot,
+        # and apply the rolling ratio as a short-horizon multiplier on top
+        # of the existing 4-day per-hour accuracy factor — only for slots
+        # within the next 2 h, with linear decay.
+        self._st_solar_slot_start: datetime | None = None
+        self._st_solar_pv_sum_w: float = 0.0          # running sum of PV W readings
+        self._st_solar_pv_count: int = 0              # running count
+        self._st_solar_forecast_sum_w: float = 0.0    # paired forecast sum
+        self._st_solar_forecast_count: int = 0
+        # Ring of recent (slot_end_iso, actual_w, forecast_w, ratio) tuples
+        # Capped at 8 = last 2 h of 15-min slots.
+        self._st_solar_residuals: list[dict] = []
+        # Current short-term multiplier (rolling mean of last 4 = 1 h)
+        self._st_solar_factor: float = 1.0
+        # Slot-mean accumulation is restricted to daylight (actual PV OR
+        # forecast must exceed this floor — avoids nightly division-by-zero)
+        self._st_solar_min_w: float = 200.0
+        # Horizon over which the short-term correction decays back to 1.0
+        self._st_solar_decay_hours: float = 2.0
         # Decoupled EV control loop: runs at CONF_EV_CONTROL_INTERVAL_SECONDS
         # cadence (independent of the main coordinator fast-poll). Inputs are
         # cached by the main update; the loop consumes the cache.
@@ -657,6 +678,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # These operations use sample-count windows tuned for 5-min granularity.
         # Running them every fast tick would overflow buffers and bias the models.
         current_forecast_w = _current_slot_forecast(solar_rates.get("rates", []), now)
+        # v0.28.6: short-term solar residual tracking — runs every tick
+        # (not gated on the learning interval) so the intra-hour ratio
+        # reflects sub-minute reality.
+        self._update_short_term_solar_correction(
+            now, float(pv_power_w or 0.0), solar_rates.get("rates", []) or [],
+        )
+
         is_learning_tick = (
             self._last_learning_tick is None
             or (now - self._last_learning_tick).total_seconds() >= LEARNING_TICK_INTERVAL_SECONDS
@@ -1036,7 +1064,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             try:
                 h_local = slot_start_dt.astimezone().hour
                 if 0 <= h_local < 24:
-                    return max(0.0, float(solar_hourly_acc_local[h_local]))
+                    base = max(0.0, float(solar_hourly_acc_local[h_local]))
+                    # v0.28.6: layer short-term residual onto the chart's
+                    # adjusted curve, with linear decay so the user can SEE
+                    # the immediate correction on the Solcelleprognose plot
+                    try:
+                        hours_ahead = max(0.0, (slot_start_dt - now).total_seconds() / 3600.0)
+                        return base * self.get_short_term_solar_factor(hours_ahead)
+                    except Exception:  # noqa: BLE001
+                        return base
             except Exception:  # noqa: BLE001
                 pass
             return 1.0
@@ -1268,6 +1304,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             solar_floor_log_count=len(self._stored.get("solar_floor_log", [])),
             solar_hourly_factors=self.get_solar_hourly_accuracy_profile(),
             solar_hourly_samples=self.get_solar_hourly_sample_counts(),
+            # v0.28.6: short-term solar correction visibility
+            solar_short_term_factor=round(self._st_solar_factor, 3),
+            solar_short_term_samples=len(self._st_solar_residuals),
+            solar_short_term_recent=list(self._st_solar_residuals[-4:]),
+            solar_short_term_decay_h=self._st_solar_decay_hours,
             **ev_telemetry,
             **savings,
         )
@@ -1855,6 +1896,109 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         bucket.append(sample)
         if len(bucket) > SOLAR_ACCURACY_HOUR_BUCKET_MAX:
             del bucket[: len(bucket) - SOLAR_ACCURACY_HOUR_BUCKET_MAX]
+
+    # ── Short-term solar correction (v0.28.6) ─────────────────────────────
+    def _update_short_term_solar_correction(
+        self,
+        now: datetime,
+        pv_power_w: float,
+        solar_rates: list,
+    ) -> None:
+        """Track actual PV vs Solcast in 15-min slots and update the
+        rolling short-term multiplier.
+
+        Called every coordinator tick. Behaviour:
+          1. Quantise `now` to the current 15-min slot.
+          2. Accumulate live PV (W) into the slot's running mean.
+          3. Accumulate the slot's forecasted W (from cached Solcast rates).
+          4. On slot rollover, compute actual_mean / forecast_mean if both
+             are above the daylight floor, append to the ring buffer
+             (capped at 8 = 2 h), and recompute
+             `_st_solar_factor = mean(ratio of last 4 closed slots)`.
+        """
+        slot_start = now.replace(
+            minute=(now.minute // 15) * 15, second=0, microsecond=0,
+        )
+
+        # First call: initialise to current slot
+        if self._st_solar_slot_start is None:
+            self._st_solar_slot_start = slot_start
+            self._st_solar_pv_sum_w = 0.0
+            self._st_solar_pv_count = 0
+            self._st_solar_forecast_sum_w = 0.0
+            self._st_solar_forecast_count = 0
+
+        # Slot rollover
+        if slot_start > self._st_solar_slot_start:
+            prev_start = self._st_solar_slot_start
+            actual_mean_w = (
+                self._st_solar_pv_sum_w / self._st_solar_pv_count
+                if self._st_solar_pv_count > 0 else 0.0
+            )
+            forecast_mean_w = (
+                self._st_solar_forecast_sum_w / self._st_solar_forecast_count
+                if self._st_solar_forecast_count > 0 else 0.0
+            )
+            # Only emit a residual when there's meaningful sun in BOTH
+            # readings (avoids dawn/dusk noise and night divide-by-zero)
+            if (
+                actual_mean_w >= self._st_solar_min_w
+                and forecast_mean_w >= self._st_solar_min_w
+            ):
+                ratio = actual_mean_w / forecast_mean_w
+                ratio = max(0.1, min(3.0, ratio))   # clamp pathological values
+                self._st_solar_residuals.append({
+                    "slot_end": (prev_start + timedelta(minutes=15)).isoformat(),
+                    "actual_w": round(actual_mean_w, 1),
+                    "forecast_w": round(forecast_mean_w, 1),
+                    "ratio": round(ratio, 3),
+                })
+                # Cap at last 8 slots (= 2 h history)
+                if len(self._st_solar_residuals) > 8:
+                    self._st_solar_residuals = self._st_solar_residuals[-8:]
+                # Recompute rolling factor over the last 4 closed slots
+                recent = [r["ratio"] for r in self._st_solar_residuals[-4:]]
+                if recent:
+                    self._st_solar_factor = max(0.3, min(2.0, sum(recent) / len(recent)))
+                _LOGGER.debug(
+                    "Short-term solar correction: slot %s actual=%.0fW "
+                    "forecast=%.0fW ratio=%.3f → factor=%.3f (n=%d)",
+                    prev_start.strftime("%H:%M"), actual_mean_w,
+                    forecast_mean_w, ratio, self._st_solar_factor,
+                    len(self._st_solar_residuals),
+                )
+            # Reset accumulators for the new slot
+            self._st_solar_slot_start = slot_start
+            self._st_solar_pv_sum_w = 0.0
+            self._st_solar_pv_count = 0
+            self._st_solar_forecast_sum_w = 0.0
+            self._st_solar_forecast_count = 0
+
+        # Always accumulate the live readings for the current slot
+        if pv_power_w is not None and pv_power_w >= 0:
+            self._st_solar_pv_sum_w += float(pv_power_w)
+            self._st_solar_pv_count += 1
+        slot_forecast_w = _current_slot_forecast(solar_rates or [], now)
+        if slot_forecast_w is not None and slot_forecast_w >= 0:
+            self._st_solar_forecast_sum_w += float(slot_forecast_w)
+            self._st_solar_forecast_count += 1
+
+    def get_short_term_solar_factor(self, hours_ahead: float = 0.0) -> float:
+        """Return the short-term multiplier with linear decay toward 1.0
+        over `_st_solar_decay_hours` (default 2 h).
+
+        At hours_ahead = 0 → full short-term factor.
+        At hours_ahead = decay window → 1.0 (no influence).
+        """
+        if not self._st_solar_residuals:
+            return 1.0
+        if hours_ahead <= 0:
+            return self._st_solar_factor
+        if hours_ahead >= self._st_solar_decay_hours:
+            return 1.0
+        # Linear decay
+        weight = 1.0 - (hours_ahead / self._st_solar_decay_hours)
+        return 1.0 + weight * (self._st_solar_factor - 1.0)
 
     def get_solar_accuracy_factor_for_hour(self, hour: int) -> float:
         """Per-hour accuracy correction. Falls back to the global factor if the
@@ -2673,6 +2817,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     self._ev_surplus_below_min_since_ts = None
                     return 0                              # confirmed stop
                 return self._ev_last_amps                  # keep going until confirmed
+            # v0.28.5 fix: idle AND target dropped to 0 — clear any stale
+            # ARMING timer. Without this, an old `_ev_surplus_above_min_since_ts`
+            # from when surplus was previously above min keeps the state
+            # machine in ARMING with an `arming_until` timestamp in the past,
+            # so the dashboard renders "Starter om -178 sek" (negative
+            # remaining seconds). Once surplus drops back below min, the arm
+            # countdown is no longer valid — restart it fresh when surplus
+            # recovers.
+            self._ev_surplus_above_min_since_ts = None
             return 0
 
         # Want to charge ── arm the start timer when currently idle
@@ -3396,7 +3549,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 h = slot_start_dt.astimezone().hour
             except Exception:
                 return global_acc
-            return max(0.0, float(hourly_acc[h] if 0 <= h < 24 else global_acc))
+            base = max(0.0, float(hourly_acc[h] if 0 <= h < 24 else global_acc))
+            # v0.28.6: layer the short-term residual on top of the long-term
+            # per-hour factor for slots within the decay window.
+            try:
+                hours_ahead = max(0.0, (slot_start_dt - now).total_seconds() / 3600.0)
+                st = self.get_short_term_solar_factor(hours_ahead)
+                return base * st
+            except Exception:  # noqa: BLE001
+                return base
 
         solar_kw_by_start: dict = {
             s[0]: (s[4] / 1000.0) * _slot_factor(s[0]) for s in solar_slot_data

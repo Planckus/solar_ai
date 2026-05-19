@@ -9,6 +9,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.28.6] — 2026-05-19
+
+### Added — Short-term solar forecast correction (Kalman-style intra-hour layer)
+
+The existing per-hour accuracy correction is a 4-day slow-moving average — great for fixing systematic bias (your roof + Solcast settled at factor ≈ 0.7), but blind to the kind of "Solcast didn't see this cloud bank" miss that wrecks solar-only EV decisions in real time. v0.28.6 adds a second correction layer on top.
+
+- **Per-tick PV residual tracking**: every coordinator tick the actual PV output is sampled and accumulated into the current 15-min slot, alongside the matching Solcast forecast value. On slot rollover, `actual_mean / forecast_mean` is computed and appended to a rolling ring of the last 8 closed slots (2 h of history).
+- **Short-term multiplier**: `_st_solar_factor = mean(ratio over last 4 closed slots)` (= 1 h smoothing), clamped to [0.3, 2.0]. Recomputed every time a slot closes.
+- **Linear decay across 2 h**: when forecasting future slots, `get_short_term_solar_factor(hours_ahead)` blends the short-term multiplier with 1.0 linearly across `_st_solar_decay_hours` (default 2 h). At t+0 → full short-term influence; at t+2 h → no influence; the long-term per-hour factor takes over from there.
+- **Applied in both the optimizer and the 48 h chart**: the DP optimizer's `_slot_factor` and the Solcelleprognose chart's `_solar_adj_factor` now both call `get_short_term_solar_factor` so the adjusted curve the user sees on the chart matches exactly what the optimizer plans against.
+- New `sensor.solar_ai_solcelleprognose_fejl_nu` (Danish) / `sensor.solar_ai_solar_forecast_error_now` (English): state is the current short-term deviation in percent (`+15%`, `-25%`, etc.). Attributes expose the recent ratio samples, sample count, raw factor, and decay window — so you can see exactly which 15-min slots are feeding the rolling correction.
+
+---
+
+## [0.28.5] — 2026-05-19
+
+### Fixed — Stale ARMING timer rendered "Starter om -178 sek"
+
+- `coordinator.py` (`_apply_ev_time_window`): when target drops to 0 and the EV is already idle, the function now clears any lingering `_ev_surplus_above_min_since_ts`. Previously this path was a bare `return 0`, so an arm timer set earlier (when surplus was above min) survived the surplus dropping below min — leaving the state machine in `ARMING` with an `arming_until` timestamp permanently in the past. Dashboard then rendered the countdown as a negative integer.
+- Dashboard template clamped to `max(remaining, 0)` as belt-and-braces defence so even a transient one-tick lag in clearing `arming_until` no longer shows a negative second count.
+
+---
+
 ## [0.28.4] — 2026-05-19
 
 ### Added — EV session log with grid / solar energy split

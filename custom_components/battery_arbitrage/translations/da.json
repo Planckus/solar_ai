@@ -256,6 +256,7 @@
       "tariff_this_hour": { "name": "Nettarif denne time" },
       "price_chart": { "name": "24h priskort" },
       "solar_forecast_48h_chart": { "name": "Solcelleprognose 48t (graf)" },
+      "solar_forecast_error_now": { "name": "Solcelleprognose-fejl (nu)" },
       "solar_today_remaining_kwh": { "name": "Solcelle: rest af i dag" },
       "solar_tomorrow_kwh": { "name": "Solcelle: forventet i morgen" },
       "todays_plan": { "name": "Dagens plan" },
