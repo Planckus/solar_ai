@@ -9,6 +9,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.27.7] — 2026-05-19
+
+Dashboard polish — Foxess lader card icon mapping.
+
+### Fixed
+
+- The Foxess lader card's header icon used `mdi:help-circle` (`?`) as the fallback for OCPP states that weren't explicitly mapped — most visibly during the `Finishing` state (session ending). Replaced with a proper charger pictogram (`mdi:ev-station`) and added explicit entries for `Finishing` (`mdi:battery-charging-50`, cyan) and `Reserved` (`mdi:calendar-clock`, purple).
+
+### Note
+
+The live dashboard config lives in HA's storage (`/.storage/lovelace_battery-arbitrage`), not in this repo. This version bump captures the change in the changelog; the actual dashboard update is applied via the WebSocket `lovelace/config/save` API. New installs get the bundled `dashboard/*.yaml` files which serve as reference templates — those have not been auto-updated to match the live dashboard's accumulated v0.26.x → v0.27.x customizations.
+
+### Files touched
+
+`manifest.json`, `CHANGELOG.md`.
+
+---
+
 ## [0.27.6] — 2026-05-19
 
 Documentation accuracy fix.
