@@ -1,11 +1,11 @@
 {
   "domain": "battery_arbitrage",
   "name": "Solar AI",
-  "version": "0.25.5",
+  "version": "0.27.5",
   "documentation": "https://github.com/planckus/ha-battery-arbitrage",
   "issue_tracker": "https://github.com/planckus/ha-battery-arbitrage/issues",
   "codeowners": ["@planckus"],
-  "requirements": [],
+  "requirements": ["ocpp>=2.1.0"],
   "dependencies": [],
   "after_dependencies": ["foxess_modbus"],
   "iot_class": "local_polling",

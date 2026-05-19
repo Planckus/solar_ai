@@ -484,6 +484,29 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:information-outline",
         value_fn=lambda d: d.get("ev_reason", "EV controller inactive"),
     ),
+    # ── EV status (state machine + countdown, v0.26.1) ─────────────────────
+    # State: IDLE / ARMING / CHARGING / COOLING (see _apply_ev_time_window).
+    # Attrs expose the seconds remaining on the start- and stop-windows so the
+    # dashboard can render "Starter om 23 sek" / "Stopper om 142 sek" — telling
+    # the user *why* the controller is being patient during cloud-flicker.
+    BatteryArbitrageSensorDescription(
+        key="ev_status",
+        translation_key="ev_status",
+        icon="mdi:ev-station",
+        value_fn=lambda d: d.get("ev_state", "IDLE"),
+        attrs_fn=lambda d: {
+            "arming_seconds_left": d.get("ev_arming_seconds_left", 0),
+            "cooling_seconds_left": d.get("ev_cooling_seconds_left", 0),
+            "active_mode": d.get("ev_active_mode", "locked"),
+            "target_kw": d.get("ev_target_kw", 0.0),
+            "target_amps": d.get("ev_target_amps", 0),
+            "surplus_kw": d.get("ev_surplus_kw", 0.0),
+            "last_commanded_amps": d.get("ev_last_commanded_amps", 0),
+            "reason": d.get("ev_reason", ""),
+            "enabled": d.get("ev_enabled", False),
+            "battery_locked": d.get("ev_battery_locked", False),
+        },
+    ),
     # ── Solar floor log (block/resume events due to price floor) ─────────
     BatteryArbitrageSensorDescription(
         key="solar_floor_log",
@@ -520,6 +543,94 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "warmup_complete": all(
                 c >= 8 for c in d.get("solar_hourly_samples", [])
             ) if d.get("solar_hourly_samples") else False,
+        },
+    ),
+    # ─────────────────────────────────────────────────────────────────────
+    # Embedded OCPP charger sensors (v0.27.0)
+    # Replace what `lbbrhzn/ocpp` integration used to expose. State is read
+    # directly from Solar AI's embedded OCPP server via the coordinator's
+    # `get_charger_telemetry()` (merged into the result dict each tick).
+    # ─────────────────────────────────────────────────────────────────────
+    BatteryArbitrageSensorDescription(
+        key="charger_status",
+        translation_key="charger_status",
+        icon="mdi:ev-station",
+        value_fn=lambda d: d.get("charger_status", "Unavailable"),
+        attrs_fn=lambda d: {
+            "seconds_since_seen": d.get("charger_seconds_since_seen"),
+            "protocol_errors": d.get("charger_protocol_errors", 0),
+            "last_protocol_error": d.get("charger_last_protocol_error", ""),
+        },
+    ),
+    BatteryArbitrageSensorDescription(
+        key="charger_power",
+        translation_key="charger_power",
+        icon="mdi:lightning-bolt",
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        value_fn=lambda d: d.get("charger_power_kw", 0.0),
+        attrs_fn=lambda d: {
+            "voltage_v": d.get("charger_voltage_v"),
+        },
+    ),
+    BatteryArbitrageSensorDescription(
+        key="charger_session_energy",
+        translation_key="charger_session_energy",
+        icon="mdi:battery-charging-100",
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        value_fn=lambda d: d.get("charger_session_energy_kwh", 0.0),
+        attrs_fn=lambda d: {
+            "session_active": d.get("charger_session_active", False),
+            "session_duration_min": d.get("charger_session_duration_min", 0.0),
+        },
+    ),
+    BatteryArbitrageSensorDescription(
+        key="charger_session_duration",
+        translation_key="charger_session_duration",
+        icon="mdi:timer-outline",
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        value_fn=lambda d: d.get("charger_session_duration_min", 0.0),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="charger_lifetime_energy",
+        translation_key="charger_lifetime_energy",
+        icon="mdi:counter",
+        # TOTAL_INCREASING + ENERGY makes this eligible for the HA Energy
+        # dashboard's "individual devices" section.
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        value_fn=lambda d: d.get("charger_lifetime_energy_kwh", 0.0),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="charger_info",
+        translation_key="charger_info",
+        icon="mdi:information-outline",
+        # State = serial (or vendor if serial blank). Attrs expose the rest.
+        value_fn=lambda d: (
+            d.get("charger_serial") or d.get("charger_vendor") or "Unknown"
+        ),
+        attrs_fn=lambda d: {
+            "vendor": d.get("charger_vendor", ""),
+            "model": d.get("charger_model", ""),
+            "firmware": d.get("charger_firmware", ""),
+            "serial": d.get("charger_serial", ""),
+            "seconds_since_seen": d.get("charger_seconds_since_seen"),
+        },
+    ),
+    BatteryArbitrageSensorDescription(
+        key="charger_session_log",
+        translation_key="charger_session_log",
+        icon="mdi:history",
+        # State = total number of completed sessions
+        value_fn=lambda d: d.get("charger_session_count", 0),
+        # Attrs = last 20 sessions newest-first
+        attrs_fn=lambda d: {
+            "last_session": d.get("charger_last_session"),
         },
     ),
 )

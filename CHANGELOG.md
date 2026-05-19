@@ -9,6 +9,320 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.27.5] — 2026-05-19
+
+UX fix to the "Overskud" value shown on the EV-styring dashboard card. Previously it showed the **physical** solar surplus (PV − non-EV house load), which is misleading when the house battery is below its priority threshold and absorbing the entire surplus — the card would say *"Overskud: 0.4 kW"* even though the EV has zero kW available.
+
+### Fixed
+
+- `ev_surplus_kw` in the EV-status telemetry now represents the **net surplus available to the EV** = `max(0, physical_surplus − battery_charge_now)`.
+  - When the house battery is below the priority threshold (PV mode) and actively charging from solar surplus → `battery_charge_now` consumes everything, `ev_surplus_kw` reports `0`.
+  - When the battery is at/above threshold (no longer charging) → `battery_charge_now` ≈ 0, `ev_surplus_kw` reports the full physical surplus.
+  - When the battery is discharging (e.g. PV+battery mode feeding the EV) → `battery_charge_now` is clamped to 0, so `ev_surplus_kw` shows the full physical surplus.
+- Live battery-charge reading comes from `CONF_BATTERY_CHARGE_ENTITY` (default `sensor.foxessmodbus_battery_charge`), so the value is real-time.
+- **Controller logic untouched** — `_compute_ev_target_kw` still uses the physical surplus to make its decisions. Only the display value is corrected.
+
+### Files touched
+
+`coordinator.py`, `manifest.json`, `CHANGELOG.md`.
+
+---
+
+## [0.27.4] — 2026-05-19
+
+Two real bugs found during the first live FULL-mode test: (a) the v0.27.2 battery-lock didn't actually engage — house battery drained while EV charged from grid, and (b) the v0.26.0 stop-window blocked mode changes for 180 s, making mode switches feel broken.
+
+### Fixed — Battery lock actually works now
+
+- v0.27.2's lock called `hass.services.async_call(..., blocking=False)` which silently swallowed any failure. If the entity didn't exist, the inverter ignored `0`, or the service call was malformed — we'd never know. Battery kept discharging through the EV's grid demand and drained.
+- v0.27.4 rewrites `_set_battery_lock`:
+  - **`blocking=True`** — failures raise, get logged at WARNING level, surface in system_log
+  - **Entity-existence check** — log a clear error if `number.foxessmodbus_max_discharge_current` is missing
+  - **Defence-in-depth** — additionally POSTs `batteryMode=hold` to EVCC's `/api/batterymode` endpoint when on EVCC live-data source. EVCC controls the inverter's battery mode via its own Modbus integration, so this is a redundant path that should work even if the direct number entity write fails.
+  - **Detailed lock/unlock logging** — INFO-level message lists which mechanism(s) succeeded and which failed, e.g. *"battery LOCKED via [max_discharge_current 0 A (was 50.0); EVCC batteryMode=hold]"*
+
+### Fixed — Time-windows only apply to PV mode
+
+- v0.26.0's `start_window` (60 s) and `stop_window` (180 s) anti-flap windows existed solely to absorb cloud flicker on the solar surplus signal. But they fired on ALL transitions — including user-initiated mode changes via the dashboard. Result: user switches from Fuld kraft to Låst, expects immediate stop, instead waits 3 minutes while the car keeps charging.
+- v0.27.4 narrows the windows to **PV mode only**. LOCKED / FULL / PV+battery modes now respond immediately to mode changes — no `ARMING` / `COOLING` state, no delay. Time-windows still apply within PV mode (their original intended scope).
+- `ev_telemetry`'s `state` field only shows `ARMING` / `COOLING` when in PV mode now. Other modes show `IDLE` / `CHARGING` directly.
+
+### Files touched
+
+`coordinator.py`, `manifest.json`, `CHANGELOG.md`.
+
+---
+
+## [0.27.3] — 2026-05-19
+
+Fixes the "after HA restart, charger data goes blank until the charger is power-cycled" problem. Most OCPP 1.6 chargers don't re-send `BootNotification` or `StatusNotification` on a plain WebSocket reconnect — they just resume `Heartbeat` messages. So after every HA restart, Solar AI's `sensor.solar_ai_lader_status` would sit at `Unknown` and vendor/model/serial would be empty, even though the WebSocket connection was healthy.
+
+Two complementary fixes, layered.
+
+### Added — `TriggerMessage` on charger (re)connect
+
+- New `ChargePoint.request_status_refresh()` outbound method: sends OCPP `TriggerMessage` for `StatusNotification` and `BootNotification` immediately after a charger connects, asking the charger to re-emit those messages on demand.
+- The `OcppServer` schedules this via `asyncio.create_task` 2 seconds after each connection arrives — long enough for the read loop to come up so `route_message` can dispatch the responses.
+- Chargers that don't implement `TriggerMessage` are handled gracefully (DEBUG log, no error spam).
+
+### Added — Persisted charger metadata across restarts
+
+- New `_persist_charger_metadata()` coordinator method runs every main update tick, snapshotting each connected charger's `vendor`, `model`, `firmware`, `serial`, and `last_energy_wh_total` into `_stored["charger_metadata"][cpid]`.
+- The dict is **shared by reference** with `OcppServer.persisted_metadata`, so updates from either side propagate without an explicit write.
+- When a charger (re)connects, `OcppServer._handle_connection` pre-populates the new `ChargePoint` instance from this dict — so sensors light up *immediately* with the last-known identity, instead of waiting for the next status-changing event from the charger.
+- `get_charger_telemetry()` falls back to persisted values when a field on the live `ChargePoint` is empty (i.e. the charger hasn't yet re-sent that data).
+- Also captures metadata from a previous `ChargePoint` instance when the same CPID reconnects mid-session (so even an intra-session reconnect doesn't lose state).
+
+### Combined behaviour after HA restart
+
+```
+T+0s   HA starts                                Solar AI sets up
+T+1s   OcppServer.persisted_metadata loaded     md = {"charger": {vendor:"EV Charger", model:"L11P", ...}}
+T+5s   Charger reconnects                       cp.vendor/model/serial pre-populated from md
+                                                sensor.solar_ai_lader_status: "Unknown" (not blank!)
+                                                sensor.solar_ai_lader_info: shows charger model + serial immediately
+T+7s   TriggerMessage(StatusNotification)       Charger replies "Available"
+                                                sensor.solar_ai_lader_status: "Available" (fresh!)
+```
+
+If the charger doesn't support `TriggerMessage`, the persisted snapshot keeps the dashboard sane until the next natural status change.
+
+### Files touched
+
+`ocpp_server.py`, `coordinator.py`, `__init__.py`, `manifest.json`, `CHANGELOG.md`.
+
+---
+
+## [0.27.2] — 2026-05-18
+
+Two PV-mode behaviour fixes discovered during the user's first live charging test.
+
+### Fixed — Battery-priority gate scope
+
+The v0.26.4 battery-priority gate held the EV off whenever the house battery was below the threshold AND the mode was either `pv` OR `pv_battery`. The PV+battery case was wrong: the whole point of that mode is that the user has explicitly opted in to using the house battery to top the EV up to its minimum charge rate — gating that on "battery must be full first" contradicts the mode's intent.
+
+- **Gate now only applies to `pv` mode** (Kun solenergi). Logic for `pv_battery` (use battery to fill the gap to min, but never below the floor SoC) is unaffected.
+
+### Fixed — PV-mode fractional-surplus handling (floor-amps + excess-to-battery)
+
+Previously `_kw_to_amps` rounded to the *nearest* whole amp. In PV mode that could overshoot the available surplus and silently pull the difference from grid or battery — defeating the "solar only" intent.
+
+- **PV mode now floors to the next-lower whole amp**, so when surplus falls between two amp steps the fractional difference flows into the house battery instead of being grid-drawn.
+- Example: 5.4 kW surplus → 7 A (4.83 kW) to EV, 0.57 kW to battery. Old behaviour: 8 A (5.52 kW) to EV, 0.12 kW drawn from grid.
+- FULL mode and PV+battery mode keep nearest-rounding (FULL deliberately maxes out; PV+battery has its own battery-fallback logic).
+- The reason string on `sensor.solar_ai_ev_status` now shows the excess flowing to the battery, e.g. *"PV: 5.40 kW overskud → 4.83 kW (7 A), 0.57 kW til batteri"*.
+
+### Added — House-battery lock during EV grid-charging
+
+Previously, in `Fuld kraft` mode the EV would happily pull max power from a mix of solar + grid + **house battery** (because Self Use mode lets the battery discharge to cover any load it sees). That contradicts user intent: when picking Fuld kraft, the user wants grid + solar, NOT to drain their house battery into the EV.
+
+- **New**: when the EV controller is actively charging (`final_amps > 0`) AND the active mode is `Fuld kraft`, Solar AI writes **`0` A to `number.foxessmodbus_max_discharge_current`** — effectively blocking the house battery from discharging. The battery may still *charge* from solar surplus; only the discharge path is closed.
+- **Released** automatically when the EV stops charging, the mode changes away from Fuld kraft, the EV disconnects, OR the integration is unloaded (so a HA restart mid-FULL-charge doesn't leave the battery stuck locked).
+- Previous max_discharge_current value is captured and restored on release (defaults to 50 A if nothing was observed).
+- New telemetry field: `battery_locked` on `sensor.solar_ai_ev_status` (attribute, surfaced for the dashboard).
+
+### Files touched
+
+`coordinator.py`, `__init__.py`, `sensor.py`, `manifest.json`, `CHANGELOG.md`.
+
+---
+
+## [0.27.1] — 2026-05-18
+
+Hotfix to v0.27.0 — chargers that don't auto-start sessions (FoxESS L11PMC included) now actually charge. Discovered during the user's first live test with the EV plugged in and mode set to Fuld kraft: Solar AI correctly commanded `SetChargingProfile @ 16 A`, but the charger sat in `Preparing` status with 0.0 kW flowing. Root cause: in OCPP 1.6, `SetChargingProfile` only sets the upper limit for a transaction — to actually deliver power the CSMS must initiate the transaction via `RemoteStartTransaction`. Some chargers (Easee, KEBA) auto-start on plug-in; others (the L11PMC) wait for the CSMS.
+
+### Added
+
+- **`ChargePoint.remote_start_transaction(id_tag, connector_id)`** — sends OCPP `RemoteStartTransaction` to begin a charging session. 30-second cooldown to prevent spamming if the charger keeps responding without entering a `Charging` state. Returns `True` if charger replies `Accepted`.
+- **`ChargePoint.remote_stop_transaction(transaction_id)`** — sends OCPP `RemoteStopTransaction` to end the current session. Used when the EV controller wants to stop charging while a transaction is active.
+
+### Changed
+
+- **EV controller's OCPP write logic** now goes beyond `SetChargingProfile`:
+  - When the controller wants to charge (`final_amps > 0`) AND the charger is in `Preparing` / `SuspendedEV` / `SuspendedEVSE` AND no session is active → send `RemoteStartTransaction(idTag="solar_ai")`.
+  - When the controller wants to stop (`final_amps == 0`) AND a session IS active → send `RemoteStopTransaction(transaction_id)`.
+- Logic is **state-based**, not transition-based — survives HA restarts and integration reloads cleanly. If the controller is restarted mid-cycle with a plugged-in car and FULL mode, the next tick re-detects the missing transaction and sends RemoteStartTransaction.
+
+### Files touched
+
+`ocpp_server.py`, `coordinator.py`, `manifest.json`, `CHANGELOG.md`.
+
+---
+
+## [0.27.0] — 2026-05-18
+
+**Major release. Solar AI now ships its own embedded OCPP 1.6 server** — no separate HACS integration required for OCPP-connected EV chargers. This eliminates an entire class of compatibility bugs (the v0.10.12 `lbbrhzn/ocpp` integration's `vol.Match` schema serializer crash, the duplicate-cpid registration mess, the strict-validation rejection of the FoxESS L11PMC's slightly off-spec frames) and brings EV control fully inside Solar AI's surface.
+
+### ⚠️ Breaking change — uninstall lbbrhzn/ocpp first
+
+If you previously installed the `lbbrhzn/ocpp` HACS integration to drive an OCPP charger from Solar AI, **uninstall it before upgrading**:
+
+1. Settings → Devices & Services → OCPP → 3-dots → **Delete**
+2. HACS → Integrations → **Open Charge Point Protocol (OCPP)** → Remove
+3. Restart Home Assistant
+4. Upgrade Solar AI to v0.27.0 (this release)
+5. Solar AI's embedded OCPP server starts on port 9000 (configurable)
+6. The L11PMC continues pointing at `ws://<ha-ip>:9000/<cpid>/` — no charger-side change needed
+
+If you skip steps 1–3, Solar AI's embedded server will fail to bind port 9000 and log a clear "port in use, did you uninstall lbbrhzn/ocpp?" message. EV controller stays inactive until the conflict is resolved.
+
+If you prefer to keep `lbbrhzn/ocpp` for some reason, toggle **"Use Solar AI's embedded OCPP server"** OFF in Step 2 of the OptionsFlow. Solar AI then falls back to reading lbbrhzn/ocpp's HA entities (same behaviour as v0.26.x).
+
+### Added
+
+- **`ocpp_server.py`** — new file (~460 LOC) hosting an embedded OCPP 1.6 server with:
+  - `OcppServer` class managing the WebSocket lifecycle (start/stop, port binding)
+  - `ChargePoint` class per connected charger with permissive parsing (skips schema validation, catches protocol errors, ignores malformed `'[]'` keepalive frames the L11PMC sends, doesn't tear down the connection on bad frames)
+  - **Inbound handlers**: `BootNotification`, `Heartbeat`, `StatusNotification`, `MeterValues`, `Authorize` (accept-all on LAN), `StartTransaction`, `StopTransaction`, `DataTransfer`
+  - **Outbound**: `SetChargingProfile` (sets connector max current; called by EV controller)
+  - **5-minute disconnect grace period** — `effective_status()` reports `Disconnected` only when no contact in 300 s. Survives Wi-Fi router reboots, charger power-cycles, brief network glitches without flapping the sensor state.
+- **7 new charger sensors** (Solar AI's namespace, replacing `lbbrhzn/ocpp`'s entities):
+  - `sensor.solar_ai_charger_status` — Available / Preparing / Charging / Finishing / Faulted / Disconnected
+  - `sensor.solar_ai_charger_power` — live charge power (kW)
+  - `sensor.solar_ai_charger_session_energy` — kWh delivered this session
+  - `sensor.solar_ai_charger_session_duration` — minutes since session start
+  - `sensor.solar_ai_charger_lifetime_energy` — total kWh (TOTAL_INCREASING, eligible for HA Energy dashboard)
+  - `sensor.solar_ai_charger_info` — vendor/model/firmware/serial + last-heartbeat timestamp
+  - `sensor.solar_ai_charger_session_log` — state = total sessions count; attribute = last 20 paired start/end with energy, duration, avg power
+- **Permissive parsing** — catches python-ocpp's `ProtocolError` exceptions on each inbound frame and continues the loop. Counts errors in `cp.protocol_errors` for diagnostic visibility without log noise.
+- **Configurable port** — `CONF_OCPP_PORT` (default 9000, range 1024–65535) in the OCPP Settings step.
+- **Embedded toggle** — `CONF_OCPP_EMBEDDED` (default `True`) in the OCPP Settings step. Lets advanced users opt out and use `lbbrhzn/ocpp` instead (the existing entity-override fields then come back into play).
+- **3 new select entities** on the EV / OCPP dashboard tab:
+  - `select.solar_ai_ev_minimum_opladningshastighed` — minimum charge rate as whole-amp dropdown (6 A through 16 A). Replaces the previous kW slider with cleaner amp-based selection. Display labels show both A and kW: *"6 A (4.14 kW)"*, *"7 A (4.83 kW)"*, etc.
+  - `select.solar_ai_ev_maksimum_opladningshastighed` — maximum charge rate, same widget type.
+  - `select.solar_ai_standard_ev_tilstand_ved_tilslutning` — default EV mode applied when a vehicle plugs in fresh (Låst / Kun solenergi / Min via sol + batteri / Fuld kraft). Live-changeable from the dashboard instead of buried in the OptionsFlow's OCPP Settings step. Stored in `_stored["ev_default_mode"]` with fallback to the config-entry value.
+  - The legacy `number.*_opladningshastighed_kw` slider entities remain in place for backward compatibility (any automation that referenced them keeps working) but are no longer shown on the dashboard.
+
+### Changed
+
+- `coordinator.py`:
+  - `_get_ocpp_status()` / `_get_ocpp_power_kw()` now read from the embedded server's `ChargePoint.effective_status()` / `power_w` when the embedded toggle is on; legacy HA-entity path retained for users on lbbrhzn/ocpp.
+  - `_set_ocpp_charge_rate()` calls `ChargePoint.set_current()` directly via WebSocket instead of going through the `ocpp.set_charge_rate` HA service.
+  - New `get_charger_telemetry()` builds a dict of `charger_*` fields merged into the result dict for the new sensors.
+  - New `_harvest_ocpp_sessions()` picks up completed sessions from each ChargePoint and appends them to a 500-cap session log in storage. Same pattern as `solar_floor_log`.
+
+### Migration
+
+- **v14 → v15** — seeds `ocpp_embedded = True` and `ocpp_port = 9000` for existing installs. EV controller's existing behaviour is preserved otherwise.
+
+### Files touched
+
+`ocpp_server.py` (new), `coordinator.py`, `sensor.py`, `config_flow.py`, `__init__.py`, `const.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json` (new requirement: `ocpp>=2.1.0`), `CHANGELOG.md`, `README.md`.
+
+---
+
+## [0.26.4] — 2026-05-18
+
+User-facing feature add: a **battery-priority threshold** that lets the user say "fill the house battery first up to X %, then divert solar surplus to the EV". Standalone slider, no other behaviour changes.
+
+### Added
+
+- **`number.solar_ai_ev_batteri_forst_taerskel`** (Battery-first threshold) — new live slider on the EV / OCPP dashboard tab. Range 50–100 %, default 80 %.
+  - In **PV** and **PV+battery** modes, the EV controller returns `target_kw = 0` while `battery_soc < threshold` and reports reason *"Batteri prioriteret: 60% / 80% — EV venter til batteri er fyldt"*. The inverter naturally diverts solar surplus into the house battery during this hold.
+  - Once `battery_soc ≥ threshold`, the controller resumes normal surplus tracking and the EV starts charging.
+  - **FULL** mode ignores the threshold (user wants max charge regardless of battery state).
+  - **Låst** mode unaffected (already 0 by definition).
+  - Persisted via the coordinator's `_stored` dict (live-adjustable, survives HA restart).
+- New coordinator method `set_ev_battery_priority_soc(value)` for the slider entity to call.
+
+### Migration
+
+- **v13 → v14** — seeds `ev_battery_priority_soc = 80` for existing installs. Behaviour change is opt-in: users who want the old "EV competes with battery immediately" behaviour can drag the slider down to their floor SoC (e.g. 50 %).
+
+### Files touched
+
+`const.py`, `coordinator.py`, `number.py`, `__init__.py`, `config_flow.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json`, `CHANGELOG.md`.
+
+---
+
+## [0.26.3] — 2026-05-18
+
+Self-healing patch for the OCPP entity override fields. Discovered during the first live EV-controller test session: when the user changed the CPID, the auto-derived status/power entity overrides (e.g. `sensor.<your-cpid>_status`) became stale and pointed at entities that no longer exist. Clearing them via OptionsFlow didn't actually remove them from the saved config (a separate OptionsFlow bug yet to be addressed). End result: Solar AI's EV controller reported "Unavailable" forever, even after the charger reconnected.
+
+### Fixed
+
+- **Self-healing OCPP entity override**. New helper `_resolve_ocpp_entity()` is used by both `_get_ocpp_status()` and `_get_ocpp_power_kw()`. If the user-set override points to an entity that doesn't exist in HA's state registry, the override is silently ignored and the coordinator falls back to the auto-derived name (`sensor.<cpid-lowercase>_status` / `sensor.<cpid-lowercase>_power_active_import`). Logs a debug line so the behaviour is traceable. This makes stale override values harmless — users no longer need to manually clear override fields after changing CPID.
+- Translation label for `ev_ocpp_charge_point_id` still misleading (says "what the charger announces, e.g. <your-charger-serial>"). Should be re-worded to clarify it's the **CPID configured in the OCPP integration**, not the charger's announced serial. Deferred to a future patch — not strictly blocking.
+
+### Files touched
+
+`coordinator.py`, `manifest.json`, `CHANGELOG.md`.
+
+---
+
+## [0.26.2] — 2026-05-18
+
+Patch follow-up to v0.26.1 fixing a startup-phase warning that v0.26.0 introduced when the decoupled EV control loop was added.
+
+### Fixed
+
+- **EV control loop no longer blocks HA's startup phase.** The previous implementation registered the loop via `hass.async_create_task`, which HA's bootstrap waits for during the startup phase — and an `await asyncio.sleep` inside a `while True:` loop never completes, so HA logged *"Something is blocking Home Assistant from wrapping up the start up phase"* every restart. Switched to `hass.async_create_background_task` (with a name argument) which is the supported way to register long-running tasks that the bootstrap should not wait on. No functional change; cleaner logs and faster startup.
+
+### Files touched
+
+`coordinator.py`, `manifest.json`, `CHANGELOG.md`.
+
+---
+
+## [0.26.1] — 2026-05-18
+
+Follow-up to v0.26.0 that surfaces the new time-based hysteresis to the user. The controller had been computing `ev_state`, `ev_arming_seconds_left`, and `ev_cooling_seconds_left` since v0.26.0 but no sensor exposed them — so the dashboard could not show *why* the controller was being patient during cloud-flicker. This release wires those fields into a dedicated sensor and adds a Mushroom card to the EV / OCPP dashboard tab.
+
+### Added
+
+- **`sensor.solar_ai_ev_status`** — primary state machine indicator (IDLE / ARMING / CHARGING / COOLING) with the following attributes:
+  - `arming_seconds_left` — countdown until charging starts (during ARMING)
+  - `cooling_seconds_left` — countdown until charging stops (during COOLING)
+  - `active_mode`, `target_kw`, `target_amps`, `surplus_kw`, `last_commanded_amps`, `reason`, `enabled`
+- Translations (en, da, strings) for the new sensor name.
+
+### Changed
+
+- **Dashboard tab order**: the EV / OCPP tab moves from position 6 (rightmost) to position 2 (second from the left). New order: Oversigt / EV / OCPP / Priser & Plan / Historik / Indstillinger / Logs.
+- **EV / OCPP dashboard tab** gains a Mushroom template card rendering the new sensor — *"Starter om 23 sek"* during ARMING, *"Stopper om 142 sek"* during COOLING, *"Oplader: 4.2 kW"* during CHARGING.
+
+### Files touched
+
+`sensor.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json`, `CHANGELOG.md`, plus the live Lovelace dashboard via WebSocket.
+
+---
+
+## [0.26.0] — 2026-05-18
+
+This release reworks the EV charge controller so behaviour can be tuned to match any OCPP charger's response time, and so the start/stop anti-flap windows are configurable in seconds (not coordinator ticks). The controller now runs in its own asyncio task at a user-set cadence, decoupled from the main fast-poll. The EV "really charging" power threshold also becomes user-configurable. README polish: the inaccurate "every 5 minutes" claim is corrected to the actual 30 s default (10–300 s range).
+
+### Added — Configurable EV control loop (time-based hysteresis)
+
+- New **OCPP Settings** fields:
+  - **Control loop interval** (5–60 s, default 10 s) — how often the EV controller re-evaluates surplus and adjusts the charge rate. Independent of the main coordinator fast-poll, so you can pick a cadence that matches your charger's OCPP write tolerance.
+  - **Start window** (10–600 s, default 60 s) — solar surplus must hold ≥ minimum charge rate for this long before charging starts. Stops a passing cloud from triggering a stuttering session.
+  - **Stop window** (30–1800 s, default 180 s) — solar surplus must stay below the minimum for this long before charging stops. After stop, a new start requires another full start-window of sustained surplus.
+  - **EV charging detection threshold** (500–10 000 W, default 3 000 W) — above this power level, Solar AI treats the EV as truly charging (used by the grid-charge gating, hourly-pattern learner, and max-kW learner).
+- **Decoupled control loop**: a dedicated `asyncio.Task` calls `_run_ev_controller` at the configured cadence; the main coordinator update only caches inputs. The loop is started in `async_setup_entry` and cancelled in `async_unload_entry`.
+- **Time-based hysteresis** (`_apply_ev_time_window`) replaces the previous 2-tick counter. Timestamps mark when surplus crossed above/below the minimum-charge threshold; transitions fire only after the elapsed seconds exceed `start_window` / `stop_window`. Cancelling the opposite-side timer on each crossing prevents start/stop oscillation.
+- **New telemetry**:
+  - `ev_state` — `IDLE` / `ARMING` / `CHARGING` / `COOLING`
+  - `ev_arming_seconds_left` — countdown until charging starts
+  - `ev_cooling_seconds_left` — countdown until charging stops
+  - Lets the dashboard render *"Starter om 23 sek"* or *"Stopper om 142 sek"* instead of just the binary state.
+
+### Changed
+
+- The 3 hard-coded `EV_CHARGE_THRESHOLD_W = 3000` references in `coordinator.py` are now read via `self._ev_charge_threshold_w()`, which honours the user-set value with the 3 000 W default as fallback.
+- Plug-in event and `set_ev_mode` now reset the new timestamp-based timers, not just the legacy tick counters.
+- README: "Every 5 minutes (configurable)" → **"Every 30 seconds (configurable, 10–300 s)"**. The actual default has always been 30 s; the README's claim of 5 minutes confused the max with the default.
+- README: "Real charging detection" + "EV on Solar sensor" lines updated to call out that the 3 000 W threshold is now configurable.
+
+### Migration
+
+- **v12 → v13** — seeds the four new EV control settings with their defaults for existing installs. Existing behaviour is preserved: 60 s start window matches the previous *2-tick × 30 s* hysteresis exactly, and 180 s stop window is a slight relaxation (was 60 s) that gives passing-cloud tolerance. Users who want the old aggressive stop behaviour can dial the stop window back to 60 s.
+
+### Files touched
+
+`const.py`, `coordinator.py`, `config_flow.py`, `__init__.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json`, `README.md`, `CHANGELOG.md`.
+
+---
+
 ## [0.25.5] — 2026-05-17
 
 This release bundles several layers of new functionality: Phase B1 (the EV charge controller), adaptive solar learning, two new persistent logs, a redesigned 3-step OptionsFlow, and device-registry-aware entity discovery. The intermediate v0.25.1–v0.25.4 versions are folded into this release because they were all bug-fixes/iteration on top of v0.25.0 features and never shipped externally.
@@ -32,7 +346,7 @@ This release bundles several layers of new functionality: Phase B1 (the EV charg
 OptionsFlow restructured into 3 steps: Parameters → **OCPP Settings** (new) → Entity Mapping. The new pane consolidates everything Solar AI needs to drive an OCPP-connected charger:
 
 - Master enable toggle (off by default)
-- OCPP charge point ID (what the charger announces, e.g. `60LH132057KQ050`)
+- OCPP charge point ID (what the charger announces, e.g. `<your-charger-serial>`)
 - Optional status / power sensor entity overrides (auto-derived from the charge point ID)
 - Default EV mode on plug-in
 

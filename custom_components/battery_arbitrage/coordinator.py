@@ -162,6 +162,20 @@ from .const import (
     EV_HYSTERESIS_STOP_TICKS,
     EV_MAX_AMP_STEP_PER_TICK,
     EV_MIN_AMP_CHANGE,
+    CONF_EV_CONTROL_INTERVAL_SECONDS,
+    CONF_EV_START_WINDOW_SECONDS,
+    CONF_EV_STOP_WINDOW_SECONDS,
+    CONF_EV_CHARGE_THRESHOLD_W,
+    CONF_EV_BATTERY_PRIORITY_SOC,
+    CONF_OCPP_EMBEDDED,
+    CONF_OCPP_PORT,
+    DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
+    DEFAULT_EV_START_WINDOW_SECONDS,
+    DEFAULT_EV_STOP_WINDOW_SECONDS,
+    DEFAULT_EV_CHARGE_THRESHOLD_W,
+    DEFAULT_EV_BATTERY_PRIORITY_SOC,
+    DEFAULT_OCPP_EMBEDDED,
+    DEFAULT_OCPP_PORT,
     EFFICIENCY_MIN_TOTAL_KWH,
 )
 
@@ -209,13 +223,38 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Currently open solar-floor-blocked event (closed when price rises
         # back above the floor and solar export resumes)
         self._open_floor_block: dict | None = None
-        # EV charge controller state (Phase B1)
+        # EV charge controller state (Phase B1 → v0.26.0 time-based)
         self._ev_active_mode: str = EV_MODE_LOCKED          # what's running right now
         self._ev_last_amps: int = 0                          # last A we commanded
-        self._ev_above_start_count: int = 0                 # ticks above start threshold
-        self._ev_below_stop_count: int = 0                  # ticks below stop threshold
+        # Legacy tick counters kept for set_ev_mode() back-compat reset only
+        self._ev_above_start_count: int = 0
+        self._ev_below_stop_count: int = 0
+        # Time-based hysteresis (v0.26.0): timestamps mark when surplus first
+        # crossed above/below the min-charge threshold. Cleared on the opposite
+        # crossing. The control loop only flips state once the elapsed time
+        # exceeds start_window / stop_window seconds.
+        self._ev_surplus_above_min_since_ts: datetime | None = None
+        self._ev_surplus_below_min_since_ts: datetime | None = None
         self._ev_prev_connected: bool = False               # last known plug state
         self._ev_last_reason: str = ""                      # human-readable status
+        # Battery-lock state (v0.27.2): when EV is FULL-mode charging, we
+        # set house battery max_discharge_current to 0 so the EV's grid demand
+        # isn't supplemented by raiding the house battery. Battery can still
+        # charge from solar — only the discharge path is blocked.
+        self._ev_battery_locked: bool = False
+        self._ev_battery_lock_prev_a: float | None = None
+        # Decoupled EV control loop: runs at CONF_EV_CONTROL_INTERVAL_SECONDS
+        # cadence (independent of the main coordinator fast-poll). Inputs are
+        # cached by the main update; the loop consumes the cache.
+        self._ev_control_task = None                        # asyncio.Task | None
+        self._cached_ev_inputs: dict | None = None
+        self._latest_ev_telemetry: dict = {
+            "ev_enabled": False,
+            "ev_reason": "EV control loop initialising",
+        }
+        # Embedded OCPP server (v0.27.0). Started in __init__.py's
+        # async_setup_entry, stopped in async_unload_entry. None until then.
+        self.ocpp_server = None  # type: ignore[assignment]
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -580,10 +619,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             for lp_ in loadpoints
         )
         # EV charging purely on solar surplus (pv mode, real charge power flowing)
+        ev_charge_threshold_w = self._ev_charge_threshold_w()
         ev_charging_solar = any(
             lp_.get("charging", False)
             and lp_.get("mode") == "pv"
-            and lp_.get("chargePower", 0) > EV_CHARGE_THRESHOLD_W
+            and lp_.get("chargePower", 0) > ev_charge_threshold_w
             for lp_ in loadpoints
         )
 
@@ -1057,12 +1097,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
         savings = self.get_savings_summary()
 
-        # ---- EV charge controller (Phase B1) — runs every fast tick ----
-        ev_telemetry = await self._run_ev_controller(
-            evcc_state=evcc_state,
-            battery_soc=battery_soc,
-            floor_soc=float(floor_soc),
-        )
+        # ---- EV charge controller (v0.26.0) — runs in its own asyncio loop ----
+        # Main update just caches the inputs; the decoupled control loop reads
+        # the cache at its configured cadence (default 10 s, range 5–60 s).
+        self._cached_ev_inputs = {
+            "evcc_state": evcc_state,
+            "battery_soc": battery_soc,
+            "floor_soc": float(floor_soc),
+            "ts": datetime.now(),
+        }
+        ev_telemetry = self._latest_ev_telemetry
+
+        # Harvest any completed OCPP sessions into the session log (v0.27.0)
+        self._harvest_ocpp_sessions()
+        # Snapshot charger metadata for restart recovery (v0.27.3)
+        self._persist_charger_metadata()
+        # Merge the embedded OCPP server's per-charger telemetry into the
+        # result dict so the new charger_* sensors can read it (v0.27.0)
+        ev_telemetry = {**ev_telemetry, **self.get_charger_telemetry()}
 
         # ---- save storage (learning tick only — avoids flash wear on fast ticks) ----
         if is_learning_tick:
@@ -1449,7 +1501,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
     def _update_ev_charge_learning(self, ev_charge_power_w: float) -> None:
         """Exponentially update the learned EV charging probability for the current hour."""
-        is_charging = ev_charge_power_w > EV_CHARGE_THRESHOLD_W
+        is_charging = ev_charge_power_w > self._ev_charge_threshold_w()
         hour = datetime.now().hour
         hourly: list[float] = self._stored.setdefault("ev_charge_hourly", [0.0] * 24)
         while len(hourly) < 24:
@@ -1471,7 +1523,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         Hard ceiling: grid_max_kw — physically impossible to charge faster than the
         breaker allows.
         """
-        if ev_charge_power_w <= EV_CHARGE_THRESHOLD_W:
+        if ev_charge_power_w <= self._ev_charge_threshold_w():
             return
         rate_kw = ev_charge_power_w / 1000.0
         current_max = float(self._stored.get("ev_max_kw", 0.0))
@@ -1971,11 +2023,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "Preparing", "Charging", "SuspendedEV", "SuspendedEVSE", "Finishing",
         )
         if ev_connected and not self._ev_prev_connected:
-            default_mode = self.config.get(CONF_EV_DEFAULT_MODE, DEFAULT_EV_DEFAULT_MODE)
+            # Default mode: prefer live override stored via the dashboard
+            # select entity (v0.27.0), fall back to config-entry value.
+            default_mode = self._stored.get(
+                "ev_default_mode",
+                self.config.get(CONF_EV_DEFAULT_MODE, DEFAULT_EV_DEFAULT_MODE),
+            )
             self._ev_active_mode = default_mode
             self._stored["ev_active_mode"] = default_mode
             self._ev_above_start_count = 0
             self._ev_below_stop_count = 0
+            self._ev_surplus_above_min_since_ts = None
+            self._ev_surplus_below_min_since_ts = None
             _LOGGER.info("EV plugged in (%s) — resetting mode to %s", charger_id, default_mode)
         self._ev_prev_connected = ev_connected
 
@@ -1994,16 +2053,38 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         non_ev_load_kw   = max(0.0, house_load_kw - ev_current_kw)
         solar_surplus_kw = max(0.0, solar_kw - non_ev_load_kw)
 
+        # NET surplus available to the EV (v0.27.5): the physical solar
+        # surplus minus what the house battery is currently absorbing.
+        # When the battery is below the priority threshold it's actively
+        # taking everything left over, so the EV-available surplus is 0
+        # even though there's a positive physical surplus.
+        # Battery charge sensor returns kW (positive = charging).
+        # We clamp to 0 if it's negative (i.e. battery discharging — that
+        # case happens in PV+battery mode where battery feeds the EV).
+        from .const import CONF_BATTERY_CHARGE_ENTITY, FOXESS_BATTERY_CHARGE_POWER  # noqa: PLC0415
+        battery_charge_kw = max(0.0, float(self._get_float_state(
+            self.config.get(CONF_BATTERY_CHARGE_ENTITY, FOXESS_BATTERY_CHARGE_POWER),
+            0.0,
+        ) or 0.0))
+        net_surplus_for_ev_kw = max(0.0, solar_surplus_kw - battery_charge_kw)
+
         min_kw = float(self._stored.get("ev_min_charge_kw", DEFAULT_EV_MIN_CHARGE_KW))
         max_kw = float(self._stored.get("ev_max_charge_kw", DEFAULT_EV_MAX_CHARGE_KW))
+        # Battery-priority threshold (v0.26.4): EV waits while battery_soc <
+        # priority_soc in PV / PV+battery modes. Live slider, defaults 80 %.
+        priority_soc = float(self._stored.get(
+            "ev_battery_priority_soc",
+            self.config.get(CONF_EV_BATTERY_PRIORITY_SOC, DEFAULT_EV_BATTERY_PRIORITY_SOC),
+        ))
 
         target_kw, reason = self._compute_ev_target_kw(
-            self._ev_active_mode, solar_surplus_kw, battery_soc, floor_soc, min_kw, max_kw,
+            self._ev_active_mode, solar_surplus_kw, battery_soc, floor_soc,
+            min_kw, max_kw, priority_soc,
         )
         target_amps = self._kw_to_amps(target_kw)
 
-        # ── Hysteresis (anti-flap) ────────────────────────────────────────
-        final_amps = self._apply_ev_hysteresis(target_amps)
+        # ── Anti-flap window (time-based, v0.26.0) ────────────────────────
+        final_amps = self._apply_ev_time_window(target_amps)
 
         # ── Rate-of-change limit (smooth ramp) ────────────────────────────
         if final_amps > 0 and self._ev_last_amps > 0:
@@ -2026,25 +2107,96 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             await self._set_ocpp_charge_rate(charger_id, final_amps)
             self._ev_last_amps = final_amps
 
+        # ── Initiate / terminate OCPP transaction (v0.27.1) ────────────────
+        # SetChargingProfile sets the LIMIT but doesn't start a session.
+        # When the charger sits in Preparing/SuspendedEV/SuspendedEVSE
+        # (cable plugged, no transaction), the CSMS must send
+        # RemoteStartTransaction to begin energy delivery. Likewise, when we
+        # want to stop and a session is active, we send RemoteStopTransaction.
+        # State-based (not transition-based) so reloads / mid-cycle deploys
+        # don't get stuck. The OCPP server's own 30-s cooldown prevents
+        # spamming RemoteStartTransaction while the charger thinks about it.
+        use_embedded = self.config.get(CONF_OCPP_EMBEDDED, True)
+        if use_embedded and self.ocpp_server is not None:
+            cp = self.ocpp_server.get(charger_id)
+            if cp is not None:
+                want_charging = final_amps > 0
+                cable_plugged = cp.status in (
+                    "Preparing", "SuspendedEV", "SuspendedEVSE",
+                )
+                if want_charging and cable_plugged and not cp.session_active:
+                    await cp.remote_start_transaction(id_tag="solar_ai")
+                elif (not want_charging) and cp.session_active and cp.session_transaction_id:
+                    await cp.remote_stop_transaction(cp.session_transaction_id)
+
+        # Battery-lock (v0.27.2): in FULL mode while actively charging, prevent
+        # the house battery from discharging so the EV's grid demand doesn't
+        # raid it. Released when EV stops or mode changes away from FULL.
+        want_lock = (final_amps > 0 and self._ev_active_mode == EV_MODE_FULL)
+        if want_lock != self._ev_battery_locked:
+            await self._set_battery_lock(want_lock)
+
         self._ev_last_reason = reason
-        return self._ev_telemetry(target_kw, final_amps, solar_surplus_kw, reason)
+        # v0.27.5: show NET surplus on the dashboard (after battery's current
+        # absorption), not the raw PV-minus-house-load number. Below the
+        # priority threshold this will show 0 because the battery is
+        # consuming everything.
+        return self._ev_telemetry(target_kw, final_amps, net_surplus_for_ev_kw, reason)
 
     def _compute_ev_target_kw(
         self, mode: str, solar_surplus: float, battery_soc: float,
         floor_soc: float, min_kw: float, max_kw: float,
+        priority_soc: float = 80.0,
     ) -> tuple[float, str]:
-        """Pure mode→target translation. Returns (target_kw, human-readable reason)."""
+        """Pure mode→target translation. Returns (target_kw, human-readable reason).
+
+        Battery-priority threshold (v0.26.4): in PV and PV+battery modes, EV
+        charging is held off until `battery_soc >= priority_soc`. The inverter
+        naturally diverts solar surplus to the battery while the EV target is
+        0, so the battery fills first; once the threshold is reached, EV
+        resumes normal surplus tracking. FULL mode ignores this (user wants
+        max charge regardless of battery state).
+        """
         if mode == EV_MODE_LOCKED:
             return 0.0, "Mode: Låst — ingen opladning"
 
         if mode == EV_MODE_FULL:
             return max_kw, f"Mode: Fuld kraft — {max_kw:.1f} kW"
 
+        # Battery-priority gate (applies to PV mode only — v0.27.2 fix)
+        # In PV+battery mode the user has *explicitly* opted in to using the
+        # house battery to top the EV up to the minimum charge rate, so
+        # holding the EV off while the battery is "not yet full" would
+        # contradict that intent. The gate therefore only applies to pure
+        # PV mode (Kun solenergi), where the user picks the threshold for
+        # "how much solar to save for the house battery before sharing".
+        if mode == EV_MODE_PV and battery_soc < priority_soc:
+            return 0.0, (
+                f"Batteri prioriteret: {battery_soc:.0f}% / {priority_soc:.0f}% "
+                f"— EV venter til batteri er fyldt"
+            )
+
         if mode == EV_MODE_PV:
             if solar_surplus >= min_kw:
-                target = min(solar_surplus, max_kw)
+                # Floor to whole amps (v0.27.2): when surplus falls *between*
+                # two amp steps, command the LOWER amp so the fractional
+                # surplus flows into the house battery instead of being
+                # waste-exported or pulled from grid. Example: 5.4 kW surplus
+                # → 7 A (4.83 kW to EV), 0.57 kW to battery.
+                import math
+                line_voltage_kw = EV_VOLTAGE * EV_PHASES / 1000.0  # 0.69 kW per amp
+                raw_amps = math.floor(solar_surplus / line_voltage_kw)
+                max_amps = max(EV_OCPP_MIN_AMPS, int(round(max_kw / line_voltage_kw)))
+                amps = max(EV_OCPP_MIN_AMPS, min(max_amps, raw_amps))
+                target = amps * line_voltage_kw
+                excess = max(0.0, solar_surplus - target)
+                if excess > 0.05:  # only show "til batteri" if meaningful
+                    return target, (
+                        f"PV: {solar_surplus:.2f} kW overskud → {target:.2f} kW "
+                        f"({amps} A), {excess:.2f} kW til batteri"
+                    )
                 return target, (
-                    f"PV: {solar_surplus:.1f} kW overskud → {target:.1f} kW"
+                    f"PV: {solar_surplus:.2f} kW overskud → {target:.2f} kW ({amps} A)"
                 )
             return 0.0, (
                 f"PV: overskud {solar_surplus:.1f} kW < min {min_kw:.1f} kW — stoppet"
@@ -2084,34 +2236,363 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         amps = int(round(kw * 1000.0 / (EV_VOLTAGE * EV_PHASES)))
         return max(EV_OCPP_MIN_AMPS, min(EV_OCPP_MAX_AMPS, amps))
 
-    def _apply_ev_hysteresis(self, target_amps: int) -> int:
-        """Anti-flap: require N consecutive ticks above/below threshold before
-        toggling between charging and stopped. No hysteresis on amperage
-        adjustments while already charging.
+    def _ev_charge_threshold_w(self) -> float:
+        """Return the configured 'EV is truly charging' threshold in watts."""
+        return float(self.config.get(
+            CONF_EV_CHARGE_THRESHOLD_W, DEFAULT_EV_CHARGE_THRESHOLD_W,
+        ))
+
+    # ────────────────────────────────────────────────────────────────────
+    # Battery-lock helper (v0.27.2) — prevents house battery discharge
+    # while EV is in FULL mode (so EV's grid demand isn't satisfied by
+    # raiding the house battery). Battery may still charge from solar.
+    # ────────────────────────────────────────────────────────────────────
+
+    FOXESS_MAX_DISCHARGE_ENTITY = "number.foxessmodbus_max_discharge_current"
+
+    async def _set_battery_lock(self, locked: bool) -> None:
+        """Apply or release the house-battery discharge lock (v0.27.4 hardened).
+
+        v0.27.2 wrote 0 to max_discharge_current with `blocking=False` — which
+        silently swallowed failures. Battery still drained because the call
+        failed but we didn't notice.
+
+        v0.27.4 uses defence-in-depth:
+          1. Write 0 to `number.foxessmodbus_max_discharge_current` with
+             `blocking=True` (raises on failure → logged at WARNING level
+             so it surfaces in system_log).
+          2. Verify entity exists before writing — log a clear error if not.
+          3. If running on EVCC live-data, ALSO POST `batteryMode=hold` to
+             EVCC's API. EVCC controls the inverter battery mode directly
+             via its own Modbus integration, so this is a redundant but
+             different code path.
+
+        Either mechanism alone should suffice; together they should reliably
+        prevent house-battery discharge while EV charges from grid.
         """
+        if locked == self._ev_battery_locked:
+            return
+
+        # ─── ENGAGE LOCK ──────────────────────────────────────────────
+        if locked:
+            mechanisms_ok = []
+            mechanisms_failed = []
+
+            # Mechanism 1: max_discharge_current → 0
+            entity_state = self.hass.states.get(self.FOXESS_MAX_DISCHARGE_ENTITY)
+            if entity_state is None:
+                _LOGGER.error(
+                    "Battery lock: entity %s not found — cannot apply "
+                    "max_discharge_current mechanism. Verify FoxESS Modbus is loaded.",
+                    self.FOXESS_MAX_DISCHARGE_ENTITY,
+                )
+                mechanisms_failed.append("max_discharge_current (entity missing)")
+            else:
+                try:
+                    prev = float(entity_state.state) if entity_state.state not in (None, "unknown", "unavailable") else 50.0
+                    if prev > 0:
+                        self._ev_battery_lock_prev_a = prev
+                    await self.hass.services.async_call(
+                        "number", "set_value",
+                        {"entity_id": self.FOXESS_MAX_DISCHARGE_ENTITY, "value": 0},
+                        blocking=True,
+                    )
+                    mechanisms_ok.append(
+                        f"max_discharge_current 0 A (was {self._ev_battery_lock_prev_a})"
+                    )
+                except Exception as err:  # noqa: BLE001
+                    mechanisms_failed.append(f"max_discharge_current ({err})")
+
+            # Mechanism 2: EVCC battery mode → hold (if on EVCC live-data)
+            if self.config.get(CONF_LIVE_DATA_SOURCE, "evcc") in ("evcc", "hybrid"):
+                try:
+                    evcc_url = self.config.get("evcc_url", "")
+                    if not evcc_url:
+                        raise RuntimeError("No EVCC URL configured")
+                    session = async_get_clientsession(self.hass)
+                    await self._evcc_post(
+                        session, evcc_url,
+                        f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}",
+                    )
+                    self._we_set_evcc_mode = True
+                    mechanisms_ok.append("EVCC batteryMode=hold")
+                except Exception as err:  # noqa: BLE001
+                    mechanisms_failed.append(f"EVCC batteryMode ({err})")
+
+            if mechanisms_ok:
+                _LOGGER.info(
+                    "EV controller: house battery LOCKED via [%s]%s",
+                    "; ".join(mechanisms_ok),
+                    f" — failures: {'; '.join(mechanisms_failed)}" if mechanisms_failed else "",
+                )
+                self._ev_battery_locked = True
+            else:
+                _LOGGER.error(
+                    "EV controller: house battery LOCK FAILED on all mechanisms: %s",
+                    "; ".join(mechanisms_failed),
+                )
+                # Don't set the flag — we'll retry on next tick
+
+        # ─── RELEASE LOCK ─────────────────────────────────────────────
+        else:
+            mechanisms_ok = []
+            mechanisms_failed = []
+
+            restore_a = self._ev_battery_lock_prev_a or 50.0
+            entity_state = self.hass.states.get(self.FOXESS_MAX_DISCHARGE_ENTITY)
+            if entity_state is not None:
+                try:
+                    await self.hass.services.async_call(
+                        "number", "set_value",
+                        {"entity_id": self.FOXESS_MAX_DISCHARGE_ENTITY, "value": restore_a},
+                        blocking=True,
+                    )
+                    mechanisms_ok.append(f"max_discharge_current → {restore_a:.1f} A")
+                except Exception as err:  # noqa: BLE001
+                    mechanisms_failed.append(f"max_discharge_current ({err})")
+
+            if (self.config.get(CONF_LIVE_DATA_SOURCE, "evcc") in ("evcc", "hybrid")
+                and self._we_set_evcc_mode):
+                try:
+                    evcc_url = self.config.get("evcc_url", "")
+                    if not evcc_url:
+                        raise RuntimeError("No EVCC URL configured")
+                    session = async_get_clientsession(self.hass)
+                    await self._evcc_post(
+                        session, evcc_url,
+                        f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_NORMAL}",
+                    )
+                    self._we_set_evcc_mode = False
+                    mechanisms_ok.append("EVCC batteryMode=normal")
+                except Exception as err:  # noqa: BLE001
+                    mechanisms_failed.append(f"EVCC batteryMode ({err})")
+
+            _LOGGER.info(
+                "EV controller: house battery UNLOCKED via [%s]%s",
+                "; ".join(mechanisms_ok) if mechanisms_ok else "no-op",
+                f" — failures: {'; '.join(mechanisms_failed)}" if mechanisms_failed else "",
+            )
+            self._ev_battery_lock_prev_a = None
+            self._ev_battery_locked = False
+
+    def set_ev_battery_priority_soc(self, value: float) -> None:
+        """Public setter for the battery-priority SoC slider (v0.26.4).
+
+        Clamped to 50–100 %. Persists via storage so it survives HA restarts.
+        """
+        clamped = max(50.0, min(100.0, float(value)))
+        self._stored["ev_battery_priority_soc"] = clamped
+        if self.hass:
+            self.hass.async_create_task(self._store.async_save(self._stored))
+
+    # ────────────────────────────────────────────────────────────────────
+    # OCPP session-log harvester (v0.27.0)
+    # ────────────────────────────────────────────────────────────────────
+
+    OCPP_SESSION_LOG_MAX = 500    # storage cap — same as solar_floor_log
+
+    def _persist_charger_metadata(self) -> None:
+        """Snapshot each connected ChargePoint's identity into storage (v0.27.3).
+
+        Runs every main update tick. Lets the data survive HA restarts so
+        sensors don't go blank between the moment Solar AI starts up and
+        the moment the charger sends a fresh BootNotification (which
+        usually doesn't happen on a transport reconnect).
+
+        The dict is shared by-reference with `OcppServer.persisted_metadata`,
+        so the server uses these values to pre-populate a new ChargePoint
+        instance the moment it accepts the WebSocket connection.
+
+        Storage write happens on the learning tick (not every fast tick) —
+        in-memory dict mutations are cheap.
+        """
+        if self.ocpp_server is None:
+            return
+        md_root = self._stored.setdefault("charger_metadata", {})
+        for cp_id, cp in self.ocpp_server.charge_points.items():
+            if cp.vendor or cp.model or cp.serial or cp.energy_wh_total > 0:
+                md_root[cp_id] = {
+                    "vendor": cp.vendor,
+                    "model": cp.model,
+                    "firmware": cp.firmware,
+                    "serial": cp.serial,
+                    "last_energy_wh_total": cp.energy_wh_total,
+                    "saved_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    def _harvest_ocpp_sessions(self) -> None:
+        """Pick up any completed sessions from the embedded OCPP server.
+
+        Each ChargePoint sets `last_session_summary` to a dict when a
+        StopTransaction arrives. We append it to `_stored["charger_session_log"]`
+        (capped at 500), bump the lifetime energy counter, and clear the
+        summary so the same session isn't appended twice.
+
+        Pattern matches `_open_floor_block` / `solar_floor_log` from v0.25.x.
+        """
+        if self.ocpp_server is None:
+            return
+        log = self._stored.setdefault("charger_session_log", [])
+        lifetime_kwh = float(self._stored.get("charger_lifetime_energy_kwh", 0.0))
+        changed = False
+        for cp in self.ocpp_server.charge_points.values():
+            if cp.last_session_summary is None:
+                continue
+            log.append(cp.last_session_summary)
+            lifetime_kwh += cp.last_session_summary.get("energy_kwh", 0.0)
+            cp.last_session_summary = None
+            changed = True
+        if changed:
+            # Cap at OCPP_SESSION_LOG_MAX (drop oldest)
+            if len(log) > self.OCPP_SESSION_LOG_MAX:
+                self._stored["charger_session_log"] = log[-self.OCPP_SESSION_LOG_MAX:]
+            self._stored["charger_lifetime_energy_kwh"] = round(lifetime_kwh, 3)
+
+    def get_charger_session_log(self, n: int = 20) -> list[dict]:
+        """Return the last N completed charger sessions, newest first."""
+        log = self._stored.get("charger_session_log", [])
+        return list(reversed(log[-n:]))
+
+    def get_charger_lifetime_energy_kwh(self) -> float:
+        """Total kWh delivered by the charger over its lifetime (under our watch)."""
+        return float(self._stored.get("charger_lifetime_energy_kwh", 0.0))
+
+    def get_charger_telemetry(self) -> dict:
+        """Build a dict of OCPP charger fields for the result dict / sensors.
+
+        Live ChargePoint instance values are primary. Persisted metadata
+        from `_stored["charger_metadata"]` is used as fallback for empty
+        fields (v0.27.3 — survives HA restarts so sensors don't go blank).
+        """
+        charger_id = self.config.get(CONF_EV_OCPP_CHARGE_POINT_ID, "")
+        session_log = self._stored.get("charger_session_log", [])
+        md = self._stored.get("charger_metadata", {}).get(charger_id, {})
+
+        if (
+            self.ocpp_server is None
+            or not charger_id
+            or charger_id not in self.ocpp_server.charge_points
+        ):
+            # No live ChargePoint — fall back to persisted snapshot if any
+            return {
+                "charger_status": "Disconnected" if md else "Unavailable",
+                "charger_power_kw": 0.0,
+                "charger_voltage_v": None,
+                "charger_session_active": False,
+                "charger_session_energy_kwh": 0.0,
+                "charger_session_duration_min": 0.0,
+                "charger_lifetime_energy_kwh": self.get_charger_lifetime_energy_kwh(),
+                "charger_session_count": len(session_log),
+                "charger_last_session": session_log[-1] if session_log else None,
+                "charger_vendor": md.get("vendor", ""),
+                "charger_model": md.get("model", ""),
+                "charger_firmware": md.get("firmware", ""),
+                "charger_serial": md.get("serial", ""),
+                "charger_seconds_since_seen": None,
+                "charger_protocol_errors": 0,
+                "charger_last_protocol_error": "",
+            }
+        cp = self.ocpp_server.charge_points[charger_id]
+        return {
+            "charger_status": cp.effective_status(),
+            "charger_power_kw": round(cp.power_w / 1000.0, 3),
+            "charger_voltage_v": cp.voltage_v,
+            "charger_session_active": cp.session_active,
+            "charger_session_energy_kwh": round(cp.session_energy_wh / 1000.0, 3),
+            "charger_session_duration_min": round(cp.session_duration_min(), 1),
+            "charger_lifetime_energy_kwh": self.get_charger_lifetime_energy_kwh(),
+            "charger_session_count": len(session_log),
+            "charger_last_session": session_log[-1] if session_log else None,
+            # Live cp fields with persisted-metadata fallback for empties
+            "charger_vendor": cp.vendor or md.get("vendor", ""),
+            "charger_model": cp.model or md.get("model", ""),
+            "charger_firmware": cp.firmware or md.get("firmware", ""),
+            "charger_serial": cp.serial or md.get("serial", ""),
+            "charger_seconds_since_seen": round(cp.seconds_since_seen, 1),
+            "charger_protocol_errors": cp.protocol_errors,
+            "charger_last_protocol_error": cp.last_protocol_error,
+        }
+
+    def _apply_ev_time_window(self, target_amps: int) -> int:
+        """Time-based anti-flap (v0.26.0, narrowed in v0.27.4 to PV-only).
+
+        Anti-flap windows are ONLY needed for `pv` mode — they exist to absorb
+        cloud-flicker on the solar surplus signal. In any other mode
+        (LOCKED, FULL, PV+battery) the target is deterministic and changes
+        only via user action, so we should respond immediately.
+
+        For PV mode: surplus must hold ≥ min for `start_window` seconds
+        before charging starts, and < min for `stop_window` seconds before
+        charging stops.
+        """
+        # v0.27.4: non-PV modes bypass time-windows entirely. Clear any
+        # half-armed timers so they don't carry stale state if the user
+        # switches back to PV later.
+        if self._ev_active_mode != EV_MODE_PV:
+            self._ev_surplus_above_min_since_ts = None
+            self._ev_surplus_below_min_since_ts = None
+            return target_amps
+        now = datetime.now()
+        start_window = int(self.config.get(
+            CONF_EV_START_WINDOW_SECONDS, DEFAULT_EV_START_WINDOW_SECONDS,
+        ))
+        stop_window = int(self.config.get(
+            CONF_EV_STOP_WINDOW_SECONDS, DEFAULT_EV_STOP_WINDOW_SECONDS,
+        ))
+
         if target_amps == 0:
-            # Wanting to stop
+            # Want to stop ── arm the stop timer when currently charging
             if self._ev_last_amps > 0:
-                self._ev_below_stop_count += 1
-                self._ev_above_start_count = 0
-                if self._ev_below_stop_count >= EV_HYSTERESIS_STOP_TICKS:
-                    return 0
-                return self._ev_last_amps  # keep going until confirmed
+                if self._ev_surplus_below_min_since_ts is None:
+                    self._ev_surplus_below_min_since_ts = now
+                self._ev_surplus_above_min_since_ts = None  # reset start timer
+                elapsed = (now - self._ev_surplus_below_min_since_ts).total_seconds()
+                if elapsed >= stop_window:
+                    self._ev_surplus_below_min_since_ts = None
+                    return 0                              # confirmed stop
+                return self._ev_last_amps                  # keep going until confirmed
             return 0
-        # Wanting to charge
+
+        # Want to charge ── arm the start timer when currently idle
         if self._ev_last_amps == 0:
-            self._ev_above_start_count += 1
-            self._ev_below_stop_count = 0
-            if self._ev_above_start_count >= EV_HYSTERESIS_START_TICKS:
-                return target_amps
-            return 0  # not confirmed yet, stay stopped
-        # Already charging — track amperage live, no hysteresis
-        self._ev_above_start_count = 0
-        self._ev_below_stop_count = 0
+            if self._ev_surplus_above_min_since_ts is None:
+                self._ev_surplus_above_min_since_ts = now
+            self._ev_surplus_below_min_since_ts = None     # reset stop timer
+            elapsed = (now - self._ev_surplus_above_min_since_ts).total_seconds()
+            if elapsed >= start_window:
+                self._ev_surplus_above_min_since_ts = None
+                return target_amps                         # confirmed start
+            return 0                                       # not enough sustained surplus yet
+
+        # Already charging — live ramp, no hysteresis on amperage
+        self._ev_surplus_above_min_since_ts = None
+        self._ev_surplus_below_min_since_ts = None
         return target_amps
 
     async def _set_ocpp_charge_rate(self, charger_id: str, amps: int) -> None:
-        """Call the OCPP integration's set_charge_rate service."""
+        """Send the target current to the charger.
+
+        Routes through Solar AI's embedded OCPP server if the embedded toggle
+        is on (v0.27.0+ default), else falls back to the legacy lbbrhzn/ocpp
+        HA service for users who haven't migrated.
+        """
+        use_embedded = self.config.get(CONF_OCPP_EMBEDDED, True)
+        if use_embedded and self.ocpp_server is not None:
+            cp = self.ocpp_server.get(charger_id)
+            if cp is None:
+                _LOGGER.debug(
+                    "Embedded OCPP: charger %s not connected — skipping write",
+                    charger_id,
+                )
+                return
+            ok = await cp.set_current(amps)
+            if ok:
+                _LOGGER.info(
+                    "EV controller: set %s to %d A (%.1f kW target)",
+                    charger_id, amps, amps * EV_VOLTAGE * EV_PHASES / 1000.0,
+                )
+            return
+        # Legacy path: call lbbrhzn/ocpp's service
         try:
             await self.hass.services.async_call(
                 "ocpp", "set_charge_rate",
@@ -2119,43 +2600,113 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 blocking=False,
             )
             _LOGGER.info(
-                "EV controller: set %s to %d A (%.1f kW target)",
+                "EV controller (legacy ocpp service): set %s to %d A (%.1f kW)",
                 charger_id, amps, amps * EV_VOLTAGE * EV_PHASES / 1000.0,
             )
-        except Exception as err:
-            _LOGGER.warning("OCPP set_charge_rate failed for %s: %s", charger_id, err)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Legacy OCPP set_charge_rate failed for %s: %s", charger_id, err)
+
+    def _resolve_ocpp_entity(
+        self, charger_id: str, override_key: str, default_suffix: str,
+    ) -> str:
+        """Pick the OCPP entity to read for a given purpose.
+
+        Priority: user-set override (if the entity actually exists), else
+        auto-derive `sensor.<charger_id-lowercase><default_suffix>`.
+
+        Self-healing: if the configured override points to an entity that
+        doesn't exist in HA's state registry (stale value left over from a
+        previous CPID, for example), the override is silently ignored and
+        we fall back to the auto-derived name.  This avoids requiring the
+        user to manually clear the override fields after changing CPID —
+        v0.26.x OptionsFlow has a known UX bug where empty fields don't get
+        persisted as deletions; this self-heal makes that bug harmless.
+        """
+        override = self.config.get(override_key)
+        if override:
+            if self.hass.states.get(override) is not None:
+                return override          # override exists — use it
+            # Override points at a non-existent entity (probably a stale
+            # auto-derived value from a previous CPID). Ignore it.
+            _LOGGER.debug(
+                "OCPP override %s = %r not in HA registry — auto-deriving",
+                override_key, override,
+            )
+        return f"sensor.{charger_id.lower()}{default_suffix}"
 
     def _get_ocpp_status(self, charger_id: str) -> str:
-        """Read the OCPP integration's status sensor for the configured charger.
+        """Get the current OCPP status for the configured charger.
 
-        Uses an explicit user override if provided, otherwise derives the entity
-        ID from the charge point ID using the `lbbrhzn/ocpp` integration's
-        naming convention (`sensor.<id-lowercase>_status`).
+        v0.27.0+: reads from Solar AI's embedded OCPP server (in-memory state
+        on the ChargePoint instance). Falls back to the legacy
+        `sensor.<cpid>_status` HA entity lookup if the embedded server is
+        off (for users still running lbbrhzn/ocpp alongside).
         """
-        eid = (
-            self.config.get(CONF_EV_OCPP_STATUS_ENTITY)
-            or f"sensor.{charger_id.lower()}_status"
+        use_embedded = self.config.get(CONF_OCPP_EMBEDDED, True)
+        if use_embedded and self.ocpp_server is not None:
+            cp = self.ocpp_server.get(charger_id)
+            if cp is None:
+                return "Unavailable"
+            return cp.effective_status()
+        # Legacy: read HA entity owned by lbbrhzn/ocpp
+        eid = self._resolve_ocpp_entity(
+            charger_id, CONF_EV_OCPP_STATUS_ENTITY, "_status",
         )
         state = self.hass.states.get(eid)
         return state.state if state and state.state not in ("unknown", "unavailable") else "Unavailable"
 
     def _get_ocpp_power_kw(self, charger_id: str) -> float:
-        """Read the OCPP integration's live charge power sensor (returns kW).
+        """Get the live charge power for the configured charger (kW).
 
-        Uses an explicit user override if provided, otherwise derives the entity
-        ID from the charge point ID (`sensor.<id-lowercase>_power_active_import`).
-        Watts are normalised to kW.
+        v0.27.0+: reads from the embedded OCPP server's MeterValues stream.
+        Falls back to the legacy HA entity for non-embedded setups.
         """
-        eid = (
-            self.config.get(CONF_EV_OCPP_POWER_ENTITY)
-            or f"sensor.{charger_id.lower()}_power_active_import"
+        use_embedded = self.config.get(CONF_OCPP_EMBEDDED, True)
+        if use_embedded and self.ocpp_server is not None:
+            cp = self.ocpp_server.get(charger_id)
+            if cp is None:
+                return 0.0
+            return cp.power_w / 1000.0
+        # Legacy: read HA entity owned by lbbrhzn/ocpp
+        eid = self._resolve_ocpp_entity(
+            charger_id, CONF_EV_OCPP_POWER_ENTITY, "_power_active_import",
         )
         return self._get_float_state(eid, 0.0) / 1000.0
 
     def _ev_telemetry(
         self, target_kw: float, target_amps: int, surplus_kw: float, reason: str,
     ) -> dict:
-        """Build the telemetry dict consumed by the visibility sensors."""
+        """Build the telemetry dict consumed by the visibility sensors.
+
+        Includes the time-based anti-flap state (v0.26.0):
+          - ev_state                  IDLE | ARMING | CHARGING | COOLING
+          - ev_arming_seconds_left    seconds remaining until a start fires (0 if not arming)
+          - ev_cooling_seconds_left   seconds remaining until a stop fires (0 if not cooling)
+        Dashboard can render these as "PV: starter om 23 sek" / "stopper om 142 sek".
+        """
+        now = datetime.now()
+        start_window = int(self.config.get(
+            CONF_EV_START_WINDOW_SECONDS, DEFAULT_EV_START_WINDOW_SECONDS,
+        ))
+        stop_window = int(self.config.get(
+            CONF_EV_STOP_WINDOW_SECONDS, DEFAULT_EV_STOP_WINDOW_SECONDS,
+        ))
+        arming_left = 0
+        cooling_left = 0
+        # ARMING/COOLING only meaningful in PV mode where the time-windows apply (v0.27.4)
+        in_pv = (self._ev_active_mode == EV_MODE_PV)
+        if self._ev_last_amps > 0:
+            state = "CHARGING"
+            if in_pv and self._ev_surplus_below_min_since_ts is not None:
+                state = "COOLING"
+                elapsed = (now - self._ev_surplus_below_min_since_ts).total_seconds()
+                cooling_left = max(0, int(stop_window - elapsed))
+        else:
+            state = "IDLE"
+            if in_pv and self._ev_surplus_above_min_since_ts is not None:
+                state = "ARMING"
+                elapsed = (now - self._ev_surplus_above_min_since_ts).total_seconds()
+                arming_left = max(0, int(start_window - elapsed))
         return {
             "ev_enabled": True,
             "ev_active_mode": self._ev_active_mode,
@@ -2164,6 +2715,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "ev_surplus_kw": round(surplus_kw, 2),
             "ev_reason": reason,
             "ev_last_commanded_amps": self._ev_last_amps,
+            "ev_state": state,
+            "ev_arming_seconds_left": arming_left,
+            "ev_cooling_seconds_left": cooling_left,
+            "ev_battery_locked": self._ev_battery_locked,
         }
 
     def set_ev_mode(self, new_mode: str) -> None:
@@ -2173,12 +2728,82 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return
         self._ev_active_mode = new_mode
         self._stored["ev_active_mode"] = new_mode
-        # Reset hysteresis counters so the new mode takes effect on the next tick
+        # Reset hysteresis state so the new mode takes effect on the next loop iteration
         self._ev_above_start_count = 0
         self._ev_below_stop_count = 0
+        self._ev_surplus_above_min_since_ts = None
+        self._ev_surplus_below_min_since_ts = None
         # Persist asynchronously
         if self.hass:
             self.hass.async_create_task(self._store.async_save(self._stored))
+
+    # ------------------------------------------------------------------ #
+    # Decoupled EV control loop (v0.26.0)                                   #
+    # ------------------------------------------------------------------ #
+
+    async def async_start_ev_control_loop(self) -> None:
+        """Start the background EV control task if not already running."""
+        if self._ev_control_task is not None and not self._ev_control_task.done():
+            return
+        # Use a *background* task so HA doesn't wait on it during the startup
+        # phase (otherwise this infinite loop trips the bootstrap timeout — see
+        # `Something is blocking Home Assistant from wrapping up the start up
+        # phase` warning in v0.26.0/v0.26.1).
+        self._ev_control_task = self.hass.async_create_background_task(
+            self._ev_control_loop(), name="solar_ai_ev_control_loop"
+        )
+        _LOGGER.info("EV control loop started (background task)")
+
+    async def async_stop_ev_control_loop(self) -> None:
+        """Cancel the background EV control task."""
+        if self._ev_control_task is None or self._ev_control_task.done():
+            return
+        self._ev_control_task.cancel()
+        try:
+            await self._ev_control_task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+        finally:
+            self._ev_control_task = None
+            _LOGGER.info("EV control loop stopped")
+
+    async def _ev_control_loop(self) -> None:
+        """Background loop: re-evaluates the EV target at the configured cadence.
+
+        Runs independently of the main coordinator fast-poll. Reads cached
+        inputs (evcc_state, battery_soc, floor_soc) written by the main update;
+        on each tick, computes a fresh decision via `_run_ev_controller` and
+        publishes the result to `_latest_ev_telemetry` for the main update to
+        merge into its result dict on its next pass.
+
+        Loop interval, start window, and stop window are configurable. If the
+        main update has not yet populated the cache, the iteration is a no-op.
+        """
+        _LOGGER.debug("EV control loop entering")
+        while True:
+            interval = int(self.config.get(
+                CONF_EV_CONTROL_INTERVAL_SECONDS,
+                DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
+            ))
+            # Clamp to a sane minimum so a bad config value can't spin the loop
+            interval = max(5, min(interval, 300))
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                _LOGGER.debug("EV control loop cancelled")
+                return
+            try:
+                cached = self._cached_ev_inputs
+                if cached is None:
+                    continue  # main update hasn't produced fresh inputs yet
+                telemetry = await self._run_ev_controller(
+                    evcc_state=cached["evcc_state"],
+                    battery_soc=cached["battery_soc"],
+                    floor_soc=cached["floor_soc"],
+                )
+                self._latest_ev_telemetry = telemetry
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.exception("EV control loop iteration failed: %s", err)
 
     # ------------------------------------------------------------------ #
     # Live state source dispatcher (EVCC / Hybrid / FoxESS)                #

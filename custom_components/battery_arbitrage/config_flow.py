@@ -47,6 +47,18 @@ from .const import (
     CONF_EV_OCPP_STATUS_ENTITY,
     CONF_EV_OCPP_POWER_ENTITY,
     CONF_EV_DEFAULT_MODE,
+    CONF_EV_CONTROL_INTERVAL_SECONDS,
+    CONF_EV_START_WINDOW_SECONDS,
+    CONF_EV_STOP_WINDOW_SECONDS,
+    CONF_EV_CHARGE_THRESHOLD_W,
+    CONF_OCPP_EMBEDDED,
+    CONF_OCPP_PORT,
+    DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
+    DEFAULT_EV_START_WINDOW_SECONDS,
+    DEFAULT_EV_STOP_WINDOW_SECONDS,
+    DEFAULT_EV_CHARGE_THRESHOLD_W,
+    DEFAULT_OCPP_EMBEDDED,
+    DEFAULT_OCPP_PORT,
     CONF_SPOT_PRICE_ENTITY,
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_FLOOR_SOC,
@@ -114,7 +126,7 @@ def _entity_optional(key: str, current_value: str):
 class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the setup wizard."""
 
-    VERSION = 12
+    VERSION = 15
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -671,6 +683,16 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="ocpp_settings",
             data_schema=vol.Schema({
+                # ── Embedded OCPP server (v0.27.0) ──────────────────────
+                vol.Required(CONF_OCPP_EMBEDDED,
+                             default=data.get(CONF_OCPP_EMBEDDED,
+                                              DEFAULT_OCPP_EMBEDDED)):
+                    bool,
+                vol.Required(CONF_OCPP_PORT,
+                             default=data.get(CONF_OCPP_PORT,
+                                              DEFAULT_OCPP_PORT)):
+                    vol.All(vol.Coerce(int), vol.Range(min=1024, max=65535)),
+                # ── EV controller ───────────────────────────────────────
                 vol.Required(CONF_EV_CONTROLLER_ENABLED,
                              default=data.get(CONF_EV_CONTROLLER_ENABLED,
                                               DEFAULT_EV_CONTROLLER_ENABLED)):
@@ -694,6 +716,25 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                         ],
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )),
+                # Time-based control loop tuning (v0.26.0).
+                # Loop interval ≤ start_window/4 is recommended (so the loop
+                # samples the threshold-crossing several times during the window).
+                vol.Required(CONF_EV_CONTROL_INTERVAL_SECONDS,
+                             default=data.get(CONF_EV_CONTROL_INTERVAL_SECONDS,
+                                              DEFAULT_EV_CONTROL_INTERVAL_SECONDS)):
+                    vol.All(vol.Coerce(int), vol.Range(min=5, max=60)),
+                vol.Required(CONF_EV_START_WINDOW_SECONDS,
+                             default=data.get(CONF_EV_START_WINDOW_SECONDS,
+                                              DEFAULT_EV_START_WINDOW_SECONDS)):
+                    vol.All(vol.Coerce(int), vol.Range(min=10, max=600)),
+                vol.Required(CONF_EV_STOP_WINDOW_SECONDS,
+                             default=data.get(CONF_EV_STOP_WINDOW_SECONDS,
+                                              DEFAULT_EV_STOP_WINDOW_SECONDS)):
+                    vol.All(vol.Coerce(int), vol.Range(min=30, max=1800)),
+                vol.Required(CONF_EV_CHARGE_THRESHOLD_W,
+                             default=data.get(CONF_EV_CHARGE_THRESHOLD_W,
+                                              DEFAULT_EV_CHARGE_THRESHOLD_W)):
+                    vol.All(vol.Coerce(int), vol.Range(min=500, max=10000)),
             }),
         )
 
