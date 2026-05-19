@@ -423,6 +423,45 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "slots": d.get("price_chart_slots", []),
         },
     ),
+    # ── 48h solar forecast chart (v0.28.2) ────────────────────────────────
+    # State = number of slots available (handy for dashboard "no data" guards).
+    # `slots` attribute holds the per-slot forecast points consumed by the
+    # ApexCharts card on the EV / OCPP tab. Each entry has:
+    #   start    — ISO timestamp of the slot start
+    #   raw_kw   — raw Solcast / Forecast.Solar value
+    #   adj_kw   — scaled by the per-hour accuracy factor (solcelleprognose)
+    #   factor   — the accuracy factor itself (debug / tooltip use)
+    BatteryArbitrageSensorDescription(
+        key="solar_forecast_48h_chart",
+        translation_key="solar_forecast_48h_chart",
+        icon="mdi:weather-sunny",
+        value_fn=lambda d: len(d.get("solar_chart_slots", [])),
+        attrs_fn=lambda d: {
+            "slots": d.get("solar_chart_slots", []),
+            # v0.28.3: daily totals (adjusted via solcelleprognose factor)
+            "today_remaining_kwh":     d.get("solar_today_remaining_adj_kwh", 0.0),
+            "today_remaining_raw_kwh": d.get("solar_today_remaining_raw_kwh", 0.0),
+            "tomorrow_kwh":            d.get("solar_tomorrow_adj_kwh", 0.0),
+            "tomorrow_raw_kwh":        d.get("solar_tomorrow_raw_kwh", 0.0),
+        },
+    ),
+    # ── Daily kWh forecast totals (v0.28.3, adjusted) ─────────────────────
+    BatteryArbitrageSensorDescription(
+        key="solar_today_remaining_kwh",
+        translation_key="solar_today_remaining_kwh",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:weather-sunset-down",
+        value_fn=lambda d: round(d.get("solar_today_remaining_adj_kwh", 0.0), 2),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="solar_tomorrow_kwh",
+        translation_key="solar_tomorrow_kwh",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:weather-sunny",
+        value_fn=lambda d: round(d.get("solar_tomorrow_adj_kwh", 0.0), 2),
+    ),
     # ── Tonight's plan ───────────────────────────────────────────────────
     BatteryArbitrageSensorDescription(
         key="todays_plan",
@@ -497,6 +536,9 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         attrs_fn=lambda d: {
             "arming_seconds_left": d.get("ev_arming_seconds_left", 0),
             "cooling_seconds_left": d.get("ev_cooling_seconds_left", 0),
+            # v0.28.1: ISO timestamps for live per-second countdown
+            "arming_until": d.get("ev_arming_until"),
+            "cooling_until": d.get("ev_cooling_until"),
             "active_mode": d.get("ev_active_mode", "locked"),
             "target_kw": d.get("ev_target_kw", 0.0),
             "target_amps": d.get("ev_target_amps", 0),
@@ -628,9 +670,13 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:history",
         # State = total number of completed sessions
         value_fn=lambda d: d.get("charger_session_count", 0),
-        # Attrs = last 20 sessions newest-first
+        # v0.28.4: expose the full last-20 session list (newest first) so the
+        # Logs tab can render a proper history table with grid/solar split.
         attrs_fn=lambda d: {
             "last_session": d.get("charger_last_session"),
+            "sessions": d.get("charger_session_log_list", []),
+            "live_solar_kwh": d.get("charger_session_solar_kwh", 0.0),
+            "live_grid_kwh": d.get("charger_session_grid_kwh", 0.0),
         },
     ),
 )

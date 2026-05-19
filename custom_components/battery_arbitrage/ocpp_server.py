@@ -101,6 +101,13 @@ class ChargePoint(_Cp if _Cp is not None else object):
         self.session_start_energy_wh: float | None = None
         self.session_energy_wh: float = 0.0
         self.session_transaction_id: int | None = None
+        # v0.28.4: per-session grid vs solar energy split, integrated by the
+        # coordinator tick from live PV/load/EV power. Approximate — depends
+        # on tick cadence and live state — but useful to show how much of a
+        # session was actually from the panels vs from the grid.
+        self.session_solar_wh: float = 0.0
+        self.session_grid_wh: float = 0.0
+        self._session_split_last_ts: datetime | None = None
         # When a session closes, we publish summary here for the sensor /
         # session_log to pick up
         self.last_session_summary: dict | None = None
@@ -147,7 +154,15 @@ class ChargePoint(_Cp if _Cp is not None else object):
 
     @on(Action.status_notification if hasattr(Action, "status_notification") else "StatusNotification")
     async def on_status(self, connector_id=None, error_code=None, status=None, **kwargs):
-        self.status = str(status) if status is not None else "Unknown"
+        new_status = str(status) if status is not None else "Unknown"
+        # v0.28.0 fix: when charger reports it's no longer actively charging,
+        # zero out power_w. Previously cp.power_w stayed at the last MeterValues
+        # reading if the charger didn't send a final 0-W frame on session end
+        # — leaving lader_effekt sensor stuck at e.g. 4.7 kW after the car
+        # finished charging.
+        if new_status in ("Available", "Finishing", "Faulted", "Unavailable", "Reserved"):
+            self.power_w = 0.0
+        self.status = new_status
         self.last_seen = datetime.now(timezone.utc)
         _LOGGER.debug(
             "OCPP charger %s status: %s (connector=%s error=%s)",
@@ -198,6 +213,10 @@ class ChargePoint(_Cp if _Cp is not None else object):
         self.session_start_ts = datetime.now(timezone.utc)
         self.session_start_energy_wh = float(meter_start or 0)
         self.session_energy_wh = 0.0
+        # v0.28.4: reset grid/solar split accumulators for the new session
+        self.session_solar_wh = 0.0
+        self.session_grid_wh = 0.0
+        self._session_split_last_ts = None
         # Synthetic transaction ID — the L11PMC ignores the value, it just
         # needs a non-zero int. Use seconds-since-epoch to ensure uniqueness.
         self.session_transaction_id = int(datetime.now().timestamp())
@@ -223,17 +242,40 @@ class ChargePoint(_Cp if _Cp is not None else object):
         duration_min = 0.0
         if self.session_start_ts is not None:
             duration_min = (now - self.session_start_ts).total_seconds() / 60.0
+        # v0.28.4: include the integrated grid/solar split in the session
+        # summary. Note: solar+grid may not exactly equal energy_kwh because
+        # the split is integrated from per-tick live power readings while
+        # energy_kwh comes from the charger's meter — small drift is normal.
+        delivered_kwh = round(delivered_wh / 1000.0, 3)
+        session_solar_kwh = round(self.session_solar_wh / 1000.0, 3)
+        session_grid_kwh = round(self.session_grid_wh / 1000.0, 3)
+        # If we missed some ticks, the split may sum to less than the meter.
+        # Allocate the residual to grid (conservative — assume worst case).
+        residual = max(0.0, delivered_kwh - session_solar_kwh - session_grid_kwh)
+        if residual > 0:
+            session_grid_kwh = round(session_grid_kwh + residual, 3)
         self.last_session_summary = {
             "start_ts": self.session_start_ts.isoformat() if self.session_start_ts else None,
             "end_ts": now.isoformat(),
             "duration_min": round(duration_min, 1),
-            "energy_kwh": round(delivered_wh / 1000.0, 3),
+            "energy_kwh": delivered_kwh,
+            "energy_kwh_solar": session_solar_kwh,
+            "energy_kwh_grid": session_grid_kwh,
             "avg_power_kw": round(
-                (delivered_wh / 1000.0) / (duration_min / 60.0), 2,
+                delivered_kwh / (duration_min / 60.0), 2,
             ) if duration_min > 0 else 0.0,
         }
         self.session_energy_wh = delivered_wh
         self.session_active = False
+        # v0.28.0 fix: zero out power_w on session end so the lader_effekt
+        # sensor doesn't stay stuck at the last MeterValues reading.
+        self.power_w = 0.0
+        # v0.28.1 fix: clear the RemoteStartTransaction cooldown when a
+        # session ends. Otherwise a stale `last_remote_start_attempt` from
+        # earlier in the day can silently block the next legitimate restart
+        # attempt for up to 30 s after the cool-down stop. With the session
+        # confirmed closed, there's no reason to throttle the next start.
+        self.last_remote_start_attempt = None
         _LOGGER.info(
             "OCPP charger %s: transaction stopped (%.2f kWh, %.1f min)",
             self.id, delivered_wh / 1000.0, duration_min,
