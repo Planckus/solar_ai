@@ -28,6 +28,8 @@ from .const import (
     CONF_EV_BATTERY_PRIORITY_SOC,
     CONF_OCPP_EMBEDDED,
     CONF_OCPP_PORT,
+    CONF_OCPP_RESTART_STRICT,
+    CONF_OCPP_REMOTE_START_COOLDOWN_S,
     DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
     DEFAULT_EV_START_WINDOW_SECONDS,
     DEFAULT_EV_STOP_WINDOW_SECONDS,
@@ -35,6 +37,8 @@ from .const import (
     DEFAULT_EV_BATTERY_PRIORITY_SOC,
     DEFAULT_OCPP_EMBEDDED,
     DEFAULT_OCPP_PORT,
+    DEFAULT_OCPP_RESTART_STRICT,
+    DEFAULT_OCPP_REMOTE_START_COOLDOWN_S,
     CONF_SPOT_MARKUP,
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
@@ -239,6 +243,9 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # the OCPP Settings step.
         new_data.setdefault(CONF_OCPP_EMBEDDED, DEFAULT_OCPP_EMBEDDED)
         new_data.setdefault(CONF_OCPP_PORT, DEFAULT_OCPP_PORT)
+        # v0.28.7 migration: ensure new OCPP compatibility fields have defaults
+        new_data.setdefault(CONF_OCPP_RESTART_STRICT, DEFAULT_OCPP_RESTART_STRICT)
+        new_data.setdefault(CONF_OCPP_REMOTE_START_COOLDOWN_S, DEFAULT_OCPP_REMOTE_START_COOLDOWN_S)
         hass.config_entries.async_update_entry(entry, data=new_data, version=15)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v15")
 
@@ -270,6 +277,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator.ocpp_server = OcppServer(
             port=port,
             persisted_metadata=persisted_md,
+            remote_start_cooldown_s=int(entry.data.get(
+                CONF_OCPP_REMOTE_START_COOLDOWN_S,
+                DEFAULT_OCPP_REMOTE_START_COOLDOWN_S,
+            )),
         )
         try:
             await coordinator.ocpp_server.start()

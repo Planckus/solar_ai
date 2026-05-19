@@ -165,7 +165,9 @@
           "ev_control_interval_seconds": "Loopinterval (sekunder, 5–60) — hvor ofte laderen genvurderes",
           "ev_start_window_seconds": "Startvindue (sekunder, 10–600) — overskud skal holde så længe før opladning starter",
           "ev_stop_window_seconds": "Stopvindue (sekunder, 30–1800) — overskud skal være under min så længe før opladning stopper",
-          "ev_charge_threshold_w": "Tærskel for opladningsdetektion (W, 500–10000) — over dette niveau lader bilen reelt"
+          "ev_charge_threshold_w": "Tærskel for opladningsdetektion (W, 500–10000) — over dette niveau lader bilen reelt",
+          "ocpp_restart_strict": "Streng OCPP-genstartstilstand (kun spec-kompatible ladere). Slået fra (standard) tillader RemoteStart fra Charging og Finishing ud over Preparing / SuspendedEV / SuspendedEVSE — kræves af FoxESS L11PMC.",
+          "ocpp_remote_start_cooldown_s": "Cooldown for RemoteStartTransaction (sekunder, 5–300) — minimumstid mellem på hinanden følgende genstartsforsøg på samme lader"
         }
       },
       "entities": {

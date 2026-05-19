@@ -77,7 +77,7 @@ class ChargePoint(_Cp if _Cp is not None else object):
     # frames being rejected as "invalid".
     _skip_schema_validation = True
 
-    def __init__(self, cp_id: str, connection: Any) -> None:
+    def __init__(self, cp_id: str, connection: Any, remote_start_cooldown_s: int = 30) -> None:
         super().__init__(cp_id, connection)
         self._connection = connection
 
@@ -119,10 +119,11 @@ class ChargePoint(_Cp if _Cp is not None else object):
         # ── Outbound throttle: last commanded amps (avoid no-op writes) ───
         self.last_commanded_amps: int | None = None
 
-        # ── RemoteStartTransaction cooldown (v0.27.1) ────────────────────
+        # ── RemoteStartTransaction cooldown (v0.27.1, configurable v0.28.7) ─
         # Don't spam RemoteStartTransaction every tick if the charger keeps
-        # ignoring us. Cooldown is 30 s between attempts.
+        # ignoring us. Cooldown is now user-configurable (5-300 s, default 30).
         self.last_remote_start_attempt: datetime | None = None
+        self.remote_start_cooldown_s: int = int(remote_start_cooldown_s)
 
     # ────────────────────────────────────────────────────────────────────
     # Inbound handlers (charger → us)
@@ -351,12 +352,13 @@ class ChargePoint(_Cp if _Cp is not None else object):
         request which our `on_start_transaction` handler responds to.
         """
         now = datetime.now(timezone.utc)
+        cooldown_s = self.remote_start_cooldown_s
         if self.last_remote_start_attempt is not None:
             elapsed = (now - self.last_remote_start_attempt).total_seconds()
-            if elapsed < 30:
+            if elapsed < cooldown_s:
                 _LOGGER.debug(
                     "OCPP charger %s: RemoteStartTransaction skipped (cooldown, %.1f s left)",
-                    self.id, 30 - elapsed,
+                    self.id, cooldown_s - elapsed,
                 )
                 return False
         self.last_remote_start_attempt = now
@@ -532,11 +534,15 @@ class OcppServer:
         self,
         port: int = 9000,
         persisted_metadata: dict | None = None,
+        remote_start_cooldown_s: int = 30,
     ) -> None:
         self.port = port
         self.charge_points: dict[str, ChargePoint] = {}
         self._server: Any = None
         self._running: bool = False
+        # v0.28.7: passed through to every ChargePoint instance created
+        # by the server. Configurable in OCPP Settings.
+        self.remote_start_cooldown_s: int = int(remote_start_cooldown_s)
         # Charger metadata persisted across HA restarts (v0.27.3). Keyed by
         # cpid. Shared by-reference with coordinator._stored["charger_metadata"]
         # so updates from either side propagate. Used to pre-populate a new
@@ -618,7 +624,7 @@ class OcppServer:
                     "serial": old_cp.serial,
                     "last_energy_wh_total": old_cp.energy_wh_total,
                 }
-        cp = ChargePoint(cp_id, connection)
+        cp = ChargePoint(cp_id, connection, remote_start_cooldown_s=self.remote_start_cooldown_s)
         # Pre-populate from persisted metadata (v0.27.3) — vendor/model/serial
         # survive HA restarts, so sensors show real data even before the
         # charger sends a fresh BootNotification (which it usually won't).

@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.28.7] — 2026-05-19
+
+### Added — User-configurable OCPP charger compatibility
+
+The two charger-quirk workarounds introduced in v0.28.0 and v0.28.1 are now exposed as settings in *Configure → OCPP Settings*, so the integration can be tuned to spec-compliant chargers as well as the FoxESS L11PMC it was originally developed against.
+
+- New `CONF_OCPP_RESTART_STRICT` (default `False` = Lenient, preserves current behaviour for existing installs). When set to True, RemoteStartTransaction is only fired when the charger reports `Preparing`, `SuspendedEV`, or `SuspendedEVSE` — the OCPP 1.6 spec set. When False (default), `Charging` and `Finishing` are also accepted, which is required for the FoxESS L11PMC and any charger that lingers in non-spec states after a cool-down stop.
+- New `CONF_OCPP_REMOTE_START_COOLDOWN_S` (default 30 s, range 5–300 s). Minimum gap between consecutive RemoteStartTransaction attempts on the same charger, previously hardcoded. Cooldown is still automatically cleared on every clean StopTransaction (the v0.28.1 fix), so this only throttles the within-failed-start retry loop.
+
+Migration: existing config entries get both fields set to their defaults on first load of v0.28.7, so behaviour is identical for current users until they choose to change it.
+
+The other two charger-related fixes from v0.28.0 / v0.28.1 — zeroing `cp.power_w` on `StopTransaction` and on non-charging StatusNotifications, and clearing `last_remote_start_attempt` on `StopTransaction` — remain hardcoded because they are universally correct under the OCPP 1.6 spec.
+
+---
+
 ## [0.28.6] — 2026-05-19
 
 ### Added — Short-term solar forecast correction (Kalman-style intra-hour layer)
