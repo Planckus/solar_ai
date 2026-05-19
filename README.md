@@ -213,7 +213,7 @@ From v0.24.0, the integration supports three live-data modes. Pick the one that 
 | **Hybrid** | You have EVCC for EV, but want more accurate live grid/PV directly from the inverter | EVCC + FoxESS Modbus + a solar forecast source (EVCC's Solcast, Solcast direct, or Forecast.Solar) |
 | **FoxESS only** | You have no EV (or your EV doesn't draw from the house battery) | FoxESS Modbus + a solar forecast source (Solcast direct or Forecast.Solar) |
 
-> ⚠️ **Warning:** If you have an EV, do not pick FoxESS-only. Without EVCC there is no way for Solar AI to detect when the EV is charging — the optimizer could grid-charge the battery at the same time, exceeding your main breaker. The setup wizard enforces a hard acknowledgement before allowing FoxESS-only.
+> ℹ️ **Note:** FoxESS-only mode is best for installs without an EV. If you have an OCPP-connected EV charger, Solar AI's embedded OCPP server (v0.27.0+) still detects EV charging directly via the charger — and **grid-headroom protection** keeps you under the breaker regardless of detection method (the optimizer caps battery charge based on live grid-import readings, so combined EV + battery draw cannot exceed your circuit limit). However, the EV-aware *scheduling* features (skip grid-charge during typical EV hours, hourly EV-probability learning) require EVCC live-data mode; they're inactive in FoxESS-only mode. The setup wizard's "no EV" acknowledgement is now a soft confirmation rather than a hard breaker-safety requirement.
 
 ### Component checklist by mode
 
