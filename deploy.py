@@ -24,19 +24,42 @@ import tempfile
 import time
 from pathlib import Path
 
+import os
+
 import yaml
 
 # ── Configuration ─────────────────────────────────────────────────────────────
+#
+# Configure via environment variables (or edit the fallback values below):
+#
+#   HA_HOST     — your Home Assistant host:port             (default: homeassistant.local:8123)
+#   HA_PROTO    — http or https                              (default: http)
+#   MAC_IP      — this dev machine's LAN IP                  (REQUIRED for tarball pull)
+#                  e.g.  export MAC_IP=$(ipconfig getifaddr en0)   on macOS
+#                        export MAC_IP=$(hostname -I | awk '{print $1}')  on Linux
+#   EVCC_URL    — your EVCC instance                         (default: http://your-ha-ip:7070)
+#
+# Find your HA's IP under Settings → System → Network.
 
-HA_URL = "http://192.168.1.2:8123"
-HA_WS  = "ws://192.168.1.2:8123/api/websocket"
-MAC_IP = "192.168.1.50"   # Mac LAN address visible from HA host
-HTTP_PORT = 8765
+_HA_HOST  = os.environ.get("HA_HOST",  "homeassistant.local:8123")
+_HA_PROTO = os.environ.get("HA_PROTO", "http")
+HA_URL    = f"{_HA_PROTO}://{_HA_HOST}"
+HA_WS     = f"{'wss' if _HA_PROTO == 'https' else 'ws'}://{_HA_HOST}/api/websocket"
+MAC_IP    = os.environ.get("MAC_IP", "")
+HTTP_PORT = int(os.environ.get("HTTP_PORT", "8765"))
 TARBALL_NAME = "battery_arbitrage.tar.gz"
+
+if not MAC_IP:
+    print(
+        "⚠  MAC_IP is empty. The HA host needs to fetch the tarball from this\n"
+        "   machine over LAN. Export MAC_IP before running, e.g.:\n"
+        "      export MAC_IP=$(ipconfig getifaddr en0)        # macOS\n"
+        "      export MAC_IP=$(hostname -I | awk '{print $1}') # Linux"
+    )
 
 # Default config-flow answers — edit these if your setup differs
 INSTALL_DEFAULTS = {
-    "evcc_url":                   "http://192.168.1.2:7070",
+    "evcc_url":                   os.environ.get("EVCC_URL", "http://your-ha-ip:7070"),
     "foxess_inverter_id":         "0c6d23d42d87264a4f0a0dccb6061b12",
     "foxess_work_mode_entity":    "select.foxessmodbus_work_mode",
     "foxess_force_charge_entity": "number.foxessmodbus_force_charge_power",
@@ -136,7 +159,7 @@ async def get_ingress_session() -> tuple[str, str]:
         if not session_token:
             raise RuntimeError(f"Could not find session token: {sess}")
 
-    return f"http://192.168.1.2:8123{ingress_url}", session_token
+    return f"{HA_URL}{ingress_url}", session_token
 
 
 async def exec_command(base_url: str, session: str, command: str, timeout: int = 60) -> str:

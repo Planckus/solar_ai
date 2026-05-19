@@ -152,13 +152,19 @@
       },
       "ocpp_settings": {
         "title": "OCPP-indstillinger",
-        "description": "Trin 2 af 3 — EV-styring. Lad kontakten være slået fra hvis du ikke bruger Solar AI til at styre en OCPP-tilsluttet EV-lader. Når den er slået til, taler Solar AI med laderen via HA-integrationen lbbrhzn/ocpp.",
+        "description": "Trin 2 af 3 — EV-styring. Solar AI har sin egen indbyggede OCPP 1.6-server (du behøver ikke en separat HACS-integration). Indstil laderens backend-URL til ws://<ha-ip>:<port>/<cpid>/. Slå kun den indbyggede server fra hvis du i stedet vil bruge lbbrhzn/ocpp.",
         "data": {
+          "ocpp_embedded": "Brug Solar AIs indbyggede OCPP-server (anbefalet)",
+          "ocpp_port": "Port til indbygget OCPP-server (standard 9000, område 1024–65535)",
           "ev_controller_enabled": "Aktivér EV-styring",
-          "ev_ocpp_charge_point_id": "OCPP charge point ID (det laderen annoncerer, fx 60LH132057KQ050)",
-          "ev_ocpp_status_entity": "Status-sensor (auto-detekteres ud fra charge point ID — overskriv kun ved behov)",
-          "ev_ocpp_power_entity": "Effekt-sensor (auto-detekteres ud fra charge point ID — overskriv kun ved behov)",
-          "ev_default_mode": "Standard EV-tilstand ved tilslutning"
+          "ev_ocpp_charge_point_id": "Charge point ID (CPID) — bruges som URL-sti og entity-præfiks (fx charger, foxess_l11pmc)",
+          "ev_ocpp_status_entity": "Status-sensor (bruges kun hvis indbygget server er FRA — overskriv kun ved behov)",
+          "ev_ocpp_power_entity": "Effekt-sensor (bruges kun hvis indbygget server er FRA — overskriv kun ved behov)",
+          "ev_default_mode": "Standard EV-tilstand ved tilslutning",
+          "ev_control_interval_seconds": "Loopinterval (sekunder, 5–60) — hvor ofte laderen genvurderes",
+          "ev_start_window_seconds": "Startvindue (sekunder, 10–600) — overskud skal holde så længe før opladning starter",
+          "ev_stop_window_seconds": "Stopvindue (sekunder, 30–1800) — overskud skal være under min så længe før opladning stopper",
+          "ev_charge_threshold_w": "Tærskel for opladningsdetektion (W, 500–10000) — over dette niveau lader bilen reelt"
         }
       },
       "entities": {
@@ -255,8 +261,16 @@
       "ev_surplus_kw":  { "name": "EV tilgængeligt overskud" },
       "ev_active_mode": { "name": "EV aktuel tilstand" },
       "ev_reason":      { "name": "EV begrundelse" },
+      "ev_status":      { "name": "EV-status" },
       "solar_hourly_accuracy": { "name": "Sollæring pr. time (varme timer)" },
-      "solar_floor_log": { "name": "Solgulv-log (blokering)" }
+      "solar_floor_log": { "name": "Solgulv-log (blokering)" },
+      "charger_status": { "name": "Lader-status" },
+      "charger_power": { "name": "Lader-effekt" },
+      "charger_session_energy": { "name": "Sessions-energi" },
+      "charger_session_duration": { "name": "Sessions-varighed" },
+      "charger_lifetime_energy": { "name": "Lader livstidsenergi" },
+      "charger_info": { "name": "Lader-info" },
+      "charger_session_log": { "name": "Lader sessions-log" }
     },
     "select": {
       "ev_mode": {
@@ -266,6 +280,47 @@
           "pv":         "Kun solenergi",
           "pv_battery": "Min via sol + batteri",
           "full":       "Fuld kraft"
+        }
+      },
+      "ev_default_mode": {
+        "name": "Standard EV-tilstand ved tilslutning",
+        "state": {
+          "locked":     "Låst",
+          "pv":         "Kun solenergi",
+          "pv_battery": "Min via sol + batteri",
+          "full":       "Fuld kraft"
+        }
+      },
+      "ev_min_amps": {
+        "name": "EV minimum opladningshastighed",
+        "state": {
+          "6":  "6 A (4,14 kW)",
+          "7":  "7 A (4,83 kW)",
+          "8":  "8 A (5,52 kW)",
+          "9":  "9 A (6,21 kW)",
+          "10": "10 A (6,90 kW)",
+          "11": "11 A (7,59 kW)",
+          "12": "12 A (8,28 kW)",
+          "13": "13 A (8,97 kW)",
+          "14": "14 A (9,66 kW)",
+          "15": "15 A (10,35 kW)",
+          "16": "16 A (11,04 kW)"
+        }
+      },
+      "ev_max_amps": {
+        "name": "EV maksimum opladningshastighed",
+        "state": {
+          "6":  "6 A (4,14 kW)",
+          "7":  "7 A (4,83 kW)",
+          "8":  "8 A (5,52 kW)",
+          "9":  "9 A (6,21 kW)",
+          "10": "10 A (6,90 kW)",
+          "11": "11 A (7,59 kW)",
+          "12": "12 A (8,28 kW)",
+          "13": "13 A (8,97 kW)",
+          "14": "14 A (9,66 kW)",
+          "15": "15 A (10,35 kW)",
+          "16": "16 A (11,04 kW)"
         }
       }
     },
@@ -304,7 +359,8 @@
       "min_export_price": { "name": "Minimum eksportpris (0 = tillad negativ)" },
       "battery_degradation_cost": { "name": "Batteri-slidomkostning (DKK/kWh cyklet)" },
       "ev_min_charge_kw": { "name": "EV minimum opladningshastighed (kW)" },
-      "ev_max_charge_kw": { "name": "EV maksimum opladningshastighed (kW)" }
+      "ev_max_charge_kw": { "name": "EV maksimum opladningshastighed (kW)" },
+      "ev_battery_priority_soc": { "name": "Batteri-først tærskel (%) — EV venter til husbatteriet når dette niveau" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage aktiv" },

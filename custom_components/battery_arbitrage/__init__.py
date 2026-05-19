@@ -21,6 +21,20 @@ from .const import (
     CONF_LIVE_DATA_SOURCE,
     CONF_EV_CONTROLLER_ENABLED,
     CONF_EV_DEFAULT_MODE,
+    CONF_EV_CONTROL_INTERVAL_SECONDS,
+    CONF_EV_START_WINDOW_SECONDS,
+    CONF_EV_STOP_WINDOW_SECONDS,
+    CONF_EV_CHARGE_THRESHOLD_W,
+    CONF_EV_BATTERY_PRIORITY_SOC,
+    CONF_OCPP_EMBEDDED,
+    CONF_OCPP_PORT,
+    DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
+    DEFAULT_EV_START_WINDOW_SECONDS,
+    DEFAULT_EV_STOP_WINDOW_SECONDS,
+    DEFAULT_EV_CHARGE_THRESHOLD_W,
+    DEFAULT_EV_BATTERY_PRIORITY_SOC,
+    DEFAULT_OCPP_EMBEDDED,
+    DEFAULT_OCPP_PORT,
     CONF_SPOT_MARKUP,
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
@@ -184,6 +198,50 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.config_entries.async_update_entry(entry, data=new_data, version=12)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v12")
 
+    if entry.version < 13:
+        # v12 → v13: EV control loop becomes time-based and configurable
+        # (v0.26.0). Seed defaults for existing installs so behaviour matches
+        # the previous 2-tick @ 30 s hysteresis closely (60 s start, 180 s stop,
+        # 10 s loop, 3 000 W charge-detection threshold).
+        new_data.setdefault(
+            CONF_EV_CONTROL_INTERVAL_SECONDS,
+            DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
+        )
+        new_data.setdefault(
+            CONF_EV_START_WINDOW_SECONDS,
+            DEFAULT_EV_START_WINDOW_SECONDS,
+        )
+        new_data.setdefault(
+            CONF_EV_STOP_WINDOW_SECONDS,
+            DEFAULT_EV_STOP_WINDOW_SECONDS,
+        )
+        new_data.setdefault(
+            CONF_EV_CHARGE_THRESHOLD_W,
+            DEFAULT_EV_CHARGE_THRESHOLD_W,
+        )
+        hass.config_entries.async_update_entry(entry, data=new_data, version=13)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v13")
+
+    if entry.version < 14:
+        # v13 → v14: battery-priority SoC threshold for EV charging (v0.26.4).
+        # Default 80 % — EV waits while battery fills toward this threshold.
+        new_data.setdefault(
+            CONF_EV_BATTERY_PRIORITY_SOC,
+            DEFAULT_EV_BATTERY_PRIORITY_SOC,
+        )
+        hass.config_entries.async_update_entry(entry, data=new_data, version=14)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v14")
+
+    if entry.version < 15:
+        # v14 → v15: embedded OCPP server replaces lbbrhzn/ocpp dependency
+        # (v0.27.0). Seed defaults: embedded=True, port=9000.
+        # Users on lbbrhzn/ocpp can opt out by toggling embedded=False in
+        # the OCPP Settings step.
+        new_data.setdefault(CONF_OCPP_EMBEDDED, DEFAULT_OCPP_EMBEDDED)
+        new_data.setdefault(CONF_OCPP_PORT, DEFAULT_OCPP_PORT)
+        hass.config_entries.async_update_entry(entry, data=new_data, version=15)
+        _LOGGER.info("Battery Arbitrage: migrated config entry to v15")
+
     return True
 
 
@@ -198,12 +256,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
+    # Start the embedded OCPP server BEFORE forwarding to platforms so the
+    # sensor entities can immediately read from `coordinator.ocpp_server`.
+    # (v0.27.0). Skipped cleanly if user opted out via embedded=False.
+    if entry.data.get(CONF_OCPP_EMBEDDED, DEFAULT_OCPP_EMBEDDED):
+        from .ocpp_server import OcppServer
+        port = int(entry.data.get(CONF_OCPP_PORT, DEFAULT_OCPP_PORT))
+        # Share the persisted_metadata dict by reference (v0.27.3) — so the
+        # OcppServer can pre-populate ChargePoint instances from values that
+        # survived the HA restart, and so updates from the server propagate
+        # back into _stored without an explicit write step.
+        persisted_md = coordinator._stored.setdefault("charger_metadata", {})
+        coordinator.ocpp_server = OcppServer(
+            port=port,
+            persisted_metadata=persisted_md,
+        )
+        try:
+            await coordinator.ocpp_server.start()
+        except OSError as err:
+            _LOGGER.error(
+                "Embedded OCPP server failed to start on port %d: %s. "
+                "Continuing without it — EV controller will be inactive.",
+                port, err,
+            )
+            coordinator.ocpp_server = None
+    else:
+        _LOGGER.info(
+            "Embedded OCPP server disabled in config (using legacy lbbrhzn/ocpp)",
+        )
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     # Register integration services (only once, even with multiple entries)
     _register_services(hass)
+
+    # Start the decoupled EV control loop (v0.26.0). It runs at its own
+    # configurable cadence regardless of the main fast-poll. Inert when the
+    # controller is disabled — the loop's first action is to check the master
+    # gate inside _run_ev_controller.
+    await coordinator.async_start_ev_control_loop()
 
     return True
 
@@ -250,6 +343,28 @@ def _register_services(hass: HomeAssistant) -> None:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload Battery Arbitrage config entry — restore HA to normal state."""
     coordinator: BatteryArbitrageCoordinator = hass.data[DOMAIN][entry.entry_id]
+
+    # Stop the EV control loop first (so it doesn't keep firing while we
+    # restore the inverter and tear platforms down).
+    await coordinator.async_stop_ev_control_loop()
+
+    # Release the house-battery lock if it's currently engaged (v0.27.2).
+    # Otherwise a restart mid-FULL-mode-charge would leave the battery
+    # permanently locked from discharging.
+    if coordinator._ev_battery_locked:
+        try:
+            await coordinator._set_battery_lock(False)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Battery unlock on unload failed: %s", err)
+
+    # Stop the embedded OCPP server (v0.27.0) — releases the port so a
+    # subsequent reload can bind it again.
+    if coordinator.ocpp_server is not None:
+        try:
+            await coordinator.ocpp_server.stop()
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Embedded OCPP server stop failed: %s", err)
+        coordinator.ocpp_server = None
 
     # Restore the legacy automation and inverter/EVCC before unloading
     await coordinator.async_restore_legacy_automation()

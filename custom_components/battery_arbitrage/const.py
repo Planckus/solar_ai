@@ -52,7 +52,7 @@ CONF_BATTERY_CHARGE_TOTAL_ENTITY   = "battery_charge_total_entity"
 CONF_BATTERY_DISCHARGE_TOTAL_ENTITY = "battery_discharge_total_entity"
 
 # Defaults
-DEFAULT_EVCC_URL = "http://192.168.1.2:7070"
+DEFAULT_EVCC_URL = "http://homeassistant.local:7070"
 DEFAULT_BATTERY_FLOOR_SOC = 50
 DEFAULT_BATTERY_MAX_SOC = 100
 DEFAULT_BATTERY_CAPACITY = 11.52
@@ -110,10 +110,42 @@ EV_OCPP_MAX_AMPS = 16       # typical home 3-phase max
 DEFAULT_EV_MIN_CHARGE_KW = 4.14   # 3-phase 6 A
 DEFAULT_EV_MAX_CHARGE_KW = 11.0   # 3-phase 16 A
 # Hysteresis / anti-flap defaults
-EV_HYSTERESIS_START_TICKS = 2     # ticks above start threshold before resuming
-EV_HYSTERESIS_STOP_TICKS  = 2     # ticks below stop threshold before stopping
-EV_MAX_AMP_STEP_PER_TICK  = 2     # max ramp rate (A) per coordinator tick
+# NOTE: legacy tick-based constants kept for back-compat with older code paths.
+# The active anti-flap logic is now time-based and configurable via
+# CONF_EV_START_WINDOW_SECONDS / CONF_EV_STOP_WINDOW_SECONDS below.
+EV_HYSTERESIS_START_TICKS = 2     # legacy — ticks above start threshold before resuming
+EV_HYSTERESIS_STOP_TICKS  = 2     # legacy — ticks below stop threshold before stopping
+EV_MAX_AMP_STEP_PER_TICK  = 2     # max ramp rate (A) per control-loop tick
 EV_MIN_AMP_CHANGE         = 1     # don't bother sending OCPP write below this delta
+
+# EV control loop (v0.26.0) — decoupled from main coordinator fast-poll.
+# Lets the user match the loop cadence to their charger's OCPP write tolerance,
+# and tune the start/stop windows in seconds (not ticks).
+CONF_EV_CONTROL_INTERVAL_SECONDS  = "ev_control_interval_seconds"
+CONF_EV_START_WINDOW_SECONDS      = "ev_start_window_seconds"
+CONF_EV_STOP_WINDOW_SECONDS       = "ev_stop_window_seconds"
+CONF_EV_CHARGE_THRESHOLD_W        = "ev_charge_threshold_w"
+DEFAULT_EV_CONTROL_INTERVAL_SECONDS = 10   # 5–60 s; how often the EV controller re-evaluates
+DEFAULT_EV_START_WINDOW_SECONDS     = 60   # 10–600 s; sustained surplus before starting
+DEFAULT_EV_STOP_WINDOW_SECONDS      = 180  # 30–1800 s; sustained shortage before stopping
+DEFAULT_EV_CHARGE_THRESHOLD_W       = 3000 # 500–10000 W; above this the EV is truly charging
+
+# Battery-priority threshold (v0.26.4): in PV and PV+battery modes, EV charging
+# is held off until the house battery reaches this SoC. Solar surplus flows
+# into the battery (via the inverter's normal priority) until the threshold,
+# then diverts to the EV. Set to the battery floor SoC to revert to the old
+# "EV gets surplus immediately" behaviour. Set to 100 to always fill the
+# battery before letting the EV charge.
+CONF_EV_BATTERY_PRIORITY_SOC     = "ev_battery_priority_soc"
+DEFAULT_EV_BATTERY_PRIORITY_SOC  = 80   # %; range 50–100
+
+# Embedded OCPP server (v0.27.0): Solar AI hosts its own OCPP 1.6 server,
+# eliminating the lbbrhzn/ocpp dependency. User can still turn it off to
+# go back to the external integration if they want.
+CONF_OCPP_EMBEDDED  = "ocpp_embedded"
+CONF_OCPP_PORT      = "ocpp_port"
+DEFAULT_OCPP_EMBEDDED = True
+DEFAULT_OCPP_PORT     = 9000   # 1024–65535, user-configurable
 # Battery wear cost per kWh cycled (DKK/kWh). Subtracted from CHARGE and EXPORT rewards
 # in the optimizer so the model accounts for finite cycle life. Default is calibrated
 # for residential LFP at ~2000 DKK/kWh installed cost using marginal-wear literature.
