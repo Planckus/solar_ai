@@ -165,7 +165,9 @@
           "ev_control_interval_seconds": "Control loop interval (seconds, 5–60) — how often the charger is re-evaluated",
           "ev_start_window_seconds": "Start window (seconds, 10–600) — surplus must hold this long before charging starts",
           "ev_stop_window_seconds": "Stop window (seconds, 30–1800) — surplus must stay below min this long before charging stops",
-          "ev_charge_threshold_w": "EV charging detection threshold (W, 500–10000) — above this the EV is considered truly charging"
+          "ev_charge_threshold_w": "EV charging detection threshold (W, 500–10000) — above this the EV is considered truly charging",
+          "ocpp_restart_strict": "Strict OCPP restart compatibility (spec-compliant chargers only). Off (default) allows RemoteStart from Charging and Finishing in addition to Preparing / SuspendedEV / SuspendedEVSE — required for FoxESS L11PMC.",
+          "ocpp_remote_start_cooldown_s": "RemoteStartTransaction cooldown (seconds, 5–300) — minimum gap between consecutive restart attempts on the same charger"
         }
       },
       "entities": {

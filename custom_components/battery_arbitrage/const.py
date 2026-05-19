@@ -147,6 +147,20 @@ CONF_OCPP_EMBEDDED  = "ocpp_embedded"
 CONF_OCPP_PORT      = "ocpp_port"
 DEFAULT_OCPP_EMBEDDED = True
 DEFAULT_OCPP_PORT     = 9000   # 1024–65535, user-configurable
+# OCPP restart compatibility (v0.28.7) — controls which charger statuses
+# are considered "plugged in and ready for RemoteStartTransaction" after a
+# session ends. Lenient (default) allows restart from Charging and
+# Finishing in addition to the OCPP 1.6 spec set (Preparing, SuspendedEV,
+# SuspendedEVSE) — required for FoxESS L11PMC and other chargers that
+# linger in non-spec states after a cool-down stop. Strict restricts to
+# the spec set for spec-compliant chargers.
+CONF_OCPP_RESTART_STRICT = "ocpp_restart_strict"
+DEFAULT_OCPP_RESTART_STRICT = False
+# Cooldown between consecutive RemoteStartTransaction attempts on the same
+# charger, in seconds. Throttles rapid-fire restart loops within a single
+# failed start sequence. Cleared on every clean StopTransaction.
+CONF_OCPP_REMOTE_START_COOLDOWN_S = "ocpp_remote_start_cooldown_s"
+DEFAULT_OCPP_REMOTE_START_COOLDOWN_S = 30   # 5–300 s, user-configurable
 # Battery wear cost per kWh cycled (DKK/kWh). Subtracted from CHARGE and EXPORT rewards
 # in the optimizer so the model accounts for finite cycle life. Default is calibrated
 # for residential LFP at ~2000 DKK/kWh installed cost using marginal-wear literature.
