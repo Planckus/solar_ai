@@ -9,6 +9,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.27.6] — 2026-05-19
+
+Documentation accuracy fix.
+
+### Changed
+
+- README's FoxESS-only mode warning rewritten to reflect v0.27.x reality: it was wrongly claiming "no way to detect EV charging" and "could exceed your main breaker". Both claims are outdated:
+  - The embedded OCPP server (v0.27.0+) detects EV charging directly via the charger
+  - Grid-headroom protection (live grid-import monitoring, in Solar AI since v0.18.x) caps battery charge based on real grid import, so combined EV + battery draw cannot exceed the breaker regardless of EV-detection method
+- Warning downgraded from ⚠️ to ℹ️ (informational note) — accurate trade-off explanation rather than scare text. EV-aware *scheduling* features (hourly probability learning, skip grid charge during EV hours) still require EVCC live-data mode and are inactive in FoxESS-only mode — that part remains true.
+
+### Files touched
+
+`README.md`, `manifest.json`, `CHANGELOG.md`.
+
+---
+
 ## [0.27.5] — 2026-05-19
 
 UX fix to the "Overskud" value shown on the EV-styring dashboard card. Previously it showed the **physical** solar surplus (PV − non-EV house load), which is misleading when the house battery is below its priority threshold and absorbing the entire surplus — the card would say *"Overskud: 0.4 kW"* even though the EV has zero kW available.
