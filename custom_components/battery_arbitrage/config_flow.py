@@ -36,6 +36,7 @@ from .const import (
     CONF_ROUND_TRIP_EFFICIENCY,
     CONF_SOLAR_FORECAST_SOURCE,
     CONF_SOLCAST_ENTITY,
+    CONF_SOLCAST_TOMORROW_ENTITY,
     CONF_LIVE_DATA_SOURCE,
     CONF_FOXESS_GRID_IMPORT_ENTITY,
     CONF_FOXESS_GRID_EXPORT_ENTITY,
@@ -628,6 +629,9 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
                 _entity_optional(CONF_SOLCAST_ENTITY,
                                  data.get(CONF_SOLCAST_ENTITY, "")):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                _entity_optional(CONF_SOLCAST_TOMORROW_ENTITY,
+                                 data.get(CONF_SOLCAST_TOMORROW_ENTITY, "")):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
                 vol.Optional(CONF_FOXESS_GRID_IMPORT_ENTITY,
                              default=data.get(CONF_FOXESS_GRID_IMPORT_ENTITY,

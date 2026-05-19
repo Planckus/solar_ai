@@ -9,6 +9,97 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.28.4] — 2026-05-19
+
+### Added — EV session log with grid / solar energy split
+
+- `ChargePoint` now integrates a per-tick grid-vs-solar energy split during each active session by comparing live EV draw against the current solar surplus (PV minus non-EV house load). Numbers are approximate (depend on coordinator tick cadence) but make it visible how much of a charge actually came from the panels vs the grid.
+- Each completed session in `sensor.solar_ai_lader_sessions_log` (formerly only exposed via `last_session`) now also carries `energy_kwh_solar` and `energy_kwh_grid` alongside the existing `energy_kwh`, `duration_min`, `start_ts`, `end_ts`, and `avg_power_kw` fields.
+- New `sessions` attribute on the session-log sensor lists the last 20 completed sessions newest-first — ready for a dashboard history table.
+- Live in-progress split also surfaced as `live_solar_kwh` / `live_grid_kwh` attributes so a session-in-progress card can show "currently 80% solar / 20% grid".
+
+### Added — Dashboard cards
+
+- "Bil tilsluttet" Mushroom card at the top of the EV / OCPP tab — clearly tells you whether a car is plugged in, and lets you tap through to the rest of the tab.
+- Charge session history table on the Logs tab — start/stop, duration, total kWh, and the grid/solar split for each session.
+
+---
+
+## [0.28.3] — 2026-05-19
+
+### Added — Daily forecast totals (today remaining + tomorrow)
+
+- Two new sensors: `sensor.solar_ai_solcelle_rest_af_i_dag` and `sensor.solar_ai_solcelle_forventet_i_morgen`. Both expose the adjusted (per-hour-accuracy-scaled) kWh figure that the optimizer plans against — so what the user sees on the dashboard matches the number behind the charge/export plan.
+- Both totals are also published as attributes (`today_remaining_kwh`, `today_remaining_raw_kwh`, `tomorrow_kwh`, `tomorrow_raw_kwh`) on `sensor.solar_ai_solcelleprognose_48t_graf` for easy use in the chart card header.
+- Dashboard: small subtitle row added above the 48-h chart on the EV / OCPP tab showing both numbers.
+
+---
+
+## [0.28.2] — 2026-05-19
+
+### Added — Solcast 48-hour forecast chart on EV tab
+
+- New `sensor.solar_ai_solar_forecast_48h_chart` — exposes the full 48-hour PV forecast as a per-slot list under the `slots` attribute. Each entry carries `start` (ISO timestamp), `raw_kw` (raw Solcast / Forecast.Solar value), `adj_kw` (scaled by the per-hour accuracy factor — i.e. the same "solcelleprognose" adjustment the DP optimizer plans against), and `factor`.
+- ApexCharts card added to the bottom of the EV / OCPP tab. Renders a two-series chart spanning "now → +48 h": a thin grey column series for the raw forecast and a thick amber line for the adjusted forecast. Makes it instantly visible when sun is expected and how much the per-hour calibration is shaving off.
+
+---
+
+## [0.28.1] — 2026-05-19
+
+Hot-fix after the first day of solar-only EV charging. The 180 s anti-flap cool-down was stopping the session correctly when a cloud rolled in, but the controller never re-started the car when the sun came back — the dashboard kept showing "charging" while the car drew 0 kW. Also: the start/stop countdown only refreshed every 30 s.
+
+### Fixed — Solar-only restart never fired after cool-down stop
+
+- `coordinator.py`: broadened the post-stop restart guard from the narrow `{Preparing, SuspendedEV, SuspendedEVSE}` status set to the full plugged-in set `{Preparing, Charging, SuspendedEV, SuspendedEVSE, Finishing}`. Many chargers (incl. the L11PMC) linger in `Finishing` after a session ends, or stay in `Charging` with the 0 A profile still applied — both were silently excluded. With `session_active` already gating the start, it's safe to fire `RemoteStartTransaction` from any plugged-in state.
+- `ocpp_server.py`: `on_stop_transaction` now clears `last_remote_start_attempt`, so a stale 30 s cooldown timestamp from earlier in the day can't block the next legitimate restart after the cool-down stop.
+
+### Added — Live per-second countdown on EV anti-flap timer
+
+- `coordinator.py`: telemetry now also exposes `ev_arming_until` and `ev_cooling_until` as ISO timestamps in addition to the existing `*_seconds_left` integers.
+- `sensor.py`: `sensor.solar_ai_ev_status` surfaces the new `arming_until` / `cooling_until` attributes so the dashboard can render a true per-second countdown by subtracting `now()` instead of rendering a value that only refreshes every 30 s coordinator tick.
+
+---
+
+## [0.28.0] — 2026-05-19
+
+Major fix release after the user spotted several real bugs during the first full day of live operation. The standout is that the optimizer had been planning pointless grid-charges (12:00 yesterday, 05:15 this morning) because its solar forecast was reading 0 kWh/24h — the configured Forecast.Solar entity didn't actually expose hourly data, and the Solcast source wasn't wired up for the two-entity (today + tomorrow) layout.
+
+### Added — Solcast 48-hour forecast (today + tomorrow)
+
+- New `CONF_SOLCAST_TOMORROW_ENTITY` — second Solcast sensor for tomorrow's `detailedHourly` forecast. When set alongside the existing today-entity, Solar AI merges the two into a true 48-hour PV forecast that the DP optimizer can plan against.
+- `try_solcast()` wrapper now reads both entities, de-duplicates midnight overlap, and returns a sorted rate list.
+- Existing `forecast_solar` source still works for single-entity Forecast.Solar setups; Solcast is now the more accurate option for 48-h planning.
+
+### Fixed — EV draw double-counted in house-load model
+
+- The `home_power_w` from FoxESS Modbus's `load_power` sensor includes the EV charger draw. The hourly house-load *learning model* was being fed this raw value in FoxESS-only mode because `evcc_state["loadpoints"]` is empty and `ev_charge_power_w` defaulted to 0 — so the subtraction in `base_load_kw = home_power_w - ev_charge_power_w` was a no-op. Over time the learned profile got inflated with EV-charging hours.
+- Fix: when `ev_charge_power_w` is 0 from EVCC, backfill from the embedded OCPP server's `ChargePoint.power_w`. The EV's real draw is now correctly subtracted in all live-data modes.
+
+### Fixed — `lader_effekt` sensor stuck after charger stops
+
+- The OCPP `MeterValues` stream updates `cp.power_w` as the charger reports power. But when a session ends, the L11PMC doesn't send a final 0-W frame — so `cp.power_w` (and the `sensor.solar_ai_lader_effekt` it backs) stayed at the last reading (e.g. 4.7 kW), even though the charger was idle. Energy-flow card showed phantom EV consumption.
+- Fix: zero `cp.power_w` in two places:
+  - `on_stop_transaction` handler (explicit session end)
+  - `on_status` handler when new status is `Available` / `Finishing` / `Faulted` / `Unavailable` / `Reserved` (any non-charging state)
+
+### Fixed — Køb / Salg chips on Oversigt showed wrong price tier
+
+- The `Køb` mushroom chip on the Overview tab read `sensor.battery_arbitrage_naeste_slots_pris` which returns a pre-VAT/pre-tariff value (~0.57 DKK). The correct consumer-side buy price for the current hour is in the `slots` attribute of `sensor.solar_ai_24h_priskort` (~1.30 DKK).
+- Fix: both chips now template-read directly from the priskort `slots` array, selecting the entry whose hour matches `now().hour`. Single source of truth for the consumer price.
+
+### Files touched
+
+`ocpp_server.py`, `coordinator.py`, `const.py`, `config_flow.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json`, `CHANGELOG.md`.
+
+### What this should fix in practice
+
+- The optimizer's `Dagens plan` will now reflect tomorrow's actual sun, not phantom-zero forecasts → no more inexplicable grid-charge slots when sun is in the forecast.
+- House-load predictions will drift downward over the next week as the learning model un-contaminates from EV hours.
+- Energy-flow card's EV-lader line drops to 0 the moment a session ends.
+- The "Køb" chip now matches the price chart and the optimizer's decisions.
+
+---
+
 ## [0.27.8] — 2026-05-19
 
 Dashboard polish — terminology.

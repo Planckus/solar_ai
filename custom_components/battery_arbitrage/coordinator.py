@@ -121,6 +121,7 @@ from .const import (
     CONF_SOLAR_FORECAST_SOURCE,
     CONF_FORECAST_SOLAR_ENTITY,
     CONF_SOLCAST_ENTITY,
+    CONF_SOLCAST_TOMORROW_ENTITY,
     CONF_LIVE_DATA_SOURCE,
     CONF_FOXESS_GRID_IMPORT_ENTITY,
     CONF_FOXESS_GRID_EXPORT_ENTITY,
@@ -611,6 +612,17 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         lp = loadpoints[0] if loadpoints else {}
         ev_charge_power_w = lp.get("chargePower", 0)
         ev_mode = lp.get("mode", "pv")
+        # v0.28.0 fix — FoxESS-only mode has loadpoints=[] so the EVCC-based
+        # ev_charge_power_w defaults to 0. Backfill from the embedded OCPP
+        # server's ChargePoint so the EV's draw gets correctly subtracted
+        # from house load in `base_load_kw` below, and the hourly house-load
+        # learning model doesn't get contaminated with EV-charging spikes.
+        if ev_charge_power_w == 0 and self.ocpp_server is not None:
+            charger_id = self.config.get(CONF_EV_OCPP_CHARGE_POINT_ID, "")
+            if charger_id:
+                cp = self.ocpp_server.get(charger_id)
+                if cp is not None and cp.power_w > 0:
+                    ev_charge_power_w = cp.power_w
 
         # Check all loadpoints for EV presence and active non-PV charging
         ev_connected = any(lp_.get("connected", False) for lp_ in loadpoints)
@@ -1005,6 +1017,67 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     sell_slot = round(max(0.0, spot - export_fee - feed_in_tariff), 3)
                     price_chart_slots.append({"h": h, "m": 0, "buy": buy_slot, "sell": sell_slot})
 
+        # ── Solar forecast chart data (v0.28.2, 48 h) ───────────────────────
+        # One entry per native forecast slot (hourly for Solcast, 15-min for
+        # some Forecast.Solar setups). Each entry carries:
+        #   start    — ISO timestamp of the slot start (with tz offset)
+        #   raw_kw   — pure forecast source value (Solcast / Forecast.Solar)
+        #   adj_kw   — same value scaled by the per-hour accuracy factor
+        #              learned by the integration ("solcelleprognose"),
+        #              i.e. what the DP optimizer actually plans against
+        # The dashboard ApexCharts card on the EV/OCPP tab reads this via
+        # data_generator to draw a two-series 48-h forecast (raw + adjusted).
+        try:
+            solar_hourly_acc_local = self.get_solar_hourly_accuracy_profile()
+        except Exception:  # noqa: BLE001
+            solar_hourly_acc_local = [1.0] * 24
+
+        def _solar_adj_factor(slot_start_dt) -> float:
+            try:
+                h_local = slot_start_dt.astimezone().hour
+                if 0 <= h_local < 24:
+                    return max(0.0, float(solar_hourly_acc_local[h_local]))
+            except Exception:  # noqa: BLE001
+                pass
+            return 1.0
+
+        solar_chart_slots: list[dict] = []
+        # Daily kWh totals (v0.28.3) — split by local calendar date so the
+        # dashboard can show "today remaining" vs "tomorrow expected".
+        # Uses the slot's native duration so this works for both 30-min and
+        # hourly forecast sources.
+        local_today = now.astimezone().date()
+        solar_today_remaining_raw_kwh = 0.0
+        solar_today_remaining_adj_kwh = 0.0
+        solar_tomorrow_raw_kwh = 0.0
+        solar_tomorrow_adj_kwh = 0.0
+        for slot_start, dur_h, h, m, watts in solar_slot_data_opt:
+            raw_kw = round(float(watts) / 1000.0, 3)
+            factor = _solar_adj_factor(slot_start)
+            adj_kw = round(raw_kw * factor, 3)
+            try:
+                start_iso = slot_start.isoformat()
+            except Exception:  # noqa: BLE001
+                start_iso = str(slot_start)
+            solar_chart_slots.append({
+                "start": start_iso,
+                "raw_kw": raw_kw,
+                "adj_kw": adj_kw,
+                "factor": round(factor, 3),
+            })
+            # Accumulate daily totals
+            try:
+                slot_local_date = slot_start.astimezone().date()
+                dur_h_f = float(dur_h)
+            except Exception:  # noqa: BLE001
+                continue
+            if slot_local_date == local_today:
+                solar_today_remaining_raw_kwh += raw_kw * dur_h_f
+                solar_today_remaining_adj_kwh += adj_kw * dur_h_f
+            elif (slot_local_date - local_today).days == 1:
+                solar_tomorrow_raw_kwh += raw_kw * dur_h_f
+                solar_tomorrow_adj_kwh += adj_kw * dur_h_f
+
         # ── Tonight's plan (from DP optimizer) ───────────────────────────────
         # Prefer the optimizer plan; fall back to simple greedy if unavailable.
         if self._optimizer_plan:
@@ -1179,6 +1252,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             efficiency_source="auto" if auto_efficiency is not None else "configured",
             capacity_sample_count=len(self._stored.get("capacity_samples", [])),
             price_chart_slots=price_chart_slots,
+            solar_chart_slots=solar_chart_slots,
+            solar_today_remaining_raw_kwh=round(solar_today_remaining_raw_kwh, 2),
+            solar_today_remaining_adj_kwh=round(solar_today_remaining_adj_kwh, 2),
+            solar_tomorrow_raw_kwh=round(solar_tomorrow_raw_kwh, 2),
+            solar_tomorrow_adj_kwh=round(solar_tomorrow_adj_kwh, 2),
             plan_text=plan_text,
             plan_charge_hours=charge_hours,
             plan_export_hours=export_hours,
@@ -2116,13 +2194,49 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # State-based (not transition-based) so reloads / mid-cycle deploys
         # don't get stuck. The OCPP server's own 30-s cooldown prevents
         # spamming RemoteStartTransaction while the charger thinks about it.
+        # ── Per-session grid/solar energy split (v0.28.4) ─────────────────
+        # Integrate per-tick: how much of the EV's current draw came from
+        # locally-available solar surplus vs the grid. Stored on the
+        # ChargePoint and emitted as part of last_session_summary on stop.
+        use_embedded = self.config.get(CONF_OCPP_EMBEDDED, True)
+        if use_embedded and self.ocpp_server is not None:
+            cp_split = self.ocpp_server.get(charger_id)
+            if cp_split is not None:
+                if cp_split.session_active and ev_current_kw > 0:
+                    now_split = datetime.now(timezone.utc)
+                    last_ts = cp_split._session_split_last_ts
+                    if last_ts is None:
+                        elapsed_h = 0.0
+                    else:
+                        elapsed_s = (now_split - last_ts).total_seconds()
+                        # Sanity cap: 5-min max tick (HA restart / pause)
+                        elapsed_h = max(0.0, min(elapsed_s, 300.0)) / 3600.0
+                    cp_split._session_split_last_ts = now_split
+                    if elapsed_h > 0:
+                        # surplus already accounts for non-EV house load
+                        solar_to_ev_kw = max(0.0, min(ev_current_kw, solar_surplus_kw))
+                        grid_to_ev_kw = max(0.0, ev_current_kw - solar_to_ev_kw)
+                        cp_split.session_solar_wh += solar_to_ev_kw * 1000.0 * elapsed_h
+                        cp_split.session_grid_wh += grid_to_ev_kw * 1000.0 * elapsed_h
+                elif not cp_split.session_active:
+                    cp_split._session_split_last_ts = None
+
         use_embedded = self.config.get(CONF_OCPP_EMBEDDED, True)
         if use_embedded and self.ocpp_server is not None:
             cp = self.ocpp_server.get(charger_id)
             if cp is not None:
                 want_charging = final_amps > 0
+                # v0.28.1 fix: broaden the "cable plugged" check from
+                # {Preparing, SuspendedEV, SuspendedEVSE} to the full
+                # ev_connected set. After a cool-down stop the charger
+                # frequently lingers in "Finishing" (and some firmwares stay
+                # in "Charging" with our 0 A profile still applied) — both
+                # were excluded by the old narrow check, so a fresh
+                # RemoteStartTransaction never went out when the sun came
+                # back. With session_active gating the start, this is safe:
+                # we only ever fire when there's no active transaction.
                 cable_plugged = cp.status in (
-                    "Preparing", "SuspendedEV", "SuspendedEVSE",
+                    "Preparing", "Charging", "SuspendedEV", "SuspendedEVSE", "Finishing",
                 )
                 if want_charging and cable_plugged and not cp.session_active:
                     await cp.remote_start_transaction(id_tag="solar_ai")
@@ -2484,6 +2598,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "charger_lifetime_energy_kwh": self.get_charger_lifetime_energy_kwh(),
                 "charger_session_count": len(session_log),
                 "charger_last_session": session_log[-1] if session_log else None,
+                "charger_session_log_list": self.get_charger_session_log(20),
+                "charger_session_solar_kwh": 0.0,
+                "charger_session_grid_kwh": 0.0,
                 "charger_vendor": md.get("vendor", ""),
                 "charger_model": md.get("model", ""),
                 "charger_firmware": md.get("firmware", ""),
@@ -2503,6 +2620,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "charger_lifetime_energy_kwh": self.get_charger_lifetime_energy_kwh(),
             "charger_session_count": len(session_log),
             "charger_last_session": session_log[-1] if session_log else None,
+            # v0.28.4: expose last 20 sessions newest-first for the Logs tab
+            "charger_session_log_list": self.get_charger_session_log(20),
+            # Live in-progress split (visible during charging on EV tab)
+            "charger_session_solar_kwh": round(cp.session_solar_wh / 1000.0, 3),
+            "charger_session_grid_kwh": round(cp.session_grid_wh / 1000.0, 3),
             # Live cp fields with persisted-metadata fallback for empties
             "charger_vendor": cp.vendor or md.get("vendor", ""),
             "charger_model": cp.model or md.get("model", ""),
@@ -2693,6 +2815,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ))
         arming_left = 0
         cooling_left = 0
+        # v0.28.1: expose ISO timestamps for the dashboard to render a LIVE
+        # per-second countdown. Static `*_seconds_left` only refreshes on
+        # each coordinator tick (every 30 s by default), so the dashboard
+        # number would jump in 30-s steps. With a fixed target timestamp
+        # the dashboard can subtract `now()` every second.
+        arming_until_iso = None
+        cooling_until_iso = None
         # ARMING/COOLING only meaningful in PV mode where the time-windows apply (v0.27.4)
         in_pv = (self._ev_active_mode == EV_MODE_PV)
         if self._ev_last_amps > 0:
@@ -2701,12 +2830,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 state = "COOLING"
                 elapsed = (now - self._ev_surplus_below_min_since_ts).total_seconds()
                 cooling_left = max(0, int(stop_window - elapsed))
+                cooling_until_iso = (
+                    self._ev_surplus_below_min_since_ts
+                    + timedelta(seconds=stop_window)
+                ).isoformat()
         else:
             state = "IDLE"
             if in_pv and self._ev_surplus_above_min_since_ts is not None:
                 state = "ARMING"
                 elapsed = (now - self._ev_surplus_above_min_since_ts).total_seconds()
                 arming_left = max(0, int(start_window - elapsed))
+                arming_until_iso = (
+                    self._ev_surplus_above_min_since_ts
+                    + timedelta(seconds=start_window)
+                ).isoformat()
         return {
             "ev_enabled": True,
             "ev_active_mode": self._ev_active_mode,
@@ -2718,6 +2855,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "ev_state": state,
             "ev_arming_seconds_left": arming_left,
             "ev_cooling_seconds_left": cooling_left,
+            "ev_arming_until": arming_until_iso,
+            "ev_cooling_until": cooling_until_iso,
             "ev_battery_locked": self._ev_battery_locked,
         }
 
@@ -2902,6 +3041,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         source = self.config.get(CONF_SOLAR_FORECAST_SOURCE, DEFAULT_SOLAR_FORECAST_SOURCE)
         fs_entity = self.config.get(CONF_FORECAST_SOLAR_ENTITY)
         solcast_entity = self.config.get(CONF_SOLCAST_ENTITY)
+        solcast_tomorrow_entity = self.config.get(CONF_SOLCAST_TOMORROW_ENTITY)
 
         async def try_evcc() -> dict:
             try:
@@ -2921,7 +3061,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             if not solcast_entity:
                 _LOGGER.debug("solcast entity not configured")
                 return {}
-            return self._fetch_solar_from_solcast(solcast_entity)
+            # v0.28.0: combine today + tomorrow forecasts for a true 48-h
+            # horizon. The optimizer can now plan across midnight when
+            # tomorrow's Solcast data is available.
+            today_data = self._fetch_solar_from_solcast(solcast_entity)
+            today_rates = today_data.get("rates", [])
+            if solcast_tomorrow_entity:
+                tom_data = self._fetch_solar_from_solcast(solcast_tomorrow_entity)
+                tom_rates = tom_data.get("rates", [])
+                # De-duplicate by start timestamp (in case of overlap at midnight)
+                seen = {r["start"] for r in today_rates}
+                merged = today_rates + [r for r in tom_rates if r["start"] not in seen]
+                merged.sort(key=lambda r: r["start"])
+                _LOGGER.debug(
+                    "solcast: merged today (%d slots) + tomorrow (%d new slots) = %d total",
+                    len(today_rates), len(merged) - len(today_rates), len(merged),
+                )
+                return {"rates": merged} if merged else {}
+            return today_data
 
         if source == SOLAR_SOURCE_EVCC:
             return await try_evcc()
