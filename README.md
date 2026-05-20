@@ -14,7 +14,7 @@ The integration runs as a coordinator that pulls live state from FoxESS Modbus (
 
 - Solcast HA integration supports both `today` and `tomorrow` entities; optimiser plans against a full 48-hour PV horizon (previously 24 h).
 - Intra-hour short-term solar correction (v0.28.6): per-tick residual tracking compares actual PV to the matching Solcast 15-min slot, computes a rolling ratio over the last 4 closed slots, and applies the correction with linear decay over a 2-hour horizon on top of the existing 4-day per-hour accuracy factor.
-- 48-hour Solcelleprognose chart on the EV / OCPP tab. Two series: raw Solcast (columns) and the per-hour adjusted forecast the optimiser uses (line). Includes today-remaining-kWh and tomorrow-expected-kWh totals.
+- 48-hour solar forecast chart on the EV / OCPP tab. Two series: raw Solcast (columns) and the per-hour adjusted forecast the optimiser uses (line). Includes today-remaining-kWh and tomorrow-expected-kWh totals.
 - EV charge session log with per-tick grid vs solar energy split. Each completed session records start, stop, duration, total kWh, energy from solar surplus, and energy from grid. Rendered as a history table on the Logs tab.
 - Bug fixes: lader_effekt now zeros on session end; cool-down restart works from any plugged-in OCPP state; ARMING timer clears when surplus drops below minimum; EV charge power is subtracted before house-load learning; live anti-flap countdown computes against a fixed-target timestamp.
 
