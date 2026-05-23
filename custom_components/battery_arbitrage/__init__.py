@@ -30,6 +30,17 @@ from .const import (
     CONF_OCPP_PORT,
     CONF_OCPP_RESTART_STRICT,
     CONF_OCPP_REMOTE_START_COOLDOWN_S,
+    CONF_BUY_PRICE_MODE,
+    CONF_STROMLIGNING_SUPPLIER_ID,
+    CONF_STROMLIGNING_PRODUCT_ID,
+    CONF_STROMLIGNING_CUSTOMER_GROUP,
+    CONF_STROMLIGNING_USE_MANUAL_OVERRIDES,
+    CONF_SELL_SIDE_COMPANY,
+    CONF_COUNTRY,
+    CONF_OCTOPUS_PRODUCT_CODE,
+    CONF_OCTOPUS_REGION,
+    CONF_PRICE_AREA,
+    CONF_TARIFF_FETCH_ENABLED,
     DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
     DEFAULT_EV_START_WINDOW_SECONDS,
     DEFAULT_EV_STOP_WINDOW_SECONDS,
@@ -39,6 +50,14 @@ from .const import (
     DEFAULT_OCPP_PORT,
     DEFAULT_OCPP_RESTART_STRICT,
     DEFAULT_OCPP_REMOTE_START_COOLDOWN_S,
+    DEFAULT_BUY_PRICE_MODE,
+    DEFAULT_STROMLIGNING_CUSTOMER_GROUP,
+    DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES,
+    DEFAULT_SELL_SIDE_COMPANY,
+    DEFAULT_COUNTRY,
+    DEFAULT_OCTOPUS_REGION,
+    DEFAULT_PRICE_AREA,
+    DEFAULT_TARIFF_FETCH_ENABLED,
     CONF_SPOT_MARKUP,
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
@@ -246,6 +265,26 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # v0.28.7 migration: ensure new OCPP compatibility fields have defaults
         new_data.setdefault(CONF_OCPP_RESTART_STRICT, DEFAULT_OCPP_RESTART_STRICT)
         new_data.setdefault(CONF_OCPP_REMOTE_START_COOLDOWN_S, DEFAULT_OCPP_REMOTE_START_COOLDOWN_S)
+        # v0.29.0 migration: introduce Strømligning retailer pricing as a new
+        # optional buy-price source. Default is "manual" so existing installs
+        # keep their current behaviour unchanged.
+        new_data.setdefault(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE)
+        new_data.setdefault(CONF_STROMLIGNING_SUPPLIER_ID, "")
+        new_data.setdefault(CONF_STROMLIGNING_PRODUCT_ID, "")
+        new_data.setdefault(CONF_STROMLIGNING_CUSTOMER_GROUP, DEFAULT_STROMLIGNING_CUSTOMER_GROUP)
+        new_data.setdefault(CONF_STROMLIGNING_USE_MANUAL_OVERRIDES, DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES)
+        new_data.setdefault(CONF_SELL_SIDE_COMPANY, DEFAULT_SELL_SIDE_COMPANY)
+        # v0.30.0 migration: country picker + UK Octopus support. Existing
+        # installs default to Denmark (Strømligning path). UK fields are
+        # empty until the user opts in via Configure → Buy-price source.
+        new_data.setdefault(CONF_COUNTRY, DEFAULT_COUNTRY)
+        new_data.setdefault(CONF_OCTOPUS_PRODUCT_CODE, "")
+        new_data.setdefault(CONF_OCTOPUS_REGION, DEFAULT_OCTOPUS_REGION)
+        # v0.30.1: lift CONF_PRICE_AREA from the const.py-only default into
+        # the config entry, and add the CONF_TARIFF_FETCH_ENABLED toggle.
+        # Existing installs default to DK2 + tariff fetch on (current behaviour).
+        new_data.setdefault(CONF_PRICE_AREA, DEFAULT_PRICE_AREA)
+        new_data.setdefault(CONF_TARIFF_FETCH_ENABLED, DEFAULT_TARIFF_FETCH_ENABLED)
         hass.config_entries.async_update_entry(entry, data=new_data, version=15)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v15")
 

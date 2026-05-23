@@ -171,6 +171,29 @@ from .const import (
     CONF_OCPP_EMBEDDED,
     CONF_OCPP_PORT,
     CONF_OCPP_RESTART_STRICT,
+    CONF_BUY_PRICE_MODE,
+    CONF_STROMLIGNING_SUPPLIER_ID,
+    CONF_STROMLIGNING_PRODUCT_ID,
+    CONF_STROMLIGNING_CUSTOMER_GROUP,
+    CONF_STROMLIGNING_USE_MANUAL_OVERRIDES,
+    CONF_SELL_SIDE_COMPANY,
+    CONF_OCTOPUS_PRODUCT_CODE,
+    CONF_OCTOPUS_REGION,
+    CONF_TARIFF_FETCH_ENABLED,
+    DEFAULT_TARIFF_FETCH_ENABLED,
+    EV_BATTERY_LOCK_POWER_THRESHOLD_KW,
+    DSO_OPTIONS,
+    SELL_SIDE_COMPANY_OPTIONS,
+    BUY_PRICE_MODE_MANUAL,
+    BUY_PRICE_MODE_STROMLIGNING,
+    BUY_PRICE_MODE_OCTOPUS,
+    DEFAULT_BUY_PRICE_MODE,
+    DEFAULT_SELL_SIDE_COMPANY,
+    DEFAULT_OCTOPUS_REGION,
+    DEFAULT_STROMLIGNING_CUSTOMER_GROUP,
+    DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES,
+    STROMLIGNING_CACHE_HOURS,
+    OCTOPUS_CACHE_HOURS,
     DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
     DEFAULT_EV_START_WINDOW_SECONDS,
     DEFAULT_EV_STOP_WINDOW_SECONDS,
@@ -213,6 +236,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Feed-in tariff components (flat-rate, refreshed daily with tariff schedule)
         self._feed_in_tariff_dso: float = 0.0
         self._feed_in_tariff_energinet: float = 0.0
+        # Strømligning cache (v0.29.0). Keyed by slot start ISO timestamp →
+        # per-15-min breakdown returned by /api/prices. Refreshed once per day
+        # alongside the tariff schedule. Empty in manual mode.
+        self._cached_stromligning_prices: dict[str, dict] = {}
+        self._last_stromligning_refresh: datetime | None = None
+        # Octopus Energy cache (v0.30.0). Keyed by valid_from ISO timestamp →
+        # per-30-min rate entry from /standard-unit-rates. Empty when the
+        # buy-price mode is not "octopus".
+        self._cached_octopus_prices: dict[str, dict] = {}
+        self._last_octopus_refresh: datetime | None = None
         # Learning tick gate: storage-write operations run every 5 min, not every fast tick
         self._last_learning_tick: datetime | None = None
         self._vacation_mode: bool = False  # Cached between learning ticks
@@ -589,7 +622,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             or (now - self._last_tariff_schedule_refresh).total_seconds()
             >= TARIFF_SCHEDULE_REFRESH_SECONDS
         )
-        if tariff_schedule_stale:
+        # v0.30.1: tariff fetching is Danish-specific (Energi Data Service
+        # DatahubPricelist). Skip the block when the user has disabled it
+        # (typically because they're outside Denmark). The tariff_schedule
+        # stays at zeros and per-hour tariff components don't get added.
+        if tariff_schedule_stale and self.config.get(
+            CONF_TARIFF_FETCH_ENABLED, DEFAULT_TARIFF_FETCH_ENABLED,
+        ):
             from .tariffs import fetch_tariff_schedule, fetch_feed_in_tariff  # avoid circular import at module level
             dso_gln = self.config.get(CONF_DSO_GLN, DEFAULT_DSO_GLN)
             try:
@@ -625,6 +664,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 )
             except Exception as err:
                 _LOGGER.warning("Tariff schedule refresh failed, keeping existing: %s", err)
+
+            # ── Strømligning retailer prices (v0.29.0) ─────────────────────
+            # Refreshed on the same daily cadence as tariffs. Only runs when
+            # the user has selected Strømligning mode and provided IDs. Wrapped
+            # in its own try so a Strømligning outage doesn't break the rest
+            # of the price refresh path.
+            try:
+                await self._maybe_refresh_stromligning_prices(session, now)
+            except Exception as err:
+                _LOGGER.warning("Strømligning price refresh failed: %s", err)
+
+            # ── Octopus Energy retailer prices (v0.30.0) ────────────────────
+            # Same daily cadence. No-op when buy_price_mode != "octopus".
+            try:
+                await self._maybe_refresh_octopus_prices(session, now)
+            except Exception as err:
+                _LOGGER.warning("Octopus price refresh failed: %s", err)
 
         # ---- parse EVCC ----
         home_power_w = evcc_state.get("homePower", 0)
@@ -695,7 +751,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 current_forecast_w >= SOLAR_ACCURACY_MIN_FORECAST_W
                 or pv_power_w >= SOLAR_ACCURACY_MIN_FORECAST_W
             ):
-                self._update_solar_accuracy(current_forecast_w, pv_power_w)
+                # v0.30.1: when the solar export floor is active the panels
+                # are deliberately curtailed — pass `curtailed=True` so the
+                # learner drops the sample instead of comparing forecast to
+                # throttled-down production.
+                floor_active = self._open_floor_block is not None
+                self._update_solar_accuracy(
+                    current_forecast_w, pv_power_w, curtailed=floor_active,
+                )
             self._update_load_history(base_load_kw)
             self._update_house_load_hourly(base_load_kw)
             self._update_ev_charge_learning(ev_charge_power_w)
@@ -748,17 +811,28 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Solar lookup: slot_start → kW (value is average Watts during the slot)
         solar_kw_by_start: dict = {s[0]: s[4] / 1000.0 for s in solar_slot_data}
         if grid_slots:
-            buy_vals_sorted = sorted(
-                (spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor
-                for h, spot in grid_slots
-            )
+            # v0.29.0: buy price computation routes through _compute_buy_price
+            # which handles Strømligning mode (with optional overrides) and
+            # falls back to the manual stack when no Strømligning data exists
+            # for the slot.
+            def _buy(spot_value: float, hour: int) -> float:
+                return self._compute_buy_price(
+                    spot=spot_value,
+                    hour=hour,
+                    slot_start_dt=now.replace(hour=hour, minute=0, second=0, microsecond=0),
+                    spot_markup=spot_markup,
+                    tariff_this_hour_dso=tariff_sched[hour],
+                    elafgift=elafgift,
+                    vat_factor=vat_factor,
+                )
+            buy_vals_sorted = sorted(_buy(spot, h) for h, spot in grid_slots)
             n_buy = len(buy_vals_sorted)
             buy_price_min = buy_vals_sorted[0]
             buy_price_p25 = buy_vals_sorted[max(0, n_buy // 4 - 1)]
             next_slot_slots = _forecast_values_with_hours(grid_rates.get("rates", []), now, 0.5)
             if next_slot_slots:
                 h_next, spot_next = next_slot_slots[0]
-                buy_price_next_slot = (spot_next + spot_markup + tariff_sched[h_next] + elafgift) * vat_factor
+                buy_price_next_slot = _buy(spot_next, h_next)
             else:
                 buy_price_next_slot = buy_price_min
         else:
@@ -804,7 +878,17 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                         break
                 except (ValueError, TypeError, KeyError):
                     continue
+        # v0.29.0: sell-side company picker. If a curated sell-side company is
+        # selected and has a known fee, use that. Otherwise fall back to the
+        # manual export_fee slider (storage key "export_fee", configurable via
+        # the dashboard number entity).
+        sell_company = self.config.get(CONF_SELL_SIDE_COMPANY, DEFAULT_SELL_SIDE_COMPANY)
         export_fee = self._stored.get("export_fee", DEFAULT_EXPORT_FEE)
+        if sell_company and sell_company != DEFAULT_SELL_SIDE_COMPANY:
+            for opt in SELL_SIDE_COMPANY_OPTIONS:
+                if opt["id"] == sell_company and opt.get("fee_dkk_kwh") is not None:
+                    export_fee = float(opt["fee_dkk_kwh"])
+                    break
         feed_in_tariff = round(self._feed_in_tariff_dso + self._feed_in_tariff_energinet, 6)
         # Raw export price before floor guard (used in chart / plan)
         export_price_raw = spot_ex_vat - export_fee - feed_in_tariff
@@ -908,7 +992,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             if cheapest_start > now:
                 for slot_start, dur_h, h, m, spot in grid_slot_data:
                     if now < slot_start < cheapest_start:
-                        buy_h = (spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor
+                        buy_h = self._compute_buy_price(
+                            spot=spot,
+                            hour=h,
+                            slot_start_dt=slot_start,
+                            spot_markup=spot_markup,
+                            tariff_this_hour_dso=tariff_sched[h],
+                            elafgift=elafgift,
+                            vat_factor=vat_factor,
+                        )
                         # Per-slot solar: use actual forecast kW, fall back to 24h average
                         solar_kw = solar_kw_by_start.get(slot_start, solar_kwh / 24.0)
                         net_house_kw = max(0.0, load_2h_avg - solar_kw)
@@ -1876,14 +1968,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     entry["missed_dkk"] + rate_kw * interval_h * grid_spread, 4
                 )
 
-    def _update_solar_accuracy(self, forecast_w: float, actual_w: float) -> None:
+    def _update_solar_accuracy(
+        self, forecast_w: float, actual_w: float, *, curtailed: bool = False,
+    ) -> None:
         """Append a (forecast, actual) PV power pair to the rolling sample buffer
         AND to the per-hour bucket for the current local hour.
 
         The per-hour buckets let the optimizer learn the *shape* of real output
         vs forecast — orientation effects (east panels over-forecast in afternoon,
         etc.) without the user telling us anything about the panels.
+
+        v0.30.1: when `curtailed` is True (the solar export floor is currently
+        active and the FoxESS MPPT is throttling the panels to match local
+        consumption), the sample is dropped instead of recorded — comparing
+        forecast against deliberately-throttled production would skew the
+        learning toward "panels always under-perform".
         """
+        if curtailed:
+            return
         sample = {"f": round(forecast_w, 0), "a": round(actual_w, 0)}
         # Global rolling buffer (existing behaviour, used as fallback)
         samples: list[dict] = self._stored.setdefault("solar_accuracy_samples", [])
@@ -2272,6 +2374,56 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ev_current_kw = self._get_ocpp_power_kw(charger_id)
         house_load_kw = home_power_w / 1000.0
         solar_kw      = pv_power_w / 1000.0
+
+        # v0.30.1 — solar visibility during price-block curtailment:
+        # When the solar export floor is active (export limit = 25 W) AND
+        # the house battery is at/near its max SoC, the FoxESS MPPT
+        # throttles the panels to match local consumption — the EV
+        # controller would otherwise see `pv ≈ load` and conclude there
+        # is no surplus. To unblock the EV in this case, fall back to the
+        # forecast PV value when:
+        #   - the floor is active (curtailment is happening)
+        #   - the house battery is within 2 % of max SoC (no buffer left)
+        #   - the forecast for this slot is meaningfully above what the
+        #     panels are actually producing (clear curtailment signal,
+        #     not just a cloudy moment)
+        # Once the EV starts pulling, panel MPPT rises to match and the
+        # forecast substitution becomes a no-op. If the forecast was
+        # wrong the EV controller's stop-window (default 180 s) backs
+        # the session out before any real harm.
+        battery_soc_pct = float(self._get_float_state(
+            self.config.get(CONF_BATTERY_SOC_ENTITY, FOXESS_BATTERY_SOC), 0,
+        ) or 0)
+        configured_max_soc = int(self._stored.get(
+            "battery_max_soc",
+            self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC),
+        ))
+        floor_active = self._open_floor_block is not None
+        battery_near_full = battery_soc_pct >= (configured_max_soc - 2)
+        if floor_active and battery_near_full:
+            try:
+                slot_forecast_w = _current_slot_forecast(
+                    (self._cached_solar_rates or {}).get("rates", []) or [],
+                    datetime.now(timezone.utc),
+                )
+            except Exception:  # noqa: BLE001
+                slot_forecast_w = None
+            if (
+                slot_forecast_w is not None
+                and slot_forecast_w > 1000.0           # > 1 kW expected
+                and slot_forecast_w > pv_power_w * 2   # actual < 50 % of forecast
+            ):
+                # Substitute forecast for actual to drive surplus calc
+                solar_kw = float(slot_forecast_w) / 1000.0
+                _LOGGER.debug(
+                    "EV surplus calc: price-floor curtailment detected "
+                    "(SoC %.0f%% ≥ max %d%%, forecast %.0f W vs actual %.0f W); "
+                    "using forecast for surplus to allow EV to kick-start "
+                    "panel MPPT.",
+                    battery_soc_pct, configured_max_soc,
+                    slot_forecast_w, pv_power_w,
+                )
+
         # Surplus = solar minus non-EV portion of house load
         non_ev_load_kw   = max(0.0, house_load_kw - ev_current_kw)
         solar_surplus_kw = max(0.0, solar_kw - non_ev_load_kw)
@@ -2392,10 +2544,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 elif (not want_charging) and cp.session_active and cp.session_transaction_id:
                     await cp.remote_stop_transaction(cp.session_transaction_id)
 
-        # Battery-lock (v0.27.2): in FULL mode while actively charging, prevent
-        # the house battery from discharging so the EV's grid demand doesn't
-        # raid it. Released when EV stops or mode changes away from FULL.
-        want_lock = (final_amps > 0 and self._ev_active_mode == EV_MODE_FULL)
+        # Battery-lock (v0.27.2, refined v0.30.1): in FULL mode, lock the
+        # house battery only while the EV is *actually* drawing power, not
+        # from the moment FULL mode was selected. This is the difference
+        # that matters when the car has its own internal scheduled-charge
+        # timer (e.g. user sets FULL at 22:00 but the car is scheduled to
+        # charge 02:00–06:00): the lock now engages at 02:00 when current
+        # actually flows, not at 22:00 the moment FULL was selected. Lock
+        # releases automatically when draw drops back below the threshold.
+        want_lock = (
+            self._ev_active_mode == EV_MODE_FULL
+            and ev_current_kw > EV_BATTERY_LOCK_POWER_THRESHOLD_KW
+        )
         if want_lock != self._ev_battery_locked:
             await self._set_battery_lock(want_lock)
 
@@ -3103,6 +3263,220 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 _LOGGER.exception("EV control loop iteration failed: %s", err)
 
     # ------------------------------------------------------------------ #
+    # Strømligning retailer pricing (v0.29.0)                              #
+    # ------------------------------------------------------------------ #
+
+    async def _maybe_refresh_stromligning_prices(
+        self, session: aiohttp.ClientSession, now: datetime,
+    ) -> None:
+        """Refresh the Strømligning per-slot price cache if the mode is
+        enabled and the cache is stale. No-op in manual mode.
+        """
+        if self.config.get(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE) != BUY_PRICE_MODE_STROMLIGNING:
+            return
+        product_id = self.config.get(CONF_STROMLIGNING_PRODUCT_ID, "")
+        supplier_id = self.config.get(CONF_STROMLIGNING_SUPPLIER_ID, "")
+        if not product_id or not supplier_id:
+            return
+        # Cache freshness check (24 h by default)
+        if (
+            self._last_stromligning_refresh is not None
+            and (now - self._last_stromligning_refresh).total_seconds()
+                < STROMLIGNING_CACHE_HOURS * 3600
+            and self._cached_stromligning_prices
+        ):
+            return
+
+        # Derive price area from the DSO option, fall back to DK2
+        price_area = "DK2"
+        for opt in DSO_OPTIONS:
+            if opt.get("stromligning") == supplier_id:
+                price_area = opt.get("price_area") or "DK2"
+                break
+
+        customer_group = self.config.get(
+            CONF_STROMLIGNING_CUSTOMER_GROUP, DEFAULT_STROMLIGNING_CUSTOMER_GROUP,
+        )
+
+        # Fetch a 48-hour window starting at the previous full hour
+        from_dt = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+        to_dt = from_dt + timedelta(hours=49)
+
+        # Import here to avoid a hard module-load dependency for users who
+        # never touch Strømligning mode
+        from . import stromligning as sl
+
+        prices = await sl.fetch_prices(
+            session,
+            product_id=product_id,
+            supplier_id=supplier_id,
+            customer_group_id=customer_group,
+            price_area=price_area,
+            from_dt=from_dt,
+            to_dt=to_dt,
+        )
+        if prices is None:
+            _LOGGER.warning(
+                "Strømligning fetch returned None (product=%s, supplier=%s); "
+                "keeping previous cache and falling back to manual stack",
+                product_id, supplier_id,
+            )
+            return
+
+        self._cached_stromligning_prices = prices
+        self._last_stromligning_refresh = now
+        _LOGGER.debug(
+            "Strømligning prices refreshed: %d slots for product=%s, supplier=%s, area=%s",
+            len(prices), product_id, supplier_id, price_area,
+        )
+
+    def _compute_buy_price(
+        self,
+        spot: float,
+        hour: int,
+        slot_start_dt: datetime | None = None,
+        *,
+        spot_markup: float,
+        tariff_this_hour_dso: float,
+        elafgift: float,
+        vat_factor: float,
+    ) -> float:
+        """Compute the per-slot buy price.
+
+        In manual mode (default) this is the classic stack:
+            (spot + markup + DSO tariff + elafgift) × VAT
+        In Strømligning mode it tries the cached per-slot all-in price for the
+        matching timestamp, falling back to the manual stack when no Strømligning
+        data is available for that slot.
+
+        With override mode enabled, it recomposes the price using Strømligning's
+        spot/distribution/transmission components but the user's markup,
+        elafgift, and VAT.
+        """
+        mode = self.config.get(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE)
+
+        # ── Octopus Energy mode (v0.30.0, UK) ────────────────────────────
+        if mode == BUY_PRICE_MODE_OCTOPUS and slot_start_dt is not None:
+            # Octopus rates are keyed by `valid_from` ISO Z timestamps,
+            # always at half-hour boundaries.
+            slot_key = slot_start_dt.astimezone(timezone.utc).replace(
+                minute=(slot_start_dt.minute // 30) * 30,
+                second=0, microsecond=0,
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            entry = self._cached_octopus_prices.get(slot_key)
+            if entry is None:
+                # Try the half-hour-aligned alternate (Octopus uses :00 and :30)
+                slot_key_alt = slot_start_dt.astimezone(timezone.utc).replace(
+                    minute=0, second=0, microsecond=0,
+                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                entry = self._cached_octopus_prices.get(slot_key_alt)
+            if entry is not None:
+                try:
+                    # Octopus values are pence/kWh inc-VAT. Convert to
+                    # currency-units/kWh (consistent with the rest of the
+                    # integration which uses DKK/kWh by default; UK users
+                    # set the currency to GBP in Configure).
+                    return float(entry["value_inc_vat"]) / 100.0
+                except (KeyError, TypeError, ValueError):
+                    pass
+            # Cache miss or parse failure → fall back to manual stack
+            return (spot + spot_markup + tariff_this_hour_dso + elafgift) * vat_factor
+
+        if mode != BUY_PRICE_MODE_STROMLIGNING or slot_start_dt is None:
+            return (spot + spot_markup + tariff_this_hour_dso + elafgift) * vat_factor
+
+        # Strømligning mode — lookup by hour-aligned ISO timestamp
+        slot_key = slot_start_dt.astimezone(timezone.utc).replace(
+            minute=0, second=0, microsecond=0,
+        ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        entry = self._cached_stromligning_prices.get(slot_key)
+        if entry is None:
+            # No matching slot — fall back to manual stack
+            return (spot + spot_markup + tariff_this_hour_dso + elafgift) * vat_factor
+
+        if not self.config.get(
+            CONF_STROMLIGNING_USE_MANUAL_OVERRIDES, DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES,
+        ):
+            # Pure Strømligning — return the all-in number directly
+            try:
+                return float(entry["price"]["price"]["total"])
+            except (KeyError, TypeError, ValueError):
+                return (spot + spot_markup + tariff_this_hour_dso + elafgift) * vat_factor
+
+        # Override mode — recompose using Strømligning components + user overrides
+        from . import stromligning as sl
+        try:
+            d = sl.get_price_details(entry)
+        except Exception:  # noqa: BLE001
+            return (spot + spot_markup + tariff_this_hour_dso + elafgift) * vat_factor
+        ex_vat = (
+            d["spot"]
+            + spot_markup
+            + d["net_tariff"]
+            + d["system_tariff"]
+            + d["distribution"]
+            + elafgift
+        )
+        return ex_vat * vat_factor
+
+    # ------------------------------------------------------------------ #
+    # Octopus Energy retailer pricing (v0.30.0)                            #
+    # ------------------------------------------------------------------ #
+
+    async def _maybe_refresh_octopus_prices(
+        self, session: aiohttp.ClientSession, now: datetime,
+    ) -> None:
+        """Refresh the Octopus per-half-hour price cache.
+
+        Only runs when CONF_BUY_PRICE_MODE is "octopus" and both product
+        code and region are configured. Cache freshness window matches the
+        tariff refresh interval (24 h by default). Octopus publishes Agile
+        prices for tomorrow around 16:00 UK time; the daily refresh window
+        guarantees we have today + tomorrow.
+        """
+        if self.config.get(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE) != BUY_PRICE_MODE_OCTOPUS:
+            return
+        product_code = self.config.get(CONF_OCTOPUS_PRODUCT_CODE, "")
+        region = self.config.get(CONF_OCTOPUS_REGION, DEFAULT_OCTOPUS_REGION)
+        if not product_code or not region:
+            return
+        if (
+            self._last_octopus_refresh is not None
+            and (now - self._last_octopus_refresh).total_seconds()
+                < OCTOPUS_CACHE_HOURS * 3600
+            and self._cached_octopus_prices
+        ):
+            return
+
+        # Fetch a 49-hour window — yesterday's tail + today + tomorrow
+        from_dt = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+        to_dt = from_dt + timedelta(hours=49)
+
+        from . import octopus as oc
+
+        prices = await oc.fetch_prices(
+            session,
+            product_code=product_code,
+            region=region,
+            from_dt=from_dt,
+            to_dt=to_dt,
+        )
+        if prices is None:
+            _LOGGER.warning(
+                "Octopus fetch returned None (product=%s, region=%s); "
+                "keeping previous cache and falling back to manual stack",
+                product_code, region,
+            )
+            return
+
+        self._cached_octopus_prices = prices
+        self._last_octopus_refresh = now
+        _LOGGER.debug(
+            "Octopus prices refreshed: %d slots for product=%s, region=%s",
+            len(prices), product_code, region,
+        )
+
+    # ------------------------------------------------------------------ #
     # Live state source dispatcher (EVCC / Hybrid / FoxESS)                #
     # ------------------------------------------------------------------ #
 
@@ -3301,15 +3675,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         return {"rates": rates} if rates else {}
 
     def _fetch_solar_from_solcast(self, entity_id: str) -> dict:
-        """Read a Solcast HA integration entity and convert to EVCC format.
+        """Read a Solcast HA integration entity and convert to EVCC format
+        (per-slot `{"start": iso, "value": watts}` where `value` is the
+        average power during the slot in watts).
 
-        The Solcast integration exposes a `detailedForecast` (30-min slots) or
-        `detailedHourly` attribute on its forecast sensors. Each entry is
-        `{"period_start": <iso>, "pv_estimate": <kWh>}` where pv_estimate is
-        the energy expected during the slot. We convert to watts:
-            watts = pv_estimate_kWh / dur_h × 1000
-        falling back to assuming the slot duration matches the gap to the
-        next slot (typically 0.5 h for Solcast's default 30-min output).
+        Unit handling (v0.29.1 — bug fix):
+        The Solcast HA integration's `pv_estimate` field is **kW (average
+        power during the slot)** in modern versions (4.x and newer). Older
+        v3.x versions reported `pv_estimate` as kWh per period (energy).
+        The integration auto-detects which semantic applies by comparing
+        the maximum `pv_estimate` in `detailedForecast` against the
+        `peak_forecast_*` sibling sensor (which is unambiguously in W with
+        `device_class: power`):
+            - If the values match → pv_estimate is in kW (power).
+            - If detailedForecast peak ≈ 2 × peak_forecast → pv_estimate
+              is in kWh per 30-min slot (energy). Divide by dur_h.
+        Default behaviour (when peak_forecast sibling can't be found) is
+        kW, matching the modern Solcast HA integration.
         """
         state = self.hass.states.get(entity_id)
         if state is None or state.state in ("unknown", "unavailable"):
@@ -3331,20 +3713,50 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         parsed: list[tuple[datetime, float]] = []
         for item in forecast:
             ts = item.get("period_start") or item.get("periodStart")
-            kwh = item.get("pv_estimate")
-            if ts is None or kwh is None:
+            value = item.get("pv_estimate")
+            if ts is None or value is None:
                 continue
             try:
                 dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=timezone.utc)
-                parsed.append((dt.astimezone(timezone.utc), float(kwh)))
+                parsed.append((dt.astimezone(timezone.utc), float(value)))
             except (ValueError, TypeError) as err:
                 _LOGGER.debug("solcast: skipping bad entry %s: %s", item, err)
 
         parsed.sort(key=lambda x: x[0])
+        if not parsed:
+            return {}
+
+        # ── Unit detection (v0.29.1) ───────────────────────────────────────
+        # Compare the maximum detailedForecast value against the matching
+        # peak_forecast_today / peak_forecast_tomorrow sensor (in W,
+        # device_class=power). The naming convention transforms
+        # ".._forecast_today" → ".._peak_forecast_today".
+        is_power = True   # Default: modern Solcast HA integration semantics
+        if "forecast_today" in entity_id or "forecast_tomorrow" in entity_id:
+            peak_entity = entity_id.replace("forecast_today", "peak_forecast_today")
+            peak_entity = peak_entity.replace("forecast_tomorrow", "peak_forecast_tomorrow")
+            peak_state = self.hass.states.get(peak_entity)
+            if peak_state and peak_state.state not in ("unknown", "unavailable"):
+                try:
+                    peak_w = float(peak_state.state)   # always in W per sensor unit
+                    max_value = max(v for _, v in parsed)
+                    if max_value > 0:
+                        ratio = (peak_w / 1000.0) / max_value
+                        # ratio ≈ 1.0 → pv_estimate is in kW
+                        # ratio ≈ 0.5 → pv_estimate is in kWh per 30-min slot
+                        is_power = ratio > 0.75
+                        _LOGGER.debug(
+                            "Solcast unit detection: peak_w=%.0f W, max(pv_estimate)=%.3f, ratio=%.2f → %s",
+                            peak_w, max_value, ratio,
+                            "kW (power)" if is_power else "kWh per period (energy)",
+                        )
+                except (ValueError, TypeError):
+                    pass
+
         rates: list[dict] = []
-        for i, (start, kwh) in enumerate(parsed):
+        for i, (start, value) in enumerate(parsed):
             # Slot duration = gap to next entry; fall back to 0.5 h (Solcast default)
             if i + 1 < len(parsed):
                 dur_h = (parsed[i + 1][0] - start).total_seconds() / 3600
@@ -3352,13 +3764,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     dur_h = 0.5
             else:
                 dur_h = 0.5
-            watts = round(kwh / dur_h * 1000, 1)
+            if is_power:
+                # value is already in kW (average power over the slot)
+                watts = round(value * 1000, 1)
+            else:
+                # value is kWh per period (legacy Solcast v3.x semantic)
+                watts = round(value / dur_h * 1000, 1)
             rates.append({"start": start.isoformat(), "value": watts})
 
         if rates:
             _LOGGER.debug(
-                "solcast: read %d slots from %s (first=%s, last=%s)",
-                len(rates), entity_id, rates[0]["start"], rates[-1]["start"],
+                "solcast: read %d slots from %s (first=%s, last=%s, is_power=%s)",
+                len(rates), entity_id, rates[0]["start"], rates[-1]["start"], is_power,
             )
         return {"rates": rates} if rates else {}
 
@@ -3578,7 +3995,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         slot_data: list[dict] = []
         for slot_start, dur_h, h, m, spot in grid_slot_data:
-            buy_h = (spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor
+            # v0.29.0: buy price routes through _compute_buy_price so the DP
+            # optimiser sees the same Strømligning-aware values as the rest
+            # of the integration.
+            buy_h = self._compute_buy_price(
+                spot=spot,
+                hour=h,
+                slot_start_dt=slot_start,
+                spot_markup=spot_markup,
+                tariff_this_hour_dso=tariff_sched[h],
+                elafgift=elafgift,
+                vat_factor=vat_factor,
+            )
             sell_h = max(0.0, spot - export_fee - feed_in_tariff)
             solar_kw = solar_kw_by_start.get(slot_start, 0.0)
             house_kw = house_load_profile[h]

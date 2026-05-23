@@ -140,6 +140,8 @@
           "currency": "Valuta",
           "fast_poll_interval": "Opdateringsinterval for live-data (sekunder)",
           "dso_gln": "Netselskab (DSO)",
+          "price_area": "Spotprisområde (Nord Pool-zone)",
+          "tariff_fetch_enabled": "Hent danske DatahubPricelist-tariffer (DSO + Energinet + indfødningstarif). Slå fra for installationer uden for Danmark.",
           "solar_forecast_source": "Solcelleprognose-kilde",
           "forecast_solar_entity": "Forecast.Solar-enhed",
           "solcast_entity": "Solcast-prognose — i dag (sensor med detailedHourly-attribut)",
@@ -149,6 +151,20 @@
           "foxess_grid_export_entity": "FoxESS net-eksportsensor",
           "foxess_pv_power_entity": "FoxESS solcelleeffekt-sensor",
           "foxess_load_power_entity": "FoxESS husforbrugs-sensor"
+        }
+      },
+      "buy_price": {
+        "title": "Købspris-kilde (v0.29.0)",
+        "description": "Vælg hvordan købsprisen beregnes. Manuel stak bygger prisen op fra moms + tillæg + tariffer + elafgift. Strømligning henter pr.-15-min totalprisen fra dit valgte danske elselskab via stromligning.dk's offentlige API. Override-skifteren lader manuelle moms-/tillæg-/elafgift-værdier træde i stedet for Strømlignings, mens DSO- og Energinet-tarifferne stadig kommer fra Strømligning.",
+        "data": {
+          "country": "Land (vælger regional prisdatakilde)",
+          "buy_price_mode": "Købspris-tilstand",
+          "stromligning_supplier_id": "Netselskab (Strømligning-id) — kun Danmark",
+          "stromligning_product_id": "Elselskabsprodukt — kun Danmark",
+          "stromligning_use_manual_overrides": "Brug manuelle moms-/tillæg-/elafgift-overrides (avanceret) — kun Danmark",
+          "octopus_product_code": "Octopus-produkt (Agile / Tracker / Cosy / Go / Fixed / etc.) — kun UK",
+          "octopus_region": "Octopus GSP-region (DNO-zone-bogstav A–P) — kun UK",
+          "sell_side_company": "Salgs-selskab (hvem betaler for din solcelleeksport)"
         }
       },
       "ocpp_settings": {

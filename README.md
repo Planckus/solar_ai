@@ -596,6 +596,7 @@ All settings are in *Settings → Devices & Services → Solar AI → Configure*
 - **EVCC required for EV-aware scheduling.** Solar forecasts, live grid power, and EV charge data come from EVCC's API in EVCC and Hybrid modes. FoxESS-only mode loses the EV-aware scheduling features (the OCPP controller still works).
 - **DSO coverage.** Network tariff and indfødningstarif auto-fetch covers Dinel (Jutland/Fyn). Other Danish DSOs can be added in `const.py`; GLN numbers are available in the Energi Data Service DatahubPricelist.
 - **Learning period.** The system reaches steady-state accuracy after 1–2 weeks of data. The first few days use conservative defaults for charge rates and EV patterns.
+- **GBP installs still see some DKK labels.** UK users on Octopus (v0.30.0+) get correct numeric values, but six number-entity sliders (spot markup, elafgift, sell-side fee, min export price, battery degradation cost, min arbitrage spread), two savings sensors, mode-change notifications, and the "Elafgift" label all render hardcoded `DKK/kWh`. The math is unaffected. To be addressed in a follow-up release with template-substituted units.
 
 ---
 

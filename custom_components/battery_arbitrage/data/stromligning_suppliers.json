@@ -1,0 +1,572 @@
+[
+  {
+    "id": "aal_el-net_c",
+    "name": "Aal El-Net A M B A",
+    "companyName": "Aal El-Net A M B A",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 19.95
+      }
+    ]
+  },
+  {
+    "id": "cerius_c",
+    "name": "Cerius C",
+    "companyName": "Cerius A/S",
+    "priceArea": "DK2",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 48.245713
+      }
+    ]
+  },
+  {
+    "id": "dinel_c",
+    "name": "Dinel C",
+    "companyName": "Dinel A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 44.166667
+      }
+    ]
+  },
+  {
+    "id": "el-net_kongerslev",
+    "name": "El-net Kongerslev",
+    "companyName": "El-net Kongerslev A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 60
+      }
+    ]
+  },
+  {
+    "id": "elektrus_c",
+    "name": "Elektrus C",
+    "companyName": "Elektrus A/S",
+    "priceArea": "DK2",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 50.75
+      }
+    ]
+  },
+  {
+    "id": "elinor",
+    "name": "Elinord A/S",
+    "companyName": "Elinord A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 34.69
+      }
+    ]
+  },
+  {
+    "id": "elnet_midt_c",
+    "name": "Elnet midt C",
+    "companyName": "Elnet Midt A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 41.67
+      }
+    ]
+  },
+  {
+    "id": "flow_elnet",
+    "name": "Flow Elnet",
+    "companyName": "FLOW Elnet A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 50
+      }
+    ]
+  },
+  {
+    "id": "forsyning_elnet",
+    "name": "Forsyning Elnet A/S",
+    "companyName": "Forsyning Elnet A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 47.667
+      }
+    ]
+  },
+  {
+    "id": "gev_elnet_c",
+    "name": "Grindsted Elnet A/S - GEV",
+    "companyName": "Grindsted Elnet A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 75
+      }
+    ]
+  },
+  {
+    "id": "hammel_elforsyning_net_as",
+    "name": "Hammel Elforsyning Net A/S",
+    "companyName": "Hammel Elforsyning Net A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 71.67
+      }
+    ]
+  },
+  {
+    "id": "hjerting_transformatorforening",
+    "name": "Hjerting Transformatorforening",
+    "companyName": "Hjerting Transformatorforening",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 18.33
+      }
+    ]
+  },
+  {
+    "id": "hurup_elvrk_net_c",
+    "name": "Hurup Elværk Net C",
+    "companyName": "Hurup Elværk Net A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 49.16
+      }
+    ]
+  },
+  {
+    "id": "ikast_el_net_as_c",
+    "name": "Ikast El Net A/S",
+    "companyName": "Ikast El Net A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 42.83
+      }
+    ]
+  },
+  {
+    "id": "kimbrer_c",
+    "name": "Kimbrer Elnet C",
+    "companyName": "Kimbrer Elnet A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 46.08
+      }
+    ]
+  },
+  {
+    "id": "konstant_c",
+    "name": "Konstant C - 151",
+    "companyName": "Konstant Net A/S - 151",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 29.5334
+      }
+    ]
+  },
+  {
+    "id": "konstant_c_245",
+    "name": "Konstant C - 245",
+    "companyName": "Konstant Net A/S - 245",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 29.5334
+      }
+    ]
+  },
+  {
+    "id": "l-net",
+    "name": "L-Net",
+    "companyName": "L-Net A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 62.3
+      }
+    ]
+  },
+  {
+    "id": "laesoe_elnet_c",
+    "name": "Læsø Elnet A/S",
+    "companyName": "Læsø Elnet A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 62.83
+      }
+    ]
+  },
+  {
+    "id": "midtfyns_c",
+    "name": "Midtfyns Elforsyning A.m.b.A",
+    "companyName": "Midtfyns Elforsyning A.m.b.A",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 50.58
+      }
+    ]
+  },
+  {
+    "id": "n1_344",
+    "name": "N1 A/S - 344",
+    "companyName": "N1 A/S - 344",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 28.1229
+      }
+    ]
+  },
+  {
+    "id": "n1_c",
+    "name": "N1 C",
+    "companyName": "N1 A/S - 131",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 28.122861
+      }
+    ]
+  },
+  {
+    "id": "netselskabet_elvaerk_331_c",
+    "name": "Netselskabet Elværk A/S",
+    "companyName": "Netselskabet Elværk A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 41.8739
+      }
+    ]
+  },
+  {
+    "id": "netselskabet_elvaerk_c",
+    "name": "Netselskabet Elværk C - Udgået",
+    "companyName": "Netselskabet Elværk A/S - 042 - Udgået",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 0
+      }
+    ]
+  },
+  {
+    "id": "nke-elnet",
+    "name": "NKE-Elnet",
+    "companyName": "NKE-Elnet A/S",
+    "priceArea": "DK2",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 0
+      }
+    ]
+  },
+  {
+    "id": "noe_net",
+    "name": "Nordvestjysk Elforsyning (NOE Net)",
+    "companyName": "NOE Net A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 48.83
+      }
+    ]
+  },
+  {
+    "id": "nord_energi_net",
+    "name": "Nord Energi Net",
+    "companyName": "Nord Energi Net A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 36.75
+      }
+    ]
+  },
+  {
+    "id": "radius_c",
+    "name": "Radius C",
+    "companyName": "Radius Elnet A/S",
+    "priceArea": "DK2",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 40.835055
+      }
+    ]
+  },
+  {
+    "id": "rah_c",
+    "name": "RAH C",
+    "companyName": "RAH Net A/S - 348",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 54.42
+      }
+    ]
+  },
+  {
+    "id": "ravdex",
+    "name": "Ravdex",
+    "companyName": "Ravdex A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 43.33
+      }
+    ]
+  },
+  {
+    "id": "sunds_net",
+    "name": "Sunds Net A.m.b.a",
+    "companyName": "Sunds Net A.m.b.a",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 27
+      }
+    ]
+  },
+  {
+    "id": "tarm_elværk_net_as",
+    "name": "Tarm Elværk Net A/S",
+    "companyName": "Tarm Elværk Net A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 69.75
+      }
+    ]
+  },
+  {
+    "id": "trefor_el-net_c",
+    "name": "Trefor El-net C",
+    "companyName": "TREFOR El-net A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 44
+      }
+    ]
+  },
+  {
+    "id": "trefor_el-net_oest_c",
+    "name": "Trefor El-Net Øst C",
+    "companyName": "TREFOR El-Net Øst A/S",
+    "priceArea": "DK2",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 112
+      }
+    ]
+  },
+  {
+    "id": "veksel",
+    "name": "Veksel C",
+    "companyName": "Veksel A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 33.42
+      }
+    ]
+  },
+  {
+    "id": "videbaek_elnet_c",
+    "name": "Videbæk Elnet A/S",
+    "companyName": "Videbæk Elnet A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 0
+      }
+    ]
+  },
+  {
+    "id": "vores_elnet",
+    "name": "Vores Elnet C",
+    "companyName": "Vores Elnet A/S",
+    "priceArea": "DK1",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 47
+      }
+    ]
+  },
+  {
+    "id": "zeanet",
+    "name": "Zeanet",
+    "companyName": "Zeanet A/S",
+    "priceArea": "DK2",
+    "customerGroups": [
+      {
+        "id": "c",
+        "default": true,
+        "name": "C",
+        "description": "Privatkunder og mindre erhvervskunder",
+        "currentMonthlySubscriptionPrice": 48
+      }
+    ]
+  }
+]
