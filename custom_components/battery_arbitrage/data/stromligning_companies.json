@@ -1,0 +1,2023 @@
+[
+  {
+    "id": "647321b3e46ead9cfcb00490",
+    "name": "Ø/strøm",
+    "image": "/logo/o-strom.png",
+    "link": "https://www.o-strom.dk",
+    "products": [
+      {
+        "id": "oe_stroem",
+        "name": "Ø/spot",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "oe_groen_stroem",
+        "name": "Ø/spot VE",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00484",
+    "name": "nettopower",
+    "image": "/logo/nettopower.png",
+    "link": "https://www.nettopower.dk/",
+    "products": [
+      {
+        "id": "nettopower",
+        "name": "nettopower",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "atompower",
+        "name": "atompower",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb0048a",
+    "name": "Andel Energi",
+    "image": "/logo/andel-energi.png",
+    "link": "https://andelenergi.dk/",
+    "products": [
+      {
+        "id": "andel_energi_variabel_pris",
+        "name": "Variabel pris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "andel_basisel_kab",
+        "name": "BasisEL KAB",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "andel_energi_timeenergi",
+        "name": "TimeEnergi",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "andel_energi_flexenergi",
+        "name": "FlexEnergi",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "andel_energi_solenergi",
+        "name": "SolEnergi",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "andel_energi_fastenergi",
+        "name": "FastEnergi",
+        "productType": "fixed",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00436",
+    "name": "Strømlinet",
+    "image": "/logo/stroemlinet.png",
+    "link": "https://stromlinet.dk/",
+    "products": [
+      {
+        "id": "stromlinet_vindenergi",
+        "name": "FlexEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "stromlinet_solenergi",
+        "name": "SpotEl",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00440",
+    "name": "Forskel",
+    "image": "/logo/forskel.png",
+    "link": "https://forskel.dk/",
+    "products": [
+      {
+        "id": "forskel_spotel",
+        "name": "SpotEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "forskel_flexel",
+        "name": "FlexEl",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00449",
+    "name": "Bornholms Energi & Forsyning",
+    "image": "/logo/beof.png",
+    "link": "https://www.beof.dk/privat",
+    "products": [
+      {
+        "id": "beof_timeenergi",
+        "name": "TimeEnergi - Lavt forbrug",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "beof_timeenergi_hoej",
+        "name": "TimeEnergi - Højt forbrug",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "beof_timeenergi_maaned",
+        "name": "TimeEnergi Måned - Lavt forbrug",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "beof_timeenergi_maaned_hoej",
+        "name": "TimeEnergi Måned - Højt forbrug",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00457",
+    "name": "Strømtid",
+    "image": "/logo/stroemtid.png",
+    "link": "https://stromtid.dk/",
+    "products": [
+      {
+        "id": "stromtid_klimahelt",
+        "name": "Klimahelt",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb0049b",
+    "name": "Clever",
+    "image": "/logo/clever.png",
+    "link": "https://clever.dk/produkter/clever-power/",
+    "products": [
+      {
+        "id": "clever",
+        "name": "Clever Power",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "clever-49",
+        "name": "Clever Power - 49 kr/md",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00451",
+    "name": "Energidrift",
+    "image": "/logo/energidrift.png",
+    "link": "https://energidrift.dk/",
+    "products": [
+      {
+        "id": "energidrift",
+        "name": "Privat, Grøn Strøm, Variabel",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00459",
+    "name": "EDISON",
+    "image": null,
+    "link": "https://edisonel.dk/",
+    "products": []
+  },
+  {
+    "id": "647321b3e46ead9cfcb00481",
+    "name": "b.energy",
+    "image": null,
+    "link": "https://b.energy/",
+    "products": [
+      {
+        "id": "b_energy",
+        "name": "b.energy",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00486",
+    "name": "Velkommen",
+    "image": "/logo/velkommen.png",
+    "link": "https://velkommen.dk/",
+    "products": [
+      {
+        "id": "velkommen",
+        "name": "Velkommen",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "velkommen_gron_el",
+        "name": "GrønEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "raakraft",
+        "name": "Råkraft",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "velkommen_vedvarende_fri",
+        "name": "Vedvarende Fri",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "velkommen_b.energy_b.family",
+        "name": "b.energy b.family+",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "velkommen_b.energy_b.basic",
+        "name": "b.energy b.basic",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "velkommen_b.energy_b.fair",
+        "name": "b.energy b.fair",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb0048b",
+    "name": "Norlys",
+    "image": "/logo/norlys.png",
+    "link": "https://norlys.dk/",
+    "products": [
+      {
+        "id": "norlys_flexel",
+        "name": "FlexEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "norlys_flexel_intro",
+        "name": "FlexEl Intro",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00492",
+    "name": "Gasel",
+    "image": "/logo/gasel.png",
+    "link": "https://www.gasel.dk/",
+    "products": [
+      {
+        "id": "gasel",
+        "name": "El til indkøbspris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "gasel_borspris",
+        "name": "El til børspris + 10 øre/kWh",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "gasel_borspris_4ore",
+        "name": "El til børspris + 4 øre/kWh",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "gasel_borspris_6ore",
+        "name": "El til børspris + 6 øre/kWh",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00446",
+    "name": "Elektron",
+    "image": null,
+    "link": "https://elektron.dk/",
+    "products": []
+  },
+  {
+    "id": "647321b3e46ead9cfcb0045b",
+    "name": "Greenbow",
+    "image": "/logo/greenbow.png",
+    "link": "https://greenbow.dk/",
+    "products": [
+      {
+        "id": "greenbow_elaftale",
+        "name": "Greenbow",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "greenbow_spot_on",
+        "name": "Spot On",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00499",
+    "name": "SEF Energi",
+    "image": "/logo/sef-energi.png",
+    "link": "https://sefenergi.dk/",
+    "products": [
+      {
+        "id": "sef_energi_as_fleksvind",
+        "name": "FleksVIND",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "sef_energi_as_dyrenes-energi",
+        "name": "DyrenesEnergi",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "sef_energi_as_timeel",
+        "name": "TimeEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "sef_energi_as_bareel_lille",
+        "name": "BareEl - under 6000 kWh",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "sef_energi_as_bareel_stor",
+        "name": "BareEl - over 6000 kWh",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "sef_energi_as_mereendel",
+        "name": "MereEndEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "sef_aarstids_el",
+        "name": "ÅrstidsEl",
+        "productType": "fixed",
+        "custom": false
+      },
+      {
+        "id": "sef_helaars_el",
+        "name": "HelårsEl",
+        "productType": "fixed",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb004a3",
+    "name": "EWII",
+    "image": "/logo/ewii.png",
+    "link": "https://www.ewii.dk",
+    "products": [
+      {
+        "id": "ewii_groen_indkoebspris",
+        "name": "Grøn Indkøbspris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ewii_timepris",
+        "name": "Timepris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ewii_groen_fremtid",
+        "name": "Grøn Fremtid",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ewii_groen_timepris",
+        "name": "Grøn Timepris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ewii_prisloft",
+        "name": "Prisloft",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ewii_fastpris",
+        "name": "Fastpris",
+        "productType": "fixed",
+        "custom": false
+      },
+      {
+        "id": "ewii_basis-el",
+        "name": "Basis El",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ewii_groen-basis-el",
+        "name": "Grøn Basis El",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ewii_plus-el",
+        "name": "Plus El",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ewii_plus-el-intro",
+        "name": "Plus El - Intro",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ewii_foedselsdags-el",
+        "name": "Fødselsdags El",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00425",
+    "name": "go'energi",
+    "image": "/logo/go-energi.png",
+    "link": "https://go-energi.dk/",
+    "products": [
+      {
+        "id": "go-energi_go_spot_maaned",
+        "name": "go'måned energi",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "go-energi_vindenergi_maaned",
+        "name": "go'måned vind",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "go-energi_vindenergi_kvartal",
+        "name": "go'kvartal vind",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "go-energi_go_spot_energi",
+        "name": "go'kvartal energi",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00434",
+    "name": "ENLY",
+    "image": "/logo/enly.png",
+    "link": "https://enly.dk",
+    "products": [
+      {
+        "id": "gronelforsyning_gronflex",
+        "name": "Grøn Flex",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "gronelforsyning_gron-fremtid",
+        "name": "Grøn Fremtid",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "enly_lejlighed",
+        "name": "Lejlighed",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "enly_hus",
+        "name": "Hus",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00488",
+    "name": "Vindstød",
+    "image": "/logo/vindstod.png",
+    "link": "https://www.vindstoed.dk/",
+    "products": [
+      {
+        "id": "vindstoed_spotvind",
+        "name": "SpotVind",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vindstoed_timeel",
+        "name": "TimeEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vindstoed_danskvind",
+        "name": "DanskVind",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vindstoed_variabelel",
+        "name": "VariabelEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vindstoed_lokalvind_variabel",
+        "name": "LokalVind Variabel",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vindstoed_vestroem",
+        "name": "VE Strøm",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vindstoed_vestroem_kvartal",
+        "name": "VE Strøm - Kvartal",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vindstoed_aktive_energiforbrugere",
+        "name": "Aktive Energiforbrugere",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vindstoed_elforbundet_2023",
+        "name": "Elforbundet.dk 2023",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vindstoed_elforbundet",
+        "name": "Elforbundet.dk 2024",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vindstoed_elforbundet_2025",
+        "name": "Elforbundet.dk 2025",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vindstoed_elforbundet_2026",
+        "name": "Elforbundet.dk 2026",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb0048e",
+    "name": "Modstrøm",
+    "image": "/logo/modstrom.png",
+    "link": "https://www.modstroem.dk",
+    "products": [
+      {
+        "id": "modstroem_g",
+        "name": "Overgangsprodukt",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "modstroem_nemel",
+        "name": "NemEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "modstroem_enkel",
+        "name": "EnkEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "modstroem_spotel",
+        "name": "SpotEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "modstroem_premium",
+        "name": "Premium",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb0043a",
+    "name": "LOOAD",
+    "image": "/logo/looad.png",
+    "link": "https://looad.dk/el-til-hjemmet/",
+    "products": [
+      {
+        "id": "looad",
+        "name": "Looad Energy",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "looad_energy_intro2",
+        "name": "Looad Energy - Intro",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00429",
+    "name": "Nordisk Energi",
+    "image": "/logo/nordisk-energi.png",
+    "link": "https://nordiskenergi.dk/",
+    "products": [
+      {
+        "id": "nordisk_energy",
+        "name": "Nordisk Energi",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "nordisk_energy_flex",
+        "name": "Flex",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "nordisk_energy_variabel-stroem",
+        "name": "Variabel strøm",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb0044b",
+    "name": "Energiselskabet Elg",
+    "image": "/logo/energiselskabet-elg.png",
+    "link": "https://elgpower.dk/",
+    "products": [
+      {
+        "id": "energiselskabet_elg",
+        "name": "Energiselskabet Elg",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00432",
+    "name": "Nef",
+    "image": "/logo/nef.png",
+    "link": "https://nef.dk",
+    "products": [
+      {
+        "id": "nef-el_til_kostpris",
+        "name": "El til kostpris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "nef-variabel_pris_uden_aconto",
+        "name": "Variabel pris uden aconto",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "nef-bil_og_bolig",
+        "name": "Bil og Bolig",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "nef-basis_uden_aconto",
+        "name": "Basis uden aconto",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "nef-basis_med_aconto",
+        "name": "Basis med aconto",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "nef-sol_og_vind_uden_aconto",
+        "name": "Sol & Vind uden aconto",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00438",
+    "name": "Energi Viborg",
+    "image": "/logo/energi-viborg.png",
+    "link": "https://www.energiviborg.dk/",
+    "products": [
+      {
+        "id": "energi_viborg",
+        "name": "Flex-El",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "energi_viborg_intro_flex_el",
+        "name": "Intro-Flex-El",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "energi_viborg-flex-el-klima-el",
+        "name": "Flex-El - Klima-El",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "energi_viborg_intro_flex_el-klima-el",
+        "name": "Intro-Flex-El - Klima-El",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00494",
+    "name": "AURA",
+    "image": "/logo/aura.png",
+    "link": "https://www.aura.dk/",
+    "products": [
+      {
+        "id": "aura_flexel",
+        "name": "FlexEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "aura_flexel-groen",
+        "name": "FlexEl - Grøn",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "aura_fastel",
+        "name": "FastEl",
+        "productType": "fixed",
+        "custom": false
+      },
+      {
+        "id": "aura_flexel_intro",
+        "name": "FlexEl Kampagne",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "aura_flexel_intro2",
+        "name": "FlexEl Intro",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "aura_flexel_intro3",
+        "name": "FlexEl Intro",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "aura_flexel_intro4",
+        "name": "FlexEl Kampagne",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "aura_flexel_intro5",
+        "name": "FlexEl Tilbud",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "aura_power",
+        "name": "Power",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "aura_power-groen",
+        "name": "Power - Grøn",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb004a0",
+    "name": "Jysk Energi",
+    "image": "/logo/jysk-energi.png",
+    "link": "https://jyskenergi.dk/",
+    "products": [
+      {
+        "id": "jysk_energi_variabel_strom",
+        "name": "Variabel Strøm",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "jysk_energi_variabel_strom-klima",
+        "name": "Variabel Strøm - Klima",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "jysk_energi_min_strom",
+        "name": "Min Strøm",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "jysk_energi_fdm-stroem",
+        "name": "FDM Strøm",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "jysk_energi_fast_strom",
+        "name": "Fast Strøm",
+        "productType": "fixed",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb0042b",
+    "name": "Grow Energy",
+    "image": "/logo/grow-energy.png",
+    "link": "https://growenergy.dk/",
+    "products": []
+  },
+  {
+    "id": "647321b3e46ead9cfcb00444",
+    "name": "SK Energi",
+    "image": "/logo/sk-energi.png",
+    "link": "https://skenergi.dk/",
+    "products": [
+      {
+        "id": "sk-energi_flex-el",
+        "name": "Flex El",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "sk-energi_el-til-indkoebspris",
+        "name": "El til indkøbspris",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb0049d",
+    "name": "Kärnfull",
+    "image": "/logo/karnfull.png",
+    "link": "https://dk.karnfull.com/",
+    "products": [
+      {
+        "id": "kernfull",
+        "name": "Kärnfull",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00420",
+    "name": "NRGi",
+    "image": "/logo/nrgi.png",
+    "link": "https://nrgi.dk",
+    "products": [
+      {
+        "id": "nrgi_time",
+        "name": "NRGi Time",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "nrgi_time_klima",
+        "name": "NRGi Time Klimatilvalg",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "nrgi_time_intro",
+        "name": "NRGi Time Intro",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "nrgi_kvartal",
+        "name": "NRGi Kvartal",
+        "productType": "fixed",
+        "custom": false
+      },
+      {
+        "id": "nrgi_fast",
+        "name": "NRGi Fast",
+        "productType": "fixed",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb0043c",
+    "name": "Forsyningen",
+    "image": "/logo/forsyningen.png",
+    "link": "https://www.forsyningen.dk/",
+    "products": [
+      {
+        "id": "forsyningen",
+        "name": "Time El",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "forsyningen_time-el-miljoe",
+        "name": "Time El Miljø",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "forsyningen_fordel",
+        "name": "FordEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "forsyningen_fordel-miljoe",
+        "name": "FordEl Miljø",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb0043e",
+    "name": "Lokal Energi",
+    "image": "/logo/lokal-energi.png",
+    "link": "https://www.lokal-energi.dk/",
+    "products": [
+      {
+        "id": "lokal_energi",
+        "name": "Lokal Variabel",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb0044d",
+    "name": "Samstrøm",
+    "image": "/logo/samstrom.png",
+    "link": "https://samstrom.dk/",
+    "products": [
+      {
+        "id": "samstrom_ren_spot",
+        "name": "REN SPOT",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "samstrom_ren_spot_forbrugsafregnet",
+        "name": "REN SPOT - Forbrugsafregnet",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "samstrom_ren_spar",
+        "name": "REN SPAR",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "samstrom_ren_spar_forbrugsafregnet",
+        "name": "REN SPAR - Forbrugsafregnet",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "samstrom_ren_spot-klimavenlig",
+        "name": "REN SPOT - Klimavenlig",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "samstrom_ren_spot_forbrugsafregnet-klimavenlig",
+        "name": "REN SPOT - Forbrugsafregnet, Klimavenlig",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "samstrom_ren_spar-klimavenlig",
+        "name": "REN SPAR - Klimavenlig",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "samstrom_ren_spar_forbrugsafregnet-klimavenlig",
+        "name": "REN SPAR - Forbrugsafregnet, Klimavenlig",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00455",
+    "name": "PREASY",
+    "image": null,
+    "link": "https://preasy.dk/",
+    "products": []
+  },
+  {
+    "id": "647321b3e46ead9cfcb00422",
+    "name": "Forsyning Helsingør",
+    "image": "/logo/forsyning-helsingoer.png",
+    "link": "https://www.fh.dk/el/kronborg-el",
+    "products": [
+      {
+        "id": "forsyning_helsingoer_kronborg_el_kvartal",
+        "name": "Kronborg El Kvartal",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "forsyning_helsingoer_kronborg_el_maaned",
+        "name": "Kronborg El Måned",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "647321b3e46ead9cfcb00496",
+    "name": "OK",
+    "image": "/logo/ok_new.png",
+    "link": "https://www.ok.dk/",
+    "products": [
+      {
+        "id": "ok_el_variabelpris",
+        "name": "OK El Variabelpris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ok_el_lav",
+        "name": "OK El Lavt Forbrug",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ok_el_hoj",
+        "name": "OK El Højt Forbrug",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ok_el_lav_dansk-vindstroem",
+        "name": "OK El Lavt Forbrug - Dansk vindstrøm",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ok_el_hoj_dansk-vindstroem",
+        "name": "OK El Højt Forbrug - Dansk vindstrøm",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ok_el_lav_intro",
+        "name": "OK El Lavt Forbrug - Intro",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ok_el_hoj_intro",
+        "name": "OK El Højt Forbrug - Intro",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ok_el_flex",
+        "name": "OK El Flex",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "groen_ok_el_flex",
+        "name": "Grøn OK El Flex",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "groen_ok_el_spot",
+        "name": "Grøn OK El Spotpris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "ok_el_spot",
+        "name": "OK El Spotpris",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "664f20332d16483b400bd1a5",
+    "name": "TakeCHARGE",
+    "image": "/logo/takecharge.png",
+    "link": "https://takecharge.dk/",
+    "products": []
+  },
+  {
+    "id": "666862d349b443b7be645e75",
+    "name": "FDM",
+    "image": null,
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "671274a8ea5bce41b27c904e",
+    "name": "Budget Energi",
+    "image": "/logo/budget-energi.png",
+    "link": "https://budgetenergi.dk/",
+    "products": [
+      {
+        "id": "budget_energi_variabel_elpris",
+        "name": "Variabel elpris",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "6553720eca03be2fd8d9d2ed",
+    "name": "Vestforsyning",
+    "image": "/logo/vestforsyning.png",
+    "link": "https://www.vestforsyning.dk/",
+    "products": [
+      {
+        "id": "vestforsyning_spot",
+        "name": "SPOT",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vestforsyning_plus",
+        "name": "PLUS",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vestforsyning_gron-spot",
+        "name": "GRØNSPOT",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vestforsyning_gron-plus",
+        "name": "GRØNPLUS",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "65c63af44ad98c4a0aa659ec",
+    "name": "E-GO",
+    "image": "/logo/e-go.png",
+    "link": "https://e-go.dk/",
+    "products": [
+      {
+        "id": "e-go",
+        "name": "E-GO Spot el-aftale",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "67240bf06d232f7827c27572",
+    "name": "nef Strøm",
+    "image": null,
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "653976f9b5b9fa0cac2f65b9",
+    "name": "Energi+",
+    "image": "/logo/energiplus.png",
+    "link": "https://energiplus.dk/",
+    "products": []
+  },
+  {
+    "id": "65534ddfca03be2fd8d9d2eb",
+    "name": "Vesthimmerlands El-Forsyning",
+    "image": "/logo/vesthimmerlands-elforsyning.png",
+    "link": "https://vhel.dk/",
+    "products": [
+      {
+        "id": "vesthimmerlands_fri_el_spot",
+        "name": "Fri el spot",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "65e6d0fe0ea35c25986ef59e",
+    "name": "Zapp Energy",
+    "image": "/logo/zapp-energy.png",
+    "link": "https://energy.zapp.dk/",
+    "products": [
+      {
+        "id": "zapp_energy",
+        "name": "Variabel timepris",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "6668623f075c5a89bfb247d7",
+    "name": "Elli",
+    "image": "/logo/elli.png",
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "666862d049b443b7be645e0a",
+    "name": "IONITY",
+    "image": "/logo/ionity.png",
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "675d38c85d4a982ae0eff487",
+    "name": "ZOSANI",
+    "image": null,
+    "link": "https://zosani.com",
+    "products": []
+  },
+  {
+    "id": "64c500083fc08a3c95e98b96",
+    "name": "VestEnergi",
+    "image": "/logo/vestenergi.png",
+    "link": "https://vestenergi.dk/",
+    "products": [
+      {
+        "id": "vest_energi",
+        "name": "Indkøbspris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vest_energi_spot",
+        "name": "Spot",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vest_energi_gron_elaftale",
+        "name": "Grøn Elaftale",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vest_energi_timeenergi",
+        "name": "VestEnergi",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vest_energi_variabel_pris",
+        "name": "Variabel pris",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "6618ef577057dc2d3007f465",
+    "name": "Cheap Energy",
+    "image": "/logo/cheapenergy.png",
+    "link": "https://www.cheapenergy.dk/",
+    "products": [
+      {
+        "id": "gnp_flex_privat",
+        "name": "Flex Privat",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "gnp_variabel_garanti",
+        "name": "Variabel Garanti - 5,9 øres tillæg",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "gnp_variabel_garanti_39",
+        "name": "Variabel Garanti",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "gnp_variabel_garanti_29",
+        "name": "Variabel Garanti - Intro",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "gnp_fastpris_6",
+        "name": "Fastpris 6 mnd",
+        "productType": "fixed",
+        "custom": false
+      },
+      {
+        "id": "gnp_fastpris_12",
+        "name": "Fastpris 12 mnd",
+        "productType": "fixed",
+        "custom": false
+      },
+      {
+        "id": "gnp_fastpris_24",
+        "name": "Fastpris 24 mnd",
+        "productType": "fixed",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "666862d749b443b7be645f23",
+    "name": "Greenier",
+    "image": null,
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "672e030e53977803be664fa4",
+    "name": "Enkel Energi",
+    "image": "/logo/enkel-energi.png",
+    "link": "https://www.enkelenergi.dk/",
+    "products": [
+      {
+        "id": "enkel_energi-enkel_stroem",
+        "name": "enkel strøm",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "enkel_energi-enkel_stroem_forbrugsafregnet",
+        "name": "enkel strøm - forbrugsafregnet",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "enkel_energi-enkel_kvartal",
+        "name": "enkel kvartal",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "enkel_energi-enkel_natur",
+        "name": "enkel natur",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "enkel_energi-enkel_natur_forbrugsafregnet",
+        "name": "enkel natur - forbrugsafregnet",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "675d30955d4a982ae0eff486",
+    "name": "NORDICZOL",
+    "image": null,
+    "link": "https://nordiczol.dk",
+    "products": []
+  },
+  {
+    "id": "647321b3e46ead9cfcb004a5",
+    "name": "Verdo",
+    "image": "/logo/verdo.png",
+    "link": "https://www.verdo.com/",
+    "products": [
+      {
+        "id": "verdo_variabel_timepris",
+        "name": "Variabel pris (aconto)",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "verdo_variabel_timepris_forbrugsafregnet",
+        "name": "Variabel pris (forbrugsafregnet)",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "verdo_fast_kvartalspris",
+        "name": "Fast kvartalspris",
+        "productType": "fixed",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "675d233f5d4a982ae0eff485",
+    "name": "Fair Strøm",
+    "image": "/logo/fairstroem.png",
+    "link": "https://fairstrom.dk",
+    "products": [
+      {
+        "id": "fairstrom_fair-spot-kvartal",
+        "name": "Fair Spot Kvartal",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "fairstrom_fair-spot-maaned",
+        "name": "Fair Spot Måned",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "66686241075c5a89bfb24813",
+    "name": "Ingen",
+    "image": null,
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "666862e049b443b7be6460fc",
+    "name": "HomeCharge",
+    "image": "/logo/homecharge.png",
+    "link": null,
+    "products": [
+      {
+        "id": "homecharge",
+        "name": "HomeCharge",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "667c0c8bfb629d144df41c3a",
+    "name": "Mormorlader",
+    "image": null,
+    "link": "https://mormorlader.dk",
+    "products": []
+  },
+  {
+    "id": "675d1dae5d4a982ae0eff482",
+    "name": "Fairpris",
+    "image": "/logo/fairpris.png",
+    "link": "https://fairpris.dk",
+    "products": [
+      {
+        "id": "fairpris_flex",
+        "name": "FAIR Flex",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "fairpris_fast",
+        "name": "FAIR Fast",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "65200252e4df1403f96ed2f5",
+    "name": "Nordiskel",
+    "image": null,
+    "link": "https://nordiskel.dk/",
+    "products": [
+      {
+        "id": "groen_nordisk",
+        "name": "Grøn Nordisk",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "65719e556c3f86adc2b6bb73",
+    "name": "Vedvarende",
+    "image": "/logo/vedvarende.png",
+    "link": "https://vedvarende.dk/",
+    "products": [
+      {
+        "id": "vedvarende_el",
+        "name": "Vedvarende Flex",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vedvarende_fri",
+        "name": "Vedvarende Fri",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "vedvarende_69",
+        "name": "SpotEl",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "666862d149b443b7be645e26",
+    "name": "DCC Energi",
+    "image": "/logo/dcc-energi.png",
+    "link": "https://www.dccenergi.dk/",
+    "products": [
+      {
+        "id": "dcc-energi-flex",
+        "name": "Flex",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "dcc-energi-flex_vedvarende",
+        "name": "Flex - Vedvarende Energi",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "666862d549b443b7be645ec5",
+    "name": "Ladeklubben",
+    "image": "/logo/ladeklubben.png",
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "66686241075c5a89bfb2480c",
+    "name": "E.ON",
+    "image": "/logo/eon.png",
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "666862d149b443b7be645e3a",
+    "name": "Plug & Drive",
+    "image": null,
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "647321b3e46ead9cfcb004a7",
+    "name": "Energi Fyn",
+    "image": "/logo/energi-fyn.png",
+    "link": "https://www.energifyn.dk",
+    "products": [
+      {
+        "id": "energi_fyn_kostpris_plus_50ore",
+        "name": "Strøm til kostpris + 50 øre om dagen",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "energi_fyn_groen_kostpris_plus_50ore",
+        "name": "Grøn Strøm til kostpris + 1 kr om dagen",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "energi_fyn_spotel",
+        "name": "SpotEL",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "energi_fyn_spotel-groen-stroem",
+        "name": "SpotEL Grøn Strøm",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "energi_fyn_variabel",
+        "name": "VariabEL",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "energi_fyn_kvartalsel",
+        "name": "KvartalsEl",
+        "productType": "fixed",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "6668623f075c5a89bfb247d0",
+    "name": "drivee",
+    "image": "/logo/drivee.png",
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "666862e349b443b7be64618f",
+    "name": "NOFOS",
+    "image": null,
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "6553581dca03be2fd8d9d2ec",
+    "name": "Struer Energi",
+    "image": "/logo/struer-energi.png",
+    "link": "https://www.struerenergi.dk/",
+    "products": [
+      {
+        "id": "struer_flex",
+        "name": "Flex",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "struer_flex-intro",
+        "name": "Flex - Intro",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "666862e649b443b7be646230",
+    "name": "Andel",
+    "image": null,
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "66bdb739490a0c4ea124567b",
+    "name": "StrømFordel",
+    "image": "/logo/stroemfordel.png",
+    "link": "https://stroemfordel.dk",
+    "products": []
+  },
+  {
+    "id": "649ed384f80fc90f0497f0c4",
+    "name": "Energy Nordic",
+    "image": "/logo/energy-nordic.png",
+    "link": "https://energynordic.dk",
+    "products": [
+      {
+        "id": "energynordic_nordicflex",
+        "name": "Nordic FLEX+",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "652fea3799e5e5d8ef9e2cb1",
+    "name": "iWatt",
+    "image": null,
+    "link": "https://iwatt.dk/",
+    "products": []
+  },
+  {
+    "id": "660e82541ae406bcf23cf14c",
+    "name": "Green Power Energy",
+    "image": "/logo/green-power-energy.png",
+    "link": "https://greenpowerenergy.dk/",
+    "products": [
+      {
+        "id": "green_power_energy_variabel_privat",
+        "name": "Variabel pris",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "666862d349b443b7be645e6e",
+    "name": "EVDK",
+    "image": "/logo/evdk.png",
+    "link": "https://evdk.dk/",
+    "products": [
+      {
+        "id": "evdk_energi",
+        "name": "EVDK Energi - 5 øres tillæg",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "evdk_elaftale",
+        "name": "EVDK Elaftale",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "evdk_elaftale_intro2",
+        "name": "EVDK Elaftale - Intro",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "65ae798434e1557efa5e3ffa",
+    "name": "Altid Energi",
+    "image": "/logo/altid-energi.png",
+    "link": "https://altidenergi.dk/",
+    "products": [
+      {
+        "id": "altid-energi",
+        "name": "Strøm til indkøbspris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "altid-energi_5000",
+        "name": "Strøm til indkøbspris - 18 kr/md",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "altid-energi_8000",
+        "name": "Strøm til indkøbspris - 38 kr/md",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "altid-energi_12000",
+        "name": "Strøm til indkøbspris - 58 kr/md",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "altid-energi_20000",
+        "name": "Strøm til indkøbspris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "altid-energi_25000",
+        "name": "Strøm til indkøbspris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "altid-energi_30000",
+        "name": "Strøm til indkøbspris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "altid-energi_35000",
+        "name": "Strøm til indkøbspris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "altid-energi_40000",
+        "name": "Strøm til indkøbspris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "altid-energi_45000",
+        "name": "Strøm til indkøbspris",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "altid-energi_50000",
+        "name": "Strøm til indkøbspris",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "666862d249b443b7be645e48",
+    "name": "Q8",
+    "image": null,
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "666862d649b443b7be645edc",
+    "name": "Åbenlyst",
+    "image": "/logo/aabenlyst.png",
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "666862da49b443b7be645faf",
+    "name": "Zapp",
+    "image": "/logo/zapp.png",
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "666862e249b443b7be64616f",
+    "name": "Tesla",
+    "image": "/logo/tesla.png",
+    "link": null,
+    "products": []
+  },
+  {
+    "id": "653fbc480b465b3cd84bd7ed",
+    "name": "Dansk Strøm",
+    "image": "/logo/dansk-stroem.png",
+    "link": "https://xn--danskstrm-s8a.dk/",
+    "products": [
+      {
+        "id": "dansk_stroem_flex",
+        "name": "FLEX",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "666862d149b443b7be645e41",
+    "name": "Power Fuel",
+    "image": "/logo/powerfuel.png",
+    "link": "https://powerfuel.dk/",
+    "products": [
+      {
+        "id": "power_fuel",
+        "name": "Power Fuel",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "67cad298603070f4ac215ccf",
+    "name": "UngStrøm",
+    "image": "/logo/ungstroem.png",
+    "link": "https://ungstrom.dk/",
+    "products": [
+      {
+        "id": "ungstrom-variabel",
+        "name": "Variabel",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "68306dde7dc693bd27c0692b",
+    "name": "GEV Elhandel",
+    "image": "/logo/gev-elhandel.png",
+    "link": "https://www.gev.dk/elhandel/",
+    "products": [
+      {
+        "id": "gev_elhandel-gev_spot",
+        "name": "GEV SPOT",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "gev_elhandel-gev_spot_kvarter",
+        "name": "GEV SPOT KVARTER",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "68ff39c56f7eb01fea8c3ac1",
+    "name": "TrygEnergi",
+    "image": "/logo/trygenergi.png",
+    "link": "https://trygenergi.dk/",
+    "products": [
+      {
+        "id": "trygenergi-spot",
+        "name": "SPOT",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "6994470ffed0d15e50eaba4c",
+    "name": "EnergiX",
+    "image": null,
+    "link": "https://energix.dk/",
+    "products": [
+      {
+        "id": "energix_variabel-pris",
+        "name": "Variabel pris",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "69945a82fed0d15e50eaba4e",
+    "name": "Dansk Energiforsyning",
+    "image": null,
+    "link": "https://danskenergiforsyning.com/",
+    "products": [
+      {
+        "id": "dansk-energiforsyning_flexel",
+        "name": "FlexEl",
+        "productType": "variable",
+        "custom": false
+      },
+      {
+        "id": "dansk-energiforsyning_spotel",
+        "name": "SpotEl",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  },
+  {
+    "id": "69f253adcfde001fe387a78c",
+    "name": "Ebbefos",
+    "image": "/logo/ebbefos.png",
+    "link": "https://ebbefos.dk",
+    "products": [
+      {
+        "id": "ebbefos",
+        "name": "Ebbefos",
+        "productType": "variable",
+        "custom": false
+      }
+    ]
+  }
+]

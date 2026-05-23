@@ -9,6 +9,134 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.35.1] — 2026-05-23
+
+Combined release of four iteration cycles (internally labelled 0.29.0 → 0.30.1) that were staged locally and tested on the user's HA between 2026-05-19 and 2026-05-22. Shipped together as v0.35.1 to keep the public release history tight while preserving the per-feature breakdown below.
+
+### Headline changes
+- Strømligning retailer pricing for Danish users (consumer-side all-in price stack via the Strømligning public API, with optional per-component overrides).
+- Sell-side company picker — curated list of common Danish solar-export buyers with their typical commission.
+- Country picker (Denmark / United Kingdom) — switches which smart-pricing source is offered.
+- Octopus Energy retailer pricing for UK users (Agile, Tracker, Cosy, Go, Fixed and more via the free public Octopus API; 14 UK GSP regions).
+- Solcast HA integration 2× units bug fix (was silently doubling forecast values on v4.x+).
+- "Fuld kraft" EV charge mode now defers the house-battery discharge lock until the car actually starts pulling power (fixes the overnight-lock bug with cars that have their own internal charge timers).
+- Spot price area + Danish tariff fetch are now editable from *Configure* (previously required a `const.py` edit).
+- Solar visibility / curtailment handling for the EV controller when the export floor is active.
+
+### Detailed breakdown (per iteration)
+
+---
+
+## [0.30.1] — 2026-05-22
+
+### Added — Spot price area + Danish tariff fetch now configurable
+
+The two Danish-specific settings that previously required a `const.py` edit are now editable from *Settings → Solar AI → Configure*:
+
+- `CONF_PRICE_AREA` — dropdown of Nord Pool zones (`DK1` western Denmark / Jutland + Funen, `DK2` eastern Denmark / Zealand). Drives which area the Energi Data Service Elspotprices fetch queries. Default unchanged at `DK2` for backward compatibility.
+- `CONF_TARIFF_FETCH_ENABLED` — toggle for the Danish DatahubPricelist tariff fetch (DSO time-of-use + Energinet system tariff + indfødningstarif). Default on. Turning off skips the daily fetch block entirely so the manual stack runs without API calls — appropriate for installs outside Denmark.
+
+### Changed — "Fuld kraft" battery lock now follows actual charging window
+
+The house-battery discharge lock in `EV_MODE_FULL` previously engaged the moment FULL mode was selected, based on the controller's amp setpoint. Symptom: if the car had its own internal charge timer (e.g. set to charge 02:00–06:00) and the user selected FULL at 22:00, the house battery was locked from 22:00 until 06:00 — eight hours unusable — even though the car only actually pulled power for the last four.
+
+The lock condition now reads observed charger power (`ev_current_kw`) and engages only when draw exceeds `EV_BATTERY_LOCK_POWER_THRESHOLD_KW` (0.3 kW). Releases automatically when draw drops. Works with any car timer arrangement without extra configuration.
+
+### Fixed — Solar visibility for the EV when the price floor is active
+
+Two related problems while the solar export floor was throttling the panels (export limit at 25 W, typically when the spot price was at or below the user's configured floor):
+
+1. **EV controller saw no surplus.** When the house battery was at/near `max_soc`, the FoxESS MPPT throttled the panels to match local consumption — `pv_power ≈ load`, and the EV controller's surplus calculation came out near zero. The EV refused to start even though sun was available for the taking. The controller now substitutes the forecast PV value into the surplus calculation when (a) the floor is active, (b) battery SoC ≥ `max_soc − 2`, (c) the slot's forecast exceeds 1 kW, and (d) actual production is less than half of forecast (clear curtailment signal). Once the EV starts pulling, panel MPPT rises to match real demand; if the forecast was wrong, the existing anti-flap stop-window (default 180 s) ends the session before any meaningful battery or grid draw.
+
+2. **Per-hour solar accuracy learning was poisoned.** During curtailment the integration was sampling `(forecast, actual)` pairs where actual was deliberately throttled — pushing the per-hour learned accuracy factor toward "panels always under-perform" even though that's just the price-floor throttle. `_update_solar_accuracy` now accepts a `curtailed=True` parameter; the call site passes `True` when the floor is active, and the sample is dropped instead of recorded.
+
+Migration: existing config entries are seeded with the new fields defaulted to current behaviour (DK2, tariff fetch on). No user action required.
+
+---
+
+## [0.30.0] — 2026-05-20
+
+### Added — Country picker and Octopus Energy retailer pricing (UK)
+
+Solar AI now supports UK users with native Octopus Energy retailer pricing alongside the existing Danish Strømligning path. The buy-price source step in the options flow asks the user to pick a country first, then offers the relevant smart-pricing source.
+
+- New `CONF_COUNTRY` field with two options: `denmark` (default, current behaviour) and `uk`. Adding more countries later only requires extending `COUNTRY_OPTIONS` plus the matching buy-price mode branch.
+- New `BUY_PRICE_MODE_OCTOPUS` mode available when country is UK.
+- New `octopus.py` transport module with `fetch_products()`, `fetch_prices()`, and `load_bundled_products()`. Uses the free public Octopus REST API at `api.octopus.energy/v1`, no auth required.
+- Bundled product catalogue in `data/octopus_products.json` (32 products, ~15 KB), used by the config-flow dropdown so first-install setup works offline. Refreshed on each release.
+- Coordinator caches Octopus prices daily on the same trigger as the existing tariff and Strømligning refreshes. The buy-price helper `_compute_buy_price()` routes through Octopus when the mode is set, with `value_inc_vat` (already includes UK's 5% VAT) used directly as the per-slot price. Falls back to the manual stack on cache miss or transport failure.
+- New options-flow fields: `CONF_OCTOPUS_PRODUCT_CODE` (e.g. `AGILE-24-10-01`) and `CONF_OCTOPUS_REGION` (UK GSP letter A–P). The 14 UK GSP regions are listed in `OCTOPUS_GSP_REGIONS` with their DNO names so users can pick the right one without knowing the letter convention.
+
+Sell-side support for Octopus (Outgoing Agile, SEG products) is **not** in v0.30.0 — UK users use the existing manual seller-fee slider for now. The plumbing is in place to add it later as a small follow-up.
+
+Manual mode remains the always-available fallback for all countries. Non-Octopus UK customers (~85% of the UK retail market) can use manual mode with their flat unit rate and standing charge handled outside the integration.
+
+Migration: existing config entries get `CONF_COUNTRY` defaulted to `denmark`, preserving current behaviour for every existing install. UK users opt in via *Configure → Buy-price source*.
+
+### Known limitation — DKK labels on GBP-configured installs
+
+UK users who set the currency to GBP get functionally correct price math (Octopus returns pounds, all main price sensors render `GBP/kWh` correctly), but several surfaces still show `DKK/kWh` as a hardcoded literal:
+
+- Six number-entity sliders (spot markup, elafgift, sell-side fee, min export price, battery degradation cost, min arbitrage spread).
+- Two savings-related sensors.
+- Mode-change notification text in the coordinator.
+- Slider labels in `strings.json` carry the parenthetical `(DKK/kWh)`.
+
+The Danish-specific term "Elafgift" also remains visible in the English UI. Fixing these surfaces requires replacing the hardcoded units with the same currency-template substitution already used by the main price sensors. Deferred to a follow-up release; the math is unaffected.
+
+---
+
+## [0.29.1] — 2026-05-20
+
+### Fixed — Solcast HA integration unit interpretation (2× over-forecasting)
+
+The integration was reading `pv_estimate` from the Solcast HA integration's `detailedForecast` attribute as **kWh per 30-min slot** and dividing by `dur_h` to convert to average power. In Solcast HA integration v4.x and newer, `pv_estimate` is already in **kW** (average power during the slot, matching the `device_class: power` sibling sensors). The division was doubling every forecast value.
+
+Symptoms: forecasted peak ~2× the user's actual PV system DC capacity. Per-hour accuracy learning (4-day rolling EMA factor) was silently compensating around 0.5–0.7, so the optimiser plans were roughly correct, but the Solcelleprognose chart's grey raw-Solcast columns showed implausibly high values (e.g. 13 kW peak for a 9.4 kWp system).
+
+Fix:
+- `_fetch_solar_from_solcast` now auto-detects the unit semantic by comparing the max value in `detailedForecast` against the sibling `peak_forecast_today` / `peak_forecast_tomorrow` sensor (which is unambiguously in W with `device_class: power`).
+- If ratio matches 1:1 → values are kW (modern), used directly: `watts = value × 1000`.
+- If ratio matches 1:2 → values are kWh per period (legacy Solcast v3.x), divided by `dur_h` as before.
+- Defaults to kW interpretation when the peak sensor can't be found.
+
+After the fix the integration's per-hour accuracy learning will gradually drift back to ~1.0 over 4 days as fresh samples roll in. The optimiser keeps making the same decisions throughout — only the displayed numbers correct themselves.
+
+---
+
+## [0.29.0] — 2026-05-20
+
+### Added — Strømligning retailer pricing and expanded DSO support
+
+Solar AI can now source its buy-side price stack directly from Strømligning's public API, which aggregates every Danish electricity retailer's per-15-minute all-in price. The user picks DSO + retailer + product; the integration fetches the breakdown daily and uses it in place of the manually-composed `(spot + markup + DSO tariff + Energinet + elafgift) × VAT` stack.
+
+The existing manual stack remains the default and is unchanged. Existing installs keep working without any configuration changes.
+
+- **Phase A — expanded DSO coverage**: `DSO_OPTIONS` in `const.py` now lists Dinel, Radius, Cerius, N1, TREFOR El-Net, Vores Elnet, and Elnet Midt with verified GLN numbers and price-area mappings. Each entry also carries the matching Strømligning supplier id so the retailer dropdown filters automatically.
+
+- **Phase B — Strømligning integration**:
+  - New module `stromligning.py` with `fetch_prices()`, `fetch_suppliers()`, `fetch_companies()`, and `get_price_details()`. Transport-only, with graceful fallback to bundled offline snapshots when the API is unreachable.
+  - Bundled snapshots in `data/stromligning_suppliers.json` and `data/stromligning_companies.json` (47 KB + 13 KB), refreshed each release. First-install setup works fully offline.
+  - New constants `CONF_BUY_PRICE_MODE` (`manual` | `stromligning`), `CONF_STROMLIGNING_SUPPLIER_ID`, `CONF_STROMLIGNING_PRODUCT_ID`, `CONF_STROMLIGNING_CUSTOMER_GROUP`, `CONF_STROMLIGNING_USE_MANUAL_OVERRIDES`. All default to preserve current behaviour.
+  - New options-flow step "Buy-price source" added between battery parameters and OCPP settings. New users default to `manual`; switch to `stromligning` to pick a retailer.
+  - Coordinator caches Strømligning prices daily and routes both the stats block (`buy_price_min`, `buy_price_p25`, `buy_price_next_slot`) and the DP optimiser's per-slot buy price through a single helper `_compute_buy_price()` that branches on the configured mode.
+
+- **Override mode**: when `stromligning_use_manual_overrides` is true, the integration uses Strømligning's spot/distribution/transmission components but the user's VAT / markup / elafgift values. Useful when a regulatory change hasn't propagated to Strømligning's database, or when a contract has a markup not in their catalogue.
+
+### Added — Sell-side company picker
+
+The Danish sell-side (solar-export) market is separate from buy-side retail — many users have a different company paying them for excess solar than the one charging them for consumption. Strømligning's API is buy-only, so this is a curated list maintained in `const.py`.
+
+- New `CONF_SELL_SIDE_COMPANY` field on the same "Buy-price source" options-flow step. Dropdown of ~9 common Danish solar-export buyers (Andel Indfødningsaftale, NRGi Solcellepris, EWII, Tibber, Modstrøm, etc.) with their typical per-kWh commission, plus "same as buy-side retailer" (no fee) and "Custom" (use the manual slider).
+- Coordinator resolves the export fee at runtime: if a curated company is selected, its `fee_dkk_kwh` overrides the slider value; otherwise the existing dashboard Sell-side fee number entity is the source.
+- Fees in the list are starting points sourced from public price lists; users should verify against their actual contract. The list ships as data and updates per release.
+
+Sell-side DSO + Energinet feed-in production tariff fetches from Energi Data Service are unchanged and continue to be deducted automatically on top.
+
+Migration: existing config entries get all new fields seeded to safe defaults on first load (`buy_price_mode=manual`, `sell_side_company=custom`). No user action required to keep current behaviour. To opt in to either picker, go to *Configure → Buy-price source*.
+
+---
+
 ## [0.28.7] — 2026-05-19
 
 ### Added — User-configurable OCPP charger compatibility

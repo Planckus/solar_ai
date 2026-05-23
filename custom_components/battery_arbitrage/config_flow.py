@@ -56,6 +56,27 @@ from .const import (
     CONF_OCPP_PORT,
     CONF_OCPP_RESTART_STRICT,
     CONF_OCPP_REMOTE_START_COOLDOWN_S,
+    CONF_BUY_PRICE_MODE,
+    CONF_STROMLIGNING_SUPPLIER_ID,
+    CONF_STROMLIGNING_PRODUCT_ID,
+    CONF_STROMLIGNING_USE_MANUAL_OVERRIDES,
+    CONF_SELL_SIDE_COMPANY,
+    CONF_OCTOPUS_PRODUCT_CODE,
+    CONF_OCTOPUS_REGION,
+    CONF_COUNTRY,
+    BUY_PRICE_MODE_MANUAL,
+    BUY_PRICE_MODE_STROMLIGNING,
+    BUY_PRICE_MODE_OCTOPUS,
+    SELL_SIDE_COMPANY_OPTIONS,
+    COUNTRY_OPTIONS,
+    COUNTRY_DENMARK,
+    COUNTRY_UK,
+    OCTOPUS_GSP_REGIONS,
+    CONF_PRICE_AREA,
+    DEFAULT_PRICE_AREA,
+    PRICE_AREA_OPTIONS,
+    CONF_TARIFF_FETCH_ENABLED,
+    DEFAULT_TARIFF_FETCH_ENABLED,
     DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
     DEFAULT_EV_START_WINDOW_SECONDS,
     DEFAULT_EV_STOP_WINDOW_SECONDS,
@@ -64,6 +85,11 @@ from .const import (
     DEFAULT_OCPP_PORT,
     DEFAULT_OCPP_RESTART_STRICT,
     DEFAULT_OCPP_REMOTE_START_COOLDOWN_S,
+    DEFAULT_BUY_PRICE_MODE,
+    DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES,
+    DEFAULT_SELL_SIDE_COMPANY,
+    DEFAULT_COUNTRY,
+    DEFAULT_OCTOPUS_REGION,
     CONF_SPOT_PRICE_ENTITY,
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_FLOOR_SOC,
@@ -557,7 +583,7 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
             if eff > 1:
                 user_input[CONF_ROUND_TRIP_EFFICIENCY] = eff / 100
             self._data.update(user_input)
-            return await self.async_step_ocpp_settings()
+            return await self.async_step_buy_price()
 
         data = self._entry.data
         eff_pct = int(data.get(CONF_ROUND_TRIP_EFFICIENCY, 0.92) * 100)
@@ -598,6 +624,26 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
+                # v0.30.1 — spot price area (was previously a const.py edit
+                # only). Affects which Nord Pool zone the EDS Elspotprices
+                # fetch targets. DK1 = western Denmark (Jutland/Fyn), DK2
+                # = eastern Denmark (Zealand/Copenhagen).
+                vol.Required(CONF_PRICE_AREA,
+                             default=data.get(CONF_PRICE_AREA, DEFAULT_PRICE_AREA)):
+                    selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=PRICE_AREA_OPTIONS,
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                # v0.30.1 — toggle for the Danish DatahubPricelist tariff
+                # fetch (DSO time-of-use + Energinet + indfødningstarif).
+                # On for Danish installs; off for everywhere else so the
+                # manual stack runs without trying to call the API.
+                vol.Required(CONF_TARIFF_FETCH_ENABLED,
+                             default=data.get(CONF_TARIFF_FETCH_ENABLED,
+                                              DEFAULT_TARIFF_FETCH_ENABLED)):
+                    bool,
                 vol.Required(CONF_LIVE_DATA_SOURCE,
                              default=data.get(CONF_LIVE_DATA_SOURCE,
                                               DEFAULT_LIVE_DATA_SOURCE)):
@@ -653,6 +699,147 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                              default=data.get(CONF_FOXESS_LOAD_POWER_ENTITY,
                                               DEFAULT_FOXESS_LOAD_POWER)):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+            }),
+        )
+
+    async def async_step_buy_price(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """v0.29.0 / v0.30.0: choose country + buy-price source.
+
+        Country picker drives which smart-pricing source is available:
+          denmark → Strømligning retailer pricing
+          uk      → Octopus Energy retailer pricing
+        Manual stack is always available regardless of country.
+        """
+        if user_input is not None:
+            self._data.update(user_input)
+            return await self.async_step_ocpp_settings()
+
+        data = {**self._entry.data, **self._data}
+        country = data.get(CONF_COUNTRY, DEFAULT_COUNTRY)
+
+        # Strømligning catalogues (used in DK mode)
+        from .stromligning import load_bundled_companies
+        companies = load_bundled_companies()
+        sl_product_options = [{"value": "", "label": "(none — pick after enabling Strømligning)"}]
+        for c in companies:
+            company_name = c.get("name", "?")
+            for p in c.get("products", []):
+                if p.get("id"):
+                    sl_product_options.append({
+                        "value": p["id"],
+                        "label": f"{company_name} — {p.get('name', p['id'])}",
+                    })
+        sl_supplier_options = [{"value": "", "label": "(none — pick after enabling Strømligning)"}]
+        for dso in DSO_OPTIONS:
+            sl_id = dso.get("stromligning")
+            if sl_id:
+                sl_supplier_options.append({"value": sl_id, "label": dso["label"]})
+
+        # Octopus catalogue (used in UK mode)
+        from .octopus import load_bundled_products
+        oc_products = load_bundled_products()
+        oc_product_options = [{"value": "", "label": "(none — pick after enabling Octopus)"}]
+        for p in oc_products:
+            if (
+                p.get("code")
+                and not p.get("is_business")
+                and not p.get("is_prepay")
+                and not p.get("is_restricted")
+                and p.get("direction") != "EXPORT"
+            ):
+                oc_product_options.append({
+                    "value": p["code"],
+                    "label": f"{p.get('display_name','?')}  [{p['code']}]",
+                })
+
+        # Build the available buy-price mode options based on country
+        buy_mode_options = [
+            {"value": BUY_PRICE_MODE_MANUAL,
+             "label": "Manual stack (VAT + markup + tariffs + elafgift)"},
+        ]
+        if country == COUNTRY_DENMARK:
+            buy_mode_options.append({
+                "value": BUY_PRICE_MODE_STROMLIGNING,
+                "label": "Strømligning retailer pricing (Denmark)",
+            })
+        elif country == COUNTRY_UK:
+            buy_mode_options.append({
+                "value": BUY_PRICE_MODE_OCTOPUS,
+                "label": "Octopus Energy retailer pricing (United Kingdom)",
+            })
+
+        return self.async_show_form(
+            step_id="buy_price",
+            data_schema=vol.Schema({
+                vol.Required(
+                    CONF_COUNTRY,
+                    default=data.get(CONF_COUNTRY, DEFAULT_COUNTRY),
+                ): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=[
+                        {"value": opt["value"], "label": opt["label"]}
+                        for opt in COUNTRY_OPTIONS
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )),
+                vol.Required(
+                    CONF_BUY_PRICE_MODE,
+                    default=data.get(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE),
+                ): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=buy_mode_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )),
+                # DK-specific fields (only used when country=denmark + mode=stromligning)
+                vol.Optional(
+                    CONF_STROMLIGNING_SUPPLIER_ID,
+                    default=data.get(CONF_STROMLIGNING_SUPPLIER_ID, ""),
+                ): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=sl_supplier_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )),
+                vol.Optional(
+                    CONF_STROMLIGNING_PRODUCT_ID,
+                    default=data.get(CONF_STROMLIGNING_PRODUCT_ID, ""),
+                ): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=sl_product_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )),
+                vol.Required(
+                    CONF_STROMLIGNING_USE_MANUAL_OVERRIDES,
+                    default=data.get(
+                        CONF_STROMLIGNING_USE_MANUAL_OVERRIDES,
+                        DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES,
+                    ),
+                ): bool,
+                # UK-specific fields (only used when country=uk + mode=octopus)
+                vol.Optional(
+                    CONF_OCTOPUS_PRODUCT_CODE,
+                    default=data.get(CONF_OCTOPUS_PRODUCT_CODE, ""),
+                ): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=oc_product_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )),
+                vol.Optional(
+                    CONF_OCTOPUS_REGION,
+                    default=data.get(CONF_OCTOPUS_REGION, DEFAULT_OCTOPUS_REGION),
+                ): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=OCTOPUS_GSP_REGIONS,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )),
+                # v0.29.0 — sell-side company picker. Independent of buy-side
+                # because Danish users often have different companies for the
+                # two sides.
+                vol.Required(
+                    CONF_SELL_SIDE_COMPANY,
+                    default=data.get(CONF_SELL_SIDE_COMPANY, DEFAULT_SELL_SIDE_COMPANY),
+                ): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=[
+                        {"value": opt["id"], "label": opt["label"]}
+                        for opt in SELL_SIDE_COMPANY_OPTIONS
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )),
             }),
         )
 
