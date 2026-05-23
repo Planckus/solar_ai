@@ -291,10 +291,145 @@ DEFAULT_MIN_EXPORT_PRICE = 0.0          # DKK/kWh — minimum net export price; 
 CONF_DSO_GLN = "dso_gln"
 DEFAULT_DSO_GLN = "5790000610099"        # Dinel nettarif C time — change to your DSO's GLN if different
 
-# Known DSOs with confirmed GLN numbers.  Presented as a dropdown in the config /
-# options flow.  Add new entries here as more DSOs are verified.
-DSO_OPTIONS: list[dict[str, str]] = [
-    {"value": "5790000610099", "label": "Dinel (Jutland/Fyn)"},
+# Known DSOs with confirmed GLN numbers from Energi Data Service DatahubPricelist.
+# Each entry binds:
+#   value          — DSO GLN used for the DatahubPricelist tariff fetches
+#   label          — display name in the config flow dropdown
+#   price_area     — Nord Pool zone (DK1 = Jutland/Fyn, DK2 = Sjælland)
+#   stromligning   — matching DSO id on the Strømligning API (None if no match)
+# The Strømligning mapping enables v0.29.0's retailer-aware pricing — when the
+# user picks one of these DSOs and Strømligning mode is selected, the retailer
+# dropdown filters to the right price area automatically.
+DSO_OPTIONS: list[dict[str, str | None]] = [
+    {"value": "5790000610099", "label": "Dinel (Aarhus + central Jutland)", "price_area": "DK1", "stromligning": "dinel_c"},
+    {"value": "5790000705689", "label": "Radius (Sjælland/Copenhagen)",     "price_area": "DK2", "stromligning": "radius_c"},
+    {"value": "5790000610877", "label": "Cerius (Sjælland + Lolland-Falster)", "price_area": "DK2", "stromligning": "cerius_c"},
+    {"value": "5790001089030", "label": "N1 (Jutland, ex-NRGi/Konstant)",   "price_area": "DK1", "stromligning": "n1_c"},
+    {"value": "5790000392261", "label": "TREFOR El-net (Trekantområdet)",   "price_area": "DK1", "stromligning": "trefor_el-net_c"},
+    {"value": "5790000681075", "label": "Vores Elnet (West/South Jutland)", "price_area": "DK1", "stromligning": "vores_elnet"},
+    {"value": "5790001088231", "label": "Elnet Midt (Central Jutland)",     "price_area": "DK1", "stromligning": "elnet_midt_c"},
+]
+
+# ── EV battery-lock threshold (v0.30.1) ────────────────────────────────────
+# In FULL EV charge mode the house battery is locked from discharging so the
+# EV can't raid it. Previously the lock engaged as soon as FULL mode was
+# selected, even if the car had its own internal scheduled-charge timer and
+# wouldn't pull power for hours. Now the lock follows actual draw — engages
+# when observed charger power exceeds the threshold, releases when it drops.
+EV_BATTERY_LOCK_POWER_THRESHOLD_KW = 0.3
+
+# ── Strømligning retailer pricing (v0.29.0) ─────────────────────────────────
+# Strømligning aggregates Danish electricity retailer pricing and exposes a
+# free public API. When the buy-price mode is set to "stromligning", the
+# coordinator fetches the chosen retailer's per-15-min all-in price stack
+# (electricity + retailer surcharge + DSO distribution + Energinet system +
+# Energinet transmission + elafgift + VAT) instead of composing it manually.
+STROMLIGNING_API_BASE = "https://stromligning.dk/api"
+STROMLIGNING_CACHE_HOURS = 24             # Price data refresh interval
+STROMLIGNING_PRICES_TIMEOUT_SEC = 15
+
+CONF_BUY_PRICE_MODE = "buy_price_mode"
+BUY_PRICE_MODE_MANUAL = "manual"          # Existing manual stack (default, backward-compatible)
+BUY_PRICE_MODE_STROMLIGNING = "stromligning"  # Strømligning retailer pricing (DK)
+BUY_PRICE_MODE_OCTOPUS = "octopus"        # Octopus Energy retailer pricing (UK, v0.30.0)
+DEFAULT_BUY_PRICE_MODE = BUY_PRICE_MODE_MANUAL
+
+# ── Country picker (v0.30.0) ────────────────────────────────────────────────
+# Selects the regional defaults and which smart-pricing source is available
+# in the config flow. Currently:
+#   denmark — Strømligning retailer pricing (DK), default VAT 25%
+#   uk      — Octopus Energy retailer pricing, default VAT 5%
+# More countries can be added later; the manual stack always remains
+# available as a fallback regardless of country.
+CONF_COUNTRY = "country"
+COUNTRY_DENMARK = "denmark"
+COUNTRY_UK = "uk"
+DEFAULT_COUNTRY = COUNTRY_DENMARK
+COUNTRY_OPTIONS: list[dict] = [
+    {"value": COUNTRY_DENMARK, "label": "Denmark (Strømligning + Energi Data Service)"},
+    {"value": COUNTRY_UK,      "label": "United Kingdom (Octopus Energy)"},
+]
+
+# ── Octopus Energy retailer pricing (v0.30.0) ──────────────────────────────
+# Octopus exposes a free public REST API that returns per-half-hour
+# inc-VAT and ex-VAT rates per product per GSP region. Both buy-side
+# (import) and sell-side (Outgoing / SEG) products live on the same API.
+# Initial v0.30.0 scope: buy-side only. Sell-side will follow in a later
+# version (the existing manual seller-fee slider still works in the
+# meantime).
+OCTOPUS_API_BASE = "https://api.octopus.energy/v1"
+OCTOPUS_CACHE_HOURS = 24                  # Refresh interval for the per-slot cache
+OCTOPUS_PRICES_TIMEOUT_SEC = 15
+
+CONF_OCTOPUS_PRODUCT_CODE = "octopus_product_code"     # e.g. "AGILE-24-10-01"
+CONF_OCTOPUS_REGION       = "octopus_region"           # GSP region letter A–N
+DEFAULT_OCTOPUS_REGION    = "A"                        # Eastern England, harmless default
+
+# Octopus tariff codes are constructed from the product code and region:
+#     E-1R-{product_code}-{region}
+# (E = Electricity, 1R = single register / single rate).
+OCTOPUS_TARIFF_CODE_TEMPLATE = "E-1R-{product_code}-{region}"
+
+# GSP regions correspond to UK Distribution Network Operator (DNO) zones.
+# Source: Octopus public docs + Elexon GSP group letter mapping.
+OCTOPUS_GSP_REGIONS: list[dict] = [
+    {"value": "A", "label": "A — Eastern England (UK Power Networks)"},
+    {"value": "B", "label": "B — East Midlands (National Grid Electricity Distribution)"},
+    {"value": "C", "label": "C — London (UK Power Networks)"},
+    {"value": "D", "label": "D — Merseyside & North Wales (SP Energy Networks)"},
+    {"value": "E", "label": "E — West Midlands (National Grid Electricity Distribution)"},
+    {"value": "F", "label": "F — North East England (Northern Powergrid)"},
+    {"value": "G", "label": "G — North West England (Electricity North West)"},
+    {"value": "H", "label": "H — Northern Scotland (SSEN)"},
+    {"value": "J", "label": "J — South East England (UK Power Networks)"},
+    {"value": "K", "label": "K — Southern England (SSEN)"},
+    {"value": "L", "label": "L — South Wales (National Grid Electricity Distribution)"},
+    {"value": "M", "label": "M — South West England (National Grid Electricity Distribution)"},
+    {"value": "N", "label": "N — Southern Scotland (SP Energy Networks)"},
+    {"value": "P", "label": "P — Yorkshire (Northern Powergrid)"},
+]
+
+# Strømligning identifiers — populated when buy_price_mode == "stromligning"
+CONF_STROMLIGNING_SUPPLIER_ID = "stromligning_supplier_id"   # DSO id from /api/suppliers (e.g. "dinel_c")
+CONF_STROMLIGNING_PRODUCT_ID  = "stromligning_product_id"    # Retailer product id from /api/companies (e.g. "oe_stroem")
+CONF_STROMLIGNING_CUSTOMER_GROUP = "stromligning_customer_group"
+DEFAULT_STROMLIGNING_CUSTOMER_GROUP = "c"                    # Private households / small business
+
+# When true, the existing manual VAT/markup/elafgift fields override
+# Strømligning's per-component values. Allows surgical fixes for users whose
+# contract has a markup not reflected in Strømligning's database, or when a
+# regulatory rate change hasn't propagated yet.
+CONF_STROMLIGNING_USE_MANUAL_OVERRIDES = "stromligning_use_manual_overrides"
+DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES = False
+
+# ── Sell-side company picker (v0.29.0) ──────────────────────────────────────
+# Strømligning catalogues consumer (buy-side) pricing only. The Danish sell-
+# side market — companies that pay you for solar export — is more fragmented.
+# Most retailers buy your excess at spot minus a small commission, but the
+# fee varies. Some users have a different sell-side company than their
+# buy-side retailer.
+#
+# This is a curated list of typical Danish sell-side companies with their
+# per-kWh commission, used to seed the export_fee value. The user can always
+# override via the existing Sell-side fee number entity (which becomes the
+# active value when sell_side_company == "custom").
+#
+# Fees here are typical values from public price lists; verify against the
+# actual contract. List is maintained manually in const.py and refreshed
+# with each release.
+CONF_SELL_SIDE_COMPANY = "sell_side_company"
+DEFAULT_SELL_SIDE_COMPANY = "custom"     # Preserves the manual export_fee slider for existing installs
+SELL_SIDE_COMPANY_OPTIONS: list[dict] = [
+    {"id": "custom",            "label": "Custom — use the manual Sell-side fee slider", "fee_dkk_kwh": None},
+    {"id": "same_as_buy",       "label": "Same as buy-side retailer (no separate fee)",  "fee_dkk_kwh": 0.0},
+    {"id": "andel_indfodning",  "label": "Andel Energi — Indfødningsaftale",             "fee_dkk_kwh": 0.03},
+    {"id": "nrgi_solcellepris", "label": "NRGi — Solcellepris",                          "fee_dkk_kwh": 0.05},
+    {"id": "ewii_solcelle",     "label": "EWII — Solcellekøb",                           "fee_dkk_kwh": 0.03},
+    {"id": "tibber",            "label": "Tibber (samme som køb, ingen gebyr)",          "fee_dkk_kwh": 0.0},
+    {"id": "stroempaa_solcelle","label": "Strøm på — Solcelleaftale",                    "fee_dkk_kwh": 0.04},
+    {"id": "modstrom_solcelle", "label": "Modstrøm — Solcellebørs",                       "fee_dkk_kwh": 0.04},
+    {"id": "ostroem_salg",      "label": "Ø/strøm — Solcellesalg",                        "fee_dkk_kwh": 0.04},
+    {"id": "norlys",            "label": "Norlys — Solcelle",                             "fee_dkk_kwh": 0.05},
 ]
 
 ENERGINET_GLN = "5790000432752"          # Energinet — transmission/system tariffs
@@ -305,7 +440,20 @@ EDS_ELSPOT_URL = "https://api.energidataservice.dk/dataset/DayAheadPrices"
 
 # Spot price area (Nord Pool zone) — used by EDS Elspotprices fetch
 CONF_PRICE_AREA = "price_area"
-DEFAULT_PRICE_AREA = "DK2"  # Change to DK1 for western Denmark (Jutland/Fyn)
+DEFAULT_PRICE_AREA = "DK2"  # Eastern Denmark default; DK1 for Jutland/Fyn
+PRICE_AREA_OPTIONS: list[dict] = [
+    {"value": "DK1", "label": "DK1 — Western Denmark (Jutland + Fyn)"},
+    {"value": "DK2", "label": "DK2 — Eastern Denmark (Zealand + Copenhagen)"},
+]
+
+# Tariff fetching toggle (v0.30.1). The DatahubPricelist API is Danish-
+# specific (DSO + Energinet hourly tariffs + indfødningstarif). Non-DK users
+# should disable this; the manual stack still works without it. When
+# disabled the daily tariff-refresh block is skipped entirely and the
+# tariff_schedule stays at the seeded zero array, so per-hour tariff
+# components don't get added to the buy/sell price.
+CONF_TARIFF_FETCH_ENABLED = "tariff_fetch_enabled"
+DEFAULT_TARIFF_FETCH_ENABLED = True   # Auto-disable when country != denmark
 
 # FoxESS lifetime energy totals (for auto-detecting round-trip efficiency)
 FOXESS_BATTERY_CHARGE_TOTAL = "sensor.foxessmodbus_battery_charge_total"
