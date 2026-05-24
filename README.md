@@ -10,6 +10,28 @@ The integration runs as a coordinator that pulls live state from FoxESS Modbus (
 
 ## Recent releases
 
+### v0.37.x — OCPP transaction recovery + EV schedule modes on the dashboard
+
+- **OCPP transaction tracking survives HA restarts.** Multi-restart sessions used to lose the active `transactionId`, leaving Solar AI unable to send `RemoteStopTransaction` — the charger kept drawing while the integration thought IDLE. v0.37.0 adds three coordinated recovery paths: live capture of `transactionId` from every `MeterValues` frame (with drift detection), persistence of session state alongside vendor/model metadata, and `TriggerMessage(MeterValues)` on reconnect so a fresh frame arrives within ~2 s.
+- **`battery_arbitrage.force_stop_charger` service.** Brute-force escape hatch for runaway sessions — walks candidate transaction ids (user-supplied → tracked → 1 → 0) and sends `RemoteStopTransaction` for each. Most chargers stop the only active transaction regardless of the id supplied.
+- **Per-slot EV schedule mode selects.** Each configured `ev_schedule_link` gets its own `select.solar_ai_skema_N_tilstand` entity on the EV/OCPP tab. Options: PV / PV+Bat / Full. Edits persist to coordinator storage; `_resolve_effective_ev_mode` prefers storage over the link dict's seeded mode. Mode changes no longer require reopening Configure.
+- **Schedule provisioning services.** `battery_arbitrage.add_schedule_slot` creates a `schedule.solar_ai_skema_N` helper + adds a link; `remove_schedule_slot(slot)` deletes the helper + unlinks. The dashboard layout grouping (master selector + slot cards + edit-schedule popup) ships in a follow-up Lovelace push.
+
+### v0.36.x — inverter-driven EV curtailment + 15-second card refresh + EV scheduling Phase A
+
+- **Curtailment trigger reads the inverter, not the forecast.** v0.36.2 replaces the v0.30.1 forecast-substitution heuristic with a direct read of FoxESS reg `49251` ("PV Power Limited Flag"). When the flag is set and the house battery is at/near its max SoC, a 60-second probe synthesises just enough solar in the surplus calculation to guarantee `ev_min_charge_kw` of EV demand. MPPT lifts to deliver real PV; after the probe ends the live solar reading takes over. No forecast in the EV trigger path. Catches grid-operator and battery-full curtailment in addition to the price-floor case.
+- **15-second default fast-poll.** v0.36.0 dropped `DEFAULT_FAST_POLL_SECONDS` from 30 to 15. Lovelace cards driven by integration sensors (price stack, savings, EV status, surplus, plan, charger live values) now refresh in 15 s. Migration bumps existing entries from 30 → 15 only when they were on the old default.
+- **EV scheduling Phase A.** Master mode select got a fifth option (`Scheduled`). When active, the coordinator resolves each tick by walking a configured list of `schedule.*` helpers → EV mode links, with a configurable fallback. Schedule helpers are created via Settings → Helpers → Schedule and linked from the options flow.
+- **`_open_floor_block` name-clash fix.** Pre-existing v0.30.1 bug where an instance attribute shadowed a method of the same name, surfacing as `setup_retry` when the export floor was active.
+
+### v0.30.x — v0.35.x — buy-side pricing, country picker, retail integrations
+
+- **Strømligning (DK) retailer pricing.** New `stromligning.py` transport module with bundled offline supplier snapshots, sell-side company picker, USE_MANUAL_OVERRIDES toggle for diagnostics.
+- **Country picker (DK / UK) + Octopus Energy (UK).** New `octopus.py` module with bundled product catalogue + region (GSP letter A–N). Sell-side support deferred (UK users keep the manual seller-fee slider).
+- **Configurable DK price area + tariff fetch.** DK1 / DK2 dropdown, separate toggle for the Energi Data Service DatahubPricelist fetch. Previously hard-coded in `const.py`.
+- **EV battery-lock follows real power draw.** v0.30.1 — battery-lock now triggers on `ev_current_kw > 0.3 kW` rather than mode flag alone, so an overnight session driven by the car's own timer correctly engages the lock when the car actually wakes up.
+- **Solcast HA integration units fix.** v0.29.1 — modern Solcast v4.x reports `pv_estimate` as kW (power), not kWh per period. Auto-detected by comparing `max(detailedForecast)` against the peak_forecast sensor.
+
 ### v0.28.x — production hardening after first weeks of live operation
 
 - Solcast HA integration supports both `today` and `tomorrow` entities; optimiser plans against a full 48-hour PV horizon (previously 24 h).
