@@ -9,6 +9,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.36.1] — 2026-05-24
+
+### Fixed — README note about 15-s card refresh
+
+The v0.36.0 "Known limitations" note about end-to-end 15-second freshness implied that FoxESS Modbus's poll interval was a user-tunable setting and that dropping it was a prerequisite for true 15-s freshness. Both points were inaccurate:
+
+- FoxESS Modbus's poll rate is adapter-specific and not exposed in the UI. `direct` / TCP adapters already poll every ~5 seconds — faster than the integration's new 15-s default. No user action is needed for direct/LAN setups.
+- Solcast Solar's poll cadence is rate-limited by the user's API tier (free tier: 10 calls/day ≈ one refresh every 2.4 h). Forecasts change server-side every 30–60 minutes regardless, so a faster local poll wouldn't add freshness.
+- OCPP charger data is event-driven (the charger pushes `MeterValues` to the embedded server), not polled.
+
+The README note now reflects all of this. Docs-only change; no code or config behaviour modified.
+
+---
+
 ## [0.36.0] — 2026-05-24
 
 ### Changed — Default fast-poll interval dropped from 30 s to 15 s
