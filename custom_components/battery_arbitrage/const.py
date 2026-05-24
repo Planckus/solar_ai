@@ -116,6 +116,17 @@ CONF_EV_SCHEDULE_LINKS = "ev_schedule_links"
 CONF_EV_SCHEDULED_FALLBACK_MODE = "ev_scheduled_fallback_mode"
 DEFAULT_EV_SCHEDULED_FALLBACK_MODE = EV_MODE_LOCKED
 EV_SCHEDULE_LINKS_MAX = 4    # Practical cap; revisit if real users need more
+
+# v0.37.0 — per-slot mode dropdown on the EV/OCPP dashboard tab.
+# `locked` and `scheduled` are deliberately excluded: a schedule that
+# "locks" charging is just an empty schedule (no time ranges), and a
+# schedule that itself defers to another schedule would loop.
+EV_SCHEDULE_LINK_MODE_OPTIONS = [EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL]
+# Storage key prefix for the per-slot live mode override. Indexed 1..N.
+# `_stored[f"ev_schedule_link_{idx}_mode"]` wins over the link dict's
+# `mode` field set via the options flow, so the dashboard selects act
+# as the canonical source once a user has touched them.
+EV_SCHEDULE_LINK_MODE_STORAGE_PREFIX = "ev_schedule_link_"
 DEFAULT_EV_CONTROLLER_ENABLED = False       # opt-in feature
 # 3-phase Danish standard: 230 V × √3 × A → kW
 EV_VOLTAGE = 230.0
