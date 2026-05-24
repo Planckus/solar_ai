@@ -9,6 +9,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.36.0] — 2026-05-24
+
+### Changed — Default fast-poll interval dropped from 30 s to 15 s
+
+`DEFAULT_FAST_POLL_SECONDS` is now `15` (was `30`). Lovelace cards driven by integration-published sensors (price stack, savings, EV status, surplus, plan, charger live values, intra-hour solar correction, etc.) now refresh in 15 s instead of 30. Migration in `__init__.py` bumps existing config entries from 30 → 15 only when they were on the old default — values the user explicitly customised (e.g. 10 s, 20 s, 60 s) are preserved. Range and `Configure → Live data poll interval` slider unchanged at 10–300 s.
+
+The full freshness gain depends on the data source — see the "Known limitations" note in README about FoxESS Modbus's own poll cadence, which is independent of this integration.
+
+### Added — EV scheduling (Phase A — schedule-driven mode)
+
+New EV charge mode `Scheduled` and a config-flow step "EV charge schedules" that links up to four HA schedule helper entities to EV modes. Use case: charge between specific times on specific weekdays, switching mode automatically (e.g. `Full power` 02:00–06:00 weekdays, `Solar only` 09:00–17:00 weekends), without having to flip the mode select manually or rely on the car's internal timer.
+
+- Users create HA schedule helper entities themselves at *Settings → Helpers → Schedule* — HA's native helper provides per-weekday time-range editing in a mature UI. Solar AI then links each schedule to an EV mode.
+- New `EV_MODE_SCHEDULED` value added to the EV mode select (alongside Locked / Solar only / Solar + battery / Full power).
+- New `CONF_EV_SCHEDULE_LINKS` (list of `{schedule_entity, mode}` dicts, up to 4) and `CONF_EV_SCHEDULED_FALLBACK_MODE` (used when no link is currently active; defaults to `locked`).
+- Coordinator resolves the effective mode once per tick via `_resolve_effective_ev_mode()` — walks links in order, first whose schedule entity is `on` wins. Existing battery-lock and anti-flap logic operate on the resolved effective mode, so a schedule that resolves to `Full power` still gets the actual-draw battery lock (v0.30.1) and a schedule resolving to `Solar only` still gets the anti-flap windows.
+- New telemetry attributes on `sensor.solar_ai_ev_status`: `ev_effective_mode` (the resolved mode) and `ev_active_schedule_link` (which schedule is currently in control). When mode is non-scheduled, effective == active and the link is null.
+
+Migration: existing config entries get `CONF_EV_SCHEDULE_LINKS = []` and fallback = `locked`. No behaviour change unless the user explicitly opts into the scheduled mode by selecting it on the EV mode select.
+
+Phase B (optimiser-driven departure-by-time scheduling) deferred to a future release.
+
+---
+
 ## [0.35.1] — 2026-05-23
 
 Combined release of four iteration cycles (internally labelled 0.29.0 → 0.30.1) that were staged locally and tested on the user's HA between 2026-05-19 and 2026-05-22. Shipped together as v0.35.1 to keep the public release history tight while preserving the per-feature breakdown below.

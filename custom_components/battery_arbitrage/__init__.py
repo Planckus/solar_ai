@@ -41,6 +41,9 @@ from .const import (
     CONF_OCTOPUS_REGION,
     CONF_PRICE_AREA,
     CONF_TARIFF_FETCH_ENABLED,
+    CONF_EV_SCHEDULE_LINKS,
+    CONF_EV_SCHEDULED_FALLBACK_MODE,
+    CONF_FAST_POLL_INTERVAL,
     DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
     DEFAULT_EV_START_WINDOW_SECONDS,
     DEFAULT_EV_STOP_WINDOW_SECONDS,
@@ -58,6 +61,8 @@ from .const import (
     DEFAULT_OCTOPUS_REGION,
     DEFAULT_PRICE_AREA,
     DEFAULT_TARIFF_FETCH_ENABLED,
+    DEFAULT_EV_SCHEDULED_FALLBACK_MODE,
+    DEFAULT_FAST_POLL_SECONDS,
     CONF_SPOT_MARKUP,
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
@@ -285,6 +290,16 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Existing installs default to DK2 + tariff fetch on (current behaviour).
         new_data.setdefault(CONF_PRICE_AREA, DEFAULT_PRICE_AREA)
         new_data.setdefault(CONF_TARIFF_FETCH_ENABLED, DEFAULT_TARIFF_FETCH_ENABLED)
+        # v0.36.0: Phase A EV scheduling — empty list is the safe default;
+        # the user enables it by setting EV mode to "scheduled" and adding
+        # links via Configure → EV schedules.
+        new_data.setdefault(CONF_EV_SCHEDULE_LINKS, [])
+        new_data.setdefault(CONF_EV_SCHEDULED_FALLBACK_MODE, DEFAULT_EV_SCHEDULED_FALLBACK_MODE)
+        # v0.36.0: default fast-poll dropped 30 → 15 so cards refresh every
+        # 15 s. Bump existing entries that are still on the OLD default
+        # (30) — preserves any explicit user customization.
+        if new_data.get(CONF_FAST_POLL_INTERVAL) == 30:
+            new_data[CONF_FAST_POLL_INTERVAL] = DEFAULT_FAST_POLL_SECONDS
         hass.config_entries.async_update_entry(entry, data=new_data, version=15)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v15")
 

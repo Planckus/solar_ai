@@ -77,6 +77,14 @@ from .const import (
     PRICE_AREA_OPTIONS,
     CONF_TARIFF_FETCH_ENABLED,
     DEFAULT_TARIFF_FETCH_ENABLED,
+    CONF_EV_SCHEDULE_LINKS,
+    CONF_EV_SCHEDULED_FALLBACK_MODE,
+    DEFAULT_EV_SCHEDULED_FALLBACK_MODE,
+    EV_SCHEDULE_LINKS_MAX,
+    EV_MODE_LOCKED,
+    EV_MODE_PV,
+    EV_MODE_PV_BATTERY,
+    EV_MODE_FULL,
     DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
     DEFAULT_EV_START_WINDOW_SECONDS,
     DEFAULT_EV_STOP_WINDOW_SECONDS,
@@ -859,7 +867,7 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
             # Strip empty optional strings so defaults can apply at read time
             cleaned = {k: v for k, v in user_input.items() if v != ""}
             self._data.update(cleaned)
-            return await self.async_step_entities()
+            return await self.async_step_ev_schedules()
 
         data = self._entry.data
 
@@ -944,6 +952,78 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                                               DEFAULT_OCPP_REMOTE_START_COOLDOWN_S)):
                     vol.All(vol.Coerce(int), vol.Range(min=5, max=300)),
             }),
+        )
+
+    async def async_step_ev_schedules(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """v0.36.0 — Phase A scheduling.
+
+        Up to four (schedule entity → EV mode) links. The user creates HA
+        schedule helper entities themselves at *Settings → Helpers →
+        Schedule* (per-weekday time ranges). Here they link each schedule
+        to an EV mode. When CONF_EV_DEFAULT_MODE (or the live mode select)
+        is set to `scheduled`, the coordinator walks these links in order
+        and applies the first link whose schedule entity is currently `on`.
+        When no link is active, the fallback mode applies.
+        """
+        if user_input is not None:
+            # Pack the per-row fields into the structured CONF_EV_SCHEDULE_LINKS list
+            links: list[dict] = []
+            for i in range(1, EV_SCHEDULE_LINKS_MAX + 1):
+                entity_id = (user_input.get(f"schedule_{i}_entity") or "").strip()
+                mode = (user_input.get(f"schedule_{i}_mode") or "").strip()
+                if entity_id and mode:
+                    links.append({"schedule_entity": entity_id, "mode": mode})
+            self._data[CONF_EV_SCHEDULE_LINKS] = links
+            self._data[CONF_EV_SCHEDULED_FALLBACK_MODE] = user_input.get(
+                CONF_EV_SCHEDULED_FALLBACK_MODE, DEFAULT_EV_SCHEDULED_FALLBACK_MODE,
+            )
+            return await self.async_step_entities()
+
+        data = {**self._entry.data, **self._data}
+        existing_links = data.get(CONF_EV_SCHEDULE_LINKS, []) or []
+
+        mode_options = [
+            {"value": EV_MODE_LOCKED,     "label": "Locked — no charging"},
+            {"value": EV_MODE_PV,         "label": "Solar only (Kun solenergi)"},
+            {"value": EV_MODE_PV_BATTERY, "label": "Solar + battery to minimum"},
+            {"value": EV_MODE_FULL,      "label": "Full power (Fuld kraft)"},
+        ]
+
+        schema_fields: dict = {}
+        for i in range(1, EV_SCHEDULE_LINKS_MAX + 1):
+            link = existing_links[i - 1] if i - 1 < len(existing_links) else {}
+            schema_fields[
+                vol.Optional(f"schedule_{i}_entity",
+                             default=link.get("schedule_entity", ""))
+            ] = selector.EntitySelector(selector.EntitySelectorConfig(domain="schedule"))
+            schema_fields[
+                vol.Optional(f"schedule_{i}_mode",
+                             default=link.get("mode", ""))
+            ] = selector.SelectSelector(selector.SelectSelectorConfig(
+                options=mode_options,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            ))
+
+        # Fallback mode when no schedule is currently on
+        schema_fields[
+            vol.Required(
+                CONF_EV_SCHEDULED_FALLBACK_MODE,
+                default=data.get(
+                    CONF_EV_SCHEDULED_FALLBACK_MODE,
+                    DEFAULT_EV_SCHEDULED_FALLBACK_MODE,
+                ),
+            )
+        ] = selector.SelectSelector(selector.SelectSelectorConfig(
+            options=mode_options,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        ))
+
+        return self.async_show_form(
+            step_id="ev_schedules",
+            data_schema=vol.Schema(schema_fields),
+            description_placeholders={"max_links": str(EV_SCHEDULE_LINKS_MAX)},
         )
 
     async def async_step_entities(

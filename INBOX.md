@@ -30,6 +30,35 @@ Two parts:
 
 ---
 
+## 6. Every card refresh every 15 seconds
+
+Drop `DEFAULT_FAST_POLL_SECONDS` from 30 to 15 so the integration's coordinator publishes new state every 15 s and Lovelace cards re-render at that cadence.
+
+Three options:
+- **A** — change the default in `const.py` only (~1 line); upstream integrations like FoxESS Modbus and Solcast keep their own polls (separate concern).
+- **B** — A plus a README paragraph telling the user to also drop FoxESS Modbus's poll interval for true end-to-end 15-s freshness.
+- **C** — Introduce a "High freshness mode" toggle that bumps both the fast-poll AND the EV-control-loop to 15 s / 5 s with one switch.
+
+Recommended: A or B. C is a separate feature.
+
+---
+
+## 7. Plan EV charging scheduling
+
+Solar AI's EV controller is purely reactive today — no concept of charge windows, ready-by times, or weekday patterns. Users use the car's internal timer or manual mode-flipping.
+
+**Phase A (small, ~3 h)** — Time-window schedules. Up to 4 schedules; each has start/end/days/mode-in-window/mode-out-window. New `EV_MODE_SCHEDULED` value. Config-flow step lets the user configure them. Coordinator checks the schedule at every tick and applies the correct mode.
+
+**Phase B (larger, ~8–12 h)** — Optimizer-driven departure scheduling. Target SoC + by-time + day-of-week pattern. The DP optimizer plans EV charging slots alongside the existing CHARGE/EXPORT/IDLE actions. Needs: a fourth optimizer action, departure-time inputs in config-flow, new sensors for charge plan + remaining energy. Where the real value lives (matches EVCC's "Plan" feature).
+
+**Phase C (future)** — Multi-vehicle, holiday calendar, cabin pre-conditioning. Not v0.36 scope; listed so the Phase A/B data model leaves room.
+
+Recommended order: A first as a standalone release; B as its own release after A is verified.
+
+Open design questions captured in the chat plan: schedule limit (4?), overlap resolution, car-SoC tracking strategy, cancel-a-plan UI.
+
+---
+
 ## 5. Solar AI sometimes fails to start with HA — suspect OCPP
 
 After rebooting HA today, anything OCPP (the charger) wasn't working at first; it started working a few hours later on its own. Solar AI also sometimes fails to start with HA, and the suspicion is that OCPP startup ordering / dependency is the cause.

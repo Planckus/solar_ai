@@ -182,6 +182,10 @@ from .const import (
     CONF_TARIFF_FETCH_ENABLED,
     DEFAULT_TARIFF_FETCH_ENABLED,
     EV_BATTERY_LOCK_POWER_THRESHOLD_KW,
+    EV_MODE_SCHEDULED,
+    CONF_EV_SCHEDULE_LINKS,
+    CONF_EV_SCHEDULED_FALLBACK_MODE,
+    DEFAULT_EV_SCHEDULED_FALLBACK_MODE,
     DSO_OPTIONS,
     SELL_SIDE_COMPANY_OPTIONS,
     BUY_PRICE_MODE_MANUAL,
@@ -257,9 +261,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._open_action: dict | None = None
         # Currently open solar-floor-blocked event (closed when price rises
         # back above the floor and solar export resumes)
-        self._open_floor_block: dict | None = None
+        # v0.36.0: renamed from `_open_floor_block` to `_current_floor_block`
+        # to stop it shadowing the `_open_floor_block` method of the same
+        # name. The method opens a block by setting this attribute; reading
+        # this attribute tells you whether a block is currently active.
+        self._current_floor_block: dict | None = None
         # EV charge controller state (Phase B1 → v0.26.0 time-based)
-        self._ev_active_mode: str = EV_MODE_LOCKED          # what's running right now
+        self._ev_active_mode: str = EV_MODE_LOCKED          # what the user has selected
+        # v0.36.0 — when `_ev_active_mode == EV_MODE_SCHEDULED`, the resolver
+        # walks the configured schedule links once per tick and stores the
+        # concrete operating mode here. Downstream code (battery lock,
+        # anti-flap, telemetry) reads `_ev_effective_mode`. For all other
+        # values of `_ev_active_mode`, `_ev_effective_mode` mirrors it.
+        self._ev_effective_mode: str = EV_MODE_LOCKED
+        self._ev_active_schedule_link: str | None = None     # entity_id of the schedule currently in control
         self._ev_last_amps: int = 0                          # last A we commanded
         # Legacy tick counters kept for set_ev_mode() back-compat reset only
         self._ev_above_start_count: int = 0
@@ -755,7 +770,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 # are deliberately curtailed — pass `curtailed=True` so the
                 # learner drops the sample instead of comparing forecast to
                 # throttled-down production.
-                floor_active = self._open_floor_block is not None
+                # v0.36.0: attribute renamed to `_current_floor_block` (was
+                # `_open_floor_block` — clashed with the method of that name).
+                floor_active = self._current_floor_block is not None
                 self._update_solar_accuracy(
                     current_forecast_w, pv_power_w, curtailed=floor_active,
                 )
@@ -2270,7 +2287,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     ) -> None:
         _CPH_TZ = ZoneInfo("Europe/Copenhagen")
         local_now = now.astimezone(_CPH_TZ)
-        self._open_floor_block = {
+        # v0.36.0: writes to `_current_floor_block` (was `_open_floor_block`
+        # — name clashed with this method).
+        self._current_floor_block = {
             "start_ts": local_now.strftime("%Y-%m-%dT%H:%M"),
             "price_at_start": round(price, 4),
             "floor": round(floor, 4),
@@ -2281,11 +2300,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         )
 
     def _close_floor_block(self, now: datetime, price: float) -> None:
-        if self._open_floor_block is None:
+        if self._current_floor_block is None:
             return
         _CPH_TZ = ZoneInfo("Europe/Copenhagen")
         local_now = now.astimezone(_CPH_TZ)
-        start_ts: str = self._open_floor_block["start_ts"]
+        start_ts: str = self._current_floor_block["start_ts"]
         try:
             start_dt = datetime.fromisoformat(start_ts).replace(tzinfo=_CPH_TZ)
             duration_min = int((local_now - start_dt).total_seconds() / 60)
@@ -2296,15 +2315,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "start_ts": start_ts,
             "end_ts": local_now.strftime("%Y-%m-%dT%H:%M"),
             "duration_min": duration_min,
-            "price_at_start": self._open_floor_block.get("price_at_start", 0.0),
+            "price_at_start": self._current_floor_block.get("price_at_start", 0.0),
             "price_at_end":   round(price, 4),
-            "floor":          self._open_floor_block.get("floor", 0.0),
+            "floor":          self._current_floor_block.get("floor", 0.0),
         }
         log: list[dict] = self._stored.setdefault("solar_floor_log", [])
         log.append(entry)
         if len(log) > 500:
             del log[: len(log) - 500]
-        self._open_floor_block = None
+        self._current_floor_block = None
         _LOGGER.info(
             "Solar floor log: closed block — %d min "
             "(price %.3f → %.3f, floor %.2f)",
@@ -2398,7 +2417,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "battery_max_soc",
             self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC),
         ))
-        floor_active = self._open_floor_block is not None
+        # v0.36.0: attribute renamed (was `_open_floor_block`, clashed with method)
+        floor_active = self._current_floor_block is not None
         battery_near_full = battery_soc_pct >= (configured_max_soc - 2)
         if floor_active and battery_near_full:
             try:
@@ -2452,8 +2472,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self.config.get(CONF_EV_BATTERY_PRIORITY_SOC, DEFAULT_EV_BATTERY_PRIORITY_SOC),
         ))
 
+        # v0.36.0 — resolve SCHEDULED → concrete mode for this tick. For
+        # non-scheduled modes this is a no-op (effective == active).
+        effective_mode, active_link = self._resolve_effective_ev_mode(self._ev_active_mode)
+        self._ev_effective_mode = effective_mode
+        self._ev_active_schedule_link = active_link
+
         target_kw, reason = self._compute_ev_target_kw(
-            self._ev_active_mode, solar_surplus_kw, battery_soc, floor_soc,
+            effective_mode, solar_surplus_kw, battery_soc, floor_soc,
             min_kw, max_kw, priority_soc,
         )
         target_amps = self._kw_to_amps(target_kw)
@@ -2553,7 +2579,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # actually flows, not at 22:00 the moment FULL was selected. Lock
         # releases automatically when draw drops back below the threshold.
         want_lock = (
-            self._ev_active_mode == EV_MODE_FULL
+            self._ev_effective_mode == EV_MODE_FULL
             and ev_current_kw > EV_BATTERY_LOCK_POWER_THRESHOLD_KW
         )
         if want_lock != self._ev_battery_locked:
@@ -2959,7 +2985,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # v0.27.4: non-PV modes bypass time-windows entirely. Clear any
         # half-armed timers so they don't carry stale state if the user
         # switches back to PV later.
-        if self._ev_active_mode != EV_MODE_PV:
+        # v0.36.0: uses effective mode so scheduled-resolved PV mode still
+        # gets the anti-flap windows.
+        if self._ev_effective_mode != EV_MODE_PV:
             self._ev_surplus_above_min_since_ts = None
             self._ev_surplus_below_min_since_ts = None
             return target_amps
@@ -3141,7 +3169,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         arming_until_iso = None
         cooling_until_iso = None
         # ARMING/COOLING only meaningful in PV mode where the time-windows apply (v0.27.4)
-        in_pv = (self._ev_active_mode == EV_MODE_PV)
+        # v0.36.0: uses effective mode so scheduled-PV also gets the countdown
+        in_pv = (self._ev_effective_mode == EV_MODE_PV)
         if self._ev_last_amps > 0:
             state = "CHARGING"
             if in_pv and self._ev_surplus_below_min_since_ts is not None:
@@ -3165,6 +3194,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         return {
             "ev_enabled": True,
             "ev_active_mode": self._ev_active_mode,
+            # v0.36.0 — when ev_active_mode is "scheduled", these expose
+            # the concrete mode currently in effect and which schedule
+            # entity is driving it. For non-scheduled modes effective ==
+            # active and active_schedule_link is None.
+            "ev_effective_mode": self._ev_effective_mode,
+            "ev_active_schedule_link": self._ev_active_schedule_link,
             "ev_target_kw": round(target_kw, 2),
             "ev_target_amps": target_amps,
             "ev_surplus_kw": round(surplus_kw, 2),
@@ -3178,9 +3213,56 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "ev_battery_locked": self._ev_battery_locked,
         }
 
+    def _resolve_effective_ev_mode(self, requested_mode: str) -> tuple[str, str | None]:
+        """Resolve `requested_mode` into a concrete operating mode.
+
+        For LOCKED / PV / PV_BATTERY / FULL the requested mode IS the
+        effective mode — returned unchanged.
+
+        For SCHEDULED (v0.36.0 — Phase A scheduling) the resolver walks the
+        configured list of (HA schedule entity → EV mode) links in order and
+        returns the first link whose schedule entity is currently `on`. The
+        active link's schedule_entity is returned as the second tuple element
+        for telemetry. If no link is active, falls back to the user-configured
+        fallback mode (default `locked`).
+
+        The link list lives under `entry.data[CONF_EV_SCHEDULE_LINKS]` as a
+        list of dicts, edited via the options flow. Users edit the underlying
+        schedule entities themselves in Settings → Helpers → Schedule, where
+        HA's native schedule helper provides per-weekday time ranges.
+        """
+        if requested_mode != EV_MODE_SCHEDULED:
+            return requested_mode, None
+
+        links = self.config.get(CONF_EV_SCHEDULE_LINKS, []) or []
+        for link in links:
+            if not isinstance(link, dict):
+                continue
+            entity_id = link.get("schedule_entity") or ""
+            mode = link.get("mode") or ""
+            if not entity_id or not mode:
+                continue
+            state = self.hass.states.get(entity_id)
+            if state is None or state.state in ("unknown", "unavailable"):
+                continue
+            if state.state == "on":
+                if mode in (EV_MODE_LOCKED, EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL):
+                    return mode, entity_id
+                _LOGGER.debug(
+                    "Scheduled mode link → unknown sub-mode '%s' on %s; skipping",
+                    mode, entity_id,
+                )
+        # No active link — use fallback
+        fallback = self.config.get(
+            CONF_EV_SCHEDULED_FALLBACK_MODE, DEFAULT_EV_SCHEDULED_FALLBACK_MODE,
+        )
+        if fallback not in (EV_MODE_LOCKED, EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL):
+            fallback = EV_MODE_LOCKED
+        return fallback, None
+
     def set_ev_mode(self, new_mode: str) -> None:
         """Public setter used by the mode select entity."""
-        if new_mode not in (EV_MODE_LOCKED, EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL):
+        if new_mode not in (EV_MODE_LOCKED, EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL, EV_MODE_SCHEDULED):
             _LOGGER.warning("EV controller: unknown mode '%s' ignored", new_mode)
             return
         self._ev_active_mode = new_mode
