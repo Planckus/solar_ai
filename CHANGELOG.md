@@ -9,6 +9,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.37.1] — 2026-05-24
+
+### Fixed — buy-price breakdown card now matches the buy-price mode
+
+A user reported confusion about whether the "Moms på køb" slider was double-applying VAT. Investigation found the slider behaved correctly — `_compute_buy_price` applies it once in `manual` mode and ignores it in `strømligning` / `octopus` modes — but the dashboard's "Prissammensætning" card always recomputed the breakdown locally using the slider value, regardless of the active source. This meant:
+
+- In `strømligning` mode, the card showed the user's manual `number.*` slider values × the slider's VAT, while the optimiser actually used Strømligning's own all-in `total` field. The two numbers could legitimately differ if the manual sliders drifted from Strømligning's components.
+- In `octopus` mode, same issue with `value_inc_vat`.
+
+v0.37.1 resolves both:
+
+1. **New sensor `sensor.solar_ai_buy_price_breakdown`** — per-component breakdown of the current slot's buy price, sourced from the live API in `strømligning` / `octopus` modes. Attributes include `mode`, per-component values (`spot`, `surcharge`, `net_tariff`, `system_tariff`, `distribution`, `elafgift`, `subtotal_ex_vat`, `vat_amount`, `vat_pct`, `total_inc_vat`). The state is the current slot's all-in buy price.
+
+2. **Dashboard "Prissammensætning" card branches on `mode`** — renders the manual line stack in manual mode, the Strømligning per-component breakdown in strømligning mode (with VAT derived from Strømligning's `total − value`), and the Octopus VAT-inclusive line in octopus mode. The card now matches whatever the optimiser is actually using.
+
+3. **VAT slider greys out when it has no effect** — `number.solar_ai_moms_pa_kob` is marked `unavailable` in `strømligning` mode without manual overrides, and in `octopus` mode. The slider was already ignored by the coordinator in those modes; now it's also visually communicated. Flipping back to manual mode or enabling Strømligning's manual-overrides toggle restores it.
+
+No buy-price calculation changed — this is a UX and visibility fix.
+
+### Internal
+- `BatteryArbitrageConfigNumber` accepts an optional `available_when: Callable[[Coordinator], bool]` argument.
+- New `_vat_slider_available` helper encodes the "when is the slider in play?" logic so it stays in one place.
+- New `BatteryArbitrageBuyPriceBreakdownSensor` class in `sensor.py`.
+
+---
+
 ## [0.37.0] — 2026-05-24
 
 ### Fixed — OCPP transaction tracking survives HA restarts (Item 5)

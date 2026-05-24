@@ -1407,6 +1407,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             price_p25=price_p25,
             price_p75=price_p75,
             price_next_slot=price_next_slot,
+            # v0.37.1 — all-in buy price for the next slot (VAT, tariffs, and
+            # any retail-API source applied). Consumed by the new
+            # `BatteryArbitrageBuyPriceBreakdownSensor` as the state value
+            # so the dashboard's "Prissammensætning" card has a single
+            # entity to read regardless of buy_price_mode.
+            buy_price_next_slot=buy_price_next_slot,
             export_price=export_price,
             grid_arbitrage_spread=grid_arbitrage_spread,
             battery_soc=battery_soc,

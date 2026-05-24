@@ -1,6 +1,8 @@
 """Number platform for Battery Arbitrage — exposes learned charge rates as editable numbers."""
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from homeassistant.components.number import (
     NumberDeviceClass,
     NumberEntity,
@@ -13,9 +15,14 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    BUY_PRICE_MODE_OCTOPUS,
+    BUY_PRICE_MODE_STROMLIGNING,
+    CONF_BUY_PRICE_MODE,
+    CONF_STROMLIGNING_USE_MANUAL_OVERRIDES,
     DEFAULT_BATTERY_DEGRADATION_COST,
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_BATTERY_MAX_SOC,
+    DEFAULT_BUY_PRICE_MODE,
     DEFAULT_ELAFGIFT_DKK_KWH,
     DEFAULT_EV_MIN_CHARGE_KW,
     DEFAULT_EV_MAX_CHARGE_KW,
@@ -25,6 +32,7 @@ from .const import (
     DEFAULT_MIN_EXPORT_PRICE,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_SPOT_MARKUP,
+    DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES,
     DEFAULT_VAT_PCT,
     DOMAIN,
     GRID_MAX_KW,
@@ -103,6 +111,9 @@ async def async_setup_entry(
             max_val=50.0,
             step=0.5,
             mode=NumberMode.BOX,
+            # v0.37.1 — slider is greyed out in Strømligning-no-overrides
+            # and Octopus modes, where the API price already includes VAT.
+            available_when=_vat_slider_available,
         ),
         BatteryArbitrageConfigNumber(
             coordinator, entry,
@@ -295,6 +306,7 @@ class BatteryArbitrageConfigNumber(
         step: float,
         mode: NumberMode = NumberMode.SLIDER,
         display_precision: int | None = None,
+        available_when: "Callable[[BatteryArbitrageCoordinator], bool] | None" = None,
     ) -> None:
         super().__init__(coordinator)
         self._storage_key = storage_key
@@ -308,11 +320,28 @@ class BatteryArbitrageConfigNumber(
         self._attr_native_max_value = max_val
         self._attr_native_step = step
         self._attr_device_info = _device_info(entry)
+        # v0.37.1 — optional callback that returns False to grey out the slider
+        # in contexts where its value is ignored by the coordinator (e.g. the
+        # VAT slider when buy_price_mode is `stromligning` with no overrides,
+        # because Strømligning's `total` field already includes VAT).
+        self._available_when = available_when
         # Note: _attr_suggested_display_precision is intentionally NOT set here.
         # HA's compact display entry (list_for_display) only exposes the "dp" field
         # for domain=="sensor" entities.  For number entities, getNumberFormatOptions
         # in the frontend never receives a display_precision value, so trailing zeros
         # cannot be forced via HA's standard entity API.  This is an HA limitation.
+
+    @property
+    def available(self) -> bool:
+        base = super().available
+        if not base:
+            return False
+        if self._available_when is None:
+            return True
+        try:
+            return bool(self._available_when(self.coordinator))
+        except Exception:  # noqa: BLE001
+            return True   # fail-open — never make a slider permanently unreachable on a callback bug
 
     @property
     def native_value(self) -> float:
@@ -322,3 +351,30 @@ class BatteryArbitrageConfigNumber(
         self.coordinator._stored[self._storage_key] = round(value, 3)
         await self.coordinator._store.async_save(self.coordinator._stored)
         self.async_write_ha_state()
+
+
+def _vat_slider_available(coordinator: BatteryArbitrageCoordinator) -> bool:
+    """Return whether the buy-side VAT slider has an effect on the buy price.
+
+    The slider drives `_compute_buy_price`'s `vat_factor` only in:
+      - `manual` mode (always × VAT factor), or
+      - `stromligning` mode WITH `use_manual_overrides=True` (Strømligning's
+        ex-VAT components × VAT factor).
+
+    It is ignored in:
+      - `stromligning` mode without overrides — `entry.price.price.total`
+        is taken verbatim, VAT already baked in.
+      - `octopus` mode (UK) — `value_inc_vat` is taken verbatim.
+
+    Greying the slider out in the ignored cases makes the dashboard honest
+    about which knob actually controls the buy price.
+    """
+    mode = coordinator.config.get(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE)
+    if mode == BUY_PRICE_MODE_OCTOPUS:
+        return False
+    if mode == BUY_PRICE_MODE_STROMLIGNING:
+        return bool(coordinator.config.get(
+            CONF_STROMLIGNING_USE_MANUAL_OVERRIDES,
+            DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES,
+        ))
+    return True   # manual mode

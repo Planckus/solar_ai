@@ -719,6 +719,14 @@ async def async_setup_entry(
             BatteryArbitrageLearnedRateSensor(coordinator, entry, bucket_key)
         )
 
+    # v0.37.1 — buy-price breakdown sensor. Exposes the current slot's
+    # per-component buy price via attributes so the dashboard's
+    # "Prissammensætning" card can branch on the active buy_price_mode
+    # and show the authoritative breakdown (Strømligning's own component
+    # values when in stromligning mode; the user's manual sliders in
+    # manual mode; Octopus's value_inc_vat in octopus mode).
+    entities.append(BatteryArbitrageBuyPriceBreakdownSensor(coordinator, entry))
+
     async_add_entities(entities)
 
 
@@ -797,3 +805,175 @@ def _device_info(entry: ConfigEntry) -> dict:
         "model": "Solar AI v0.1",
         "entry_type": "service",
     }
+
+
+class BatteryArbitrageBuyPriceBreakdownSensor(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SensorEntity
+):
+    """Per-component breakdown of the current slot's buy price (v0.37.1).
+
+    State: the current slot's all-in buy price (DKK/kWh by default; the
+    integration's currency setting applies).
+
+    Attributes: a `mode` field telling the dashboard which line stack to
+    render (`manual`, `stromligning`, `octopus`), plus the components for
+    that mode. For Strømligning mode the components come from Strømligning's
+    own API response — that's the canonical source, and using it eliminates
+    the "card shows my slider values, but the optimiser uses something
+    else" confusion noted in v0.37.0.
+
+    The dashboard's "Prissammensætning" markdown card reads these attributes
+    and renders the right breakdown. The user's VAT slider is intentionally
+    NOT used in stromligning/octopus modes — see `_vat_slider_available`
+    in number.py.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "buy_price_breakdown"
+    _attr_icon = "mdi:receipt-text-outline"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_device_class = SensorDeviceClass.MONETARY
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_buy_price_breakdown"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        currency = self.coordinator.config.get(CONF_CURRENCY, DEFAULT_CURRENCY)
+        return f"{currency}/kWh"
+
+    def _current_mode(self) -> str:
+        from .const import (  # noqa: PLC0415
+            BUY_PRICE_MODE_STROMLIGNING,
+            BUY_PRICE_MODE_OCTOPUS,
+            CONF_BUY_PRICE_MODE,
+            DEFAULT_BUY_PRICE_MODE,
+        )
+        mode = self.coordinator.config.get(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE)
+        if mode == BUY_PRICE_MODE_STROMLIGNING:
+            return "stromligning"
+        if mode == BUY_PRICE_MODE_OCTOPUS:
+            return "octopus"
+        return "manual"
+
+    def _current_stromligning_entry(self) -> dict | None:
+        """Look up the cached Strømligning slot for the current hour."""
+        from datetime import datetime, timezone   # noqa: PLC0415
+        cache = getattr(self.coordinator, "_cached_stromligning_prices", {}) or {}
+        if not cache:
+            return None
+        key = (datetime.now(timezone.utc)
+               .replace(minute=0, second=0, microsecond=0)
+               .strftime("%Y-%m-%dT%H:%M:%S.000Z"))
+        return cache.get(key)
+
+    def _current_octopus_entry(self) -> dict | None:
+        """Look up the cached Octopus rate for the current 30-min slot."""
+        from datetime import datetime, timezone   # noqa: PLC0415
+        cache = getattr(self.coordinator, "_cached_octopus_prices", {}) or {}
+        if not cache:
+            return None
+        now = datetime.now(timezone.utc)
+        key_30 = (now.replace(minute=(now.minute // 30) * 30,
+                              second=0, microsecond=0)
+                  .strftime("%Y-%m-%dT%H:%M:%SZ"))
+        entry = cache.get(key_30)
+        if entry is None:
+            key_h = (now.replace(minute=0, second=0, microsecond=0)
+                     .strftime("%Y-%m-%dT%H:%M:%SZ"))
+            entry = cache.get(key_h)
+        return entry
+
+    @property
+    def native_value(self) -> float | None:
+        mode = self._current_mode()
+        if mode == "stromligning":
+            entry = self._current_stromligning_entry()
+            if entry:
+                try:
+                    return round(float(entry["price"]["price"]["total"]), 4)
+                except (KeyError, TypeError, ValueError):
+                    pass
+        elif mode == "octopus":
+            entry = self._current_octopus_entry()
+            if entry:
+                try:
+                    # Octopus: pence/kWh → currency-units/kWh
+                    return round(float(entry["value_inc_vat"]) / 100.0, 4)
+                except (KeyError, TypeError, ValueError):
+                    pass
+        # Manual mode (or stromligning/octopus cache miss) — pull the live
+        # buy price the coordinator has computed. `buy_price_next_slot` is
+        # what the optimiser actually used for its decision in the most
+        # recent tick (covers the half-hour boundary cleanly for chargers
+        # that switch every 30 min like Octopus).
+        data = self.coordinator.data or {}
+        for k in ("buy_price_next_slot", "current_buy_price", "buy_price"):
+            v = data.get(k)
+            if v is not None:
+                try:
+                    return round(float(v), 4)
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        mode = self._current_mode()
+        attrs: dict[str, Any] = {"mode": mode}
+        if mode == "stromligning":
+            entry = self._current_stromligning_entry()
+            if entry:
+                try:
+                    from . import stromligning as sl   # noqa: PLC0415
+                    d = sl.get_price_details(entry)
+                    attrs.update({
+                        "spot":          d["spot"],
+                        "surcharge":     d["surcharge"],
+                        "net_tariff":    d["net_tariff"],
+                        "system_tariff": d["system_tariff"],
+                        "distribution":  d["distribution"],
+                        "elafgift":      d["elafgift"],
+                        "vat_pct":       d["vat_pct"],
+                        "total_inc_vat": d["total_inc_vat"],
+                        "subtotal_ex_vat": round(
+                            d["spot"] + d["surcharge"] + d["net_tariff"]
+                            + d["system_tariff"] + d["distribution"]
+                            + d["elafgift"], 4,
+                        ),
+                        "vat_amount": round(
+                            d["total_inc_vat"] - (
+                                d["spot"] + d["surcharge"] + d["net_tariff"]
+                                + d["system_tariff"] + d["distribution"]
+                                + d["elafgift"]
+                            ), 4,
+                        ),
+                    })
+                except Exception:  # noqa: BLE001
+                    pass
+        elif mode == "octopus":
+            entry = self._current_octopus_entry()
+            if entry:
+                try:
+                    inc_vat = float(entry["value_inc_vat"]) / 100.0
+                    ex_vat = float(entry["value_exc_vat"]) / 100.0
+                    attrs.update({
+                        "value_inc_vat": round(inc_vat, 4),
+                        "value_exc_vat": round(ex_vat, 4),
+                        "vat_amount":    round(inc_vat - ex_vat, 4),
+                        "vat_pct":       round((inc_vat / ex_vat - 1) * 100, 2)
+                                         if ex_vat > 0 else 0.0,
+                        "valid_from":    entry.get("valid_from"),
+                        "valid_to":      entry.get("valid_to"),
+                    })
+                except (KeyError, TypeError, ValueError):
+                    pass
+        # Manual mode has no extra attributes — the dashboard already has
+        # all the inputs as separate `number.*` entities.
+        return attrs

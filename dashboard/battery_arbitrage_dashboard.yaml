@@ -55,20 +55,16 @@ views:
             name: Næste slots pris
 
       # ── Prissammensætning ──────────────────────────────────────────────────
+      # v0.37.1 — branches on sensor.solar_ai_buy_price_breakdown.mode so the
+      # right line stack is shown for each buy-price source (manual / Strømligning
+      # / Octopus). The VAT slider is hidden for sources where it does not apply.
       - type: markdown
         title: Prissammensætning
         content: |
-          {% set spot_markup = states('number.solar_ai_spotpris_tillaeg_elhandlertillaeg') | float(0) %}
+          {% set bd = state_attr('sensor.solar_ai_buy_price_breakdown', 'mode') or 'manual' %}
           {% set export_fee = states('number.solar_ai_salgsgebyr_pr_kwh') | float(0) %}
           {% set export_price = states('sensor.battery_arbitrage_eksportpris') | float(0) %}
           {% set spot_ex_vat = export_price + export_fee %}
-          {% set tariff_total = states('sensor.solar_ai_nettarif_denne_time') | float(0) %}
-          {% set elafgift = states('number.solar_ai_elafgift_dkk_kwh') | float(0) %}
-          {% set network_tariff = tariff_total - elafgift %}
-          {% set vat_pct = states('number.solar_ai_moms_pa_kob') | float(25) %}
-          {% set vat_factor = 1 + vat_pct / 100 %}
-          {% set pretax_buy = spot_ex_vat + spot_markup + tariff_total %}
-          {% set total_buy = pretax_buy * vat_factor %}
           {% set spread = states('sensor.battery_arbitrage_net_arbitrage_spread') | float(0) %}
           {% set min_spread = states('number.solar_ai_minimum_arbitrage_spread') | float(1.0) %}
           {% set price_min = states('sensor.battery_arbitrage_24h_prisminimum') | float(0) %}
@@ -82,6 +78,54 @@ views:
           | − Salgsgebyr | {{ '%.3f' | format(export_fee) }} |
           | **Netto eksportpris** | **{{ '%.3f' | format(export_price) }}** |
 
+          {% if bd == 'stromligning' %}
+          {% set spot = state_attr('sensor.solar_ai_buy_price_breakdown', 'spot') | float(0) %}
+          {% set surc = state_attr('sensor.solar_ai_buy_price_breakdown', 'surcharge') | float(0) %}
+          {% set nett = state_attr('sensor.solar_ai_buy_price_breakdown', 'net_tariff') | float(0) %}
+          {% set syst = state_attr('sensor.solar_ai_buy_price_breakdown', 'system_tariff') | float(0) %}
+          {% set dist = state_attr('sensor.solar_ai_buy_price_breakdown', 'distribution') | float(0) %}
+          {% set elaf = state_attr('sensor.solar_ai_buy_price_breakdown', 'elafgift') | float(0) %}
+          {% set sub_ex_vat = state_attr('sensor.solar_ai_buy_price_breakdown', 'subtotal_ex_vat') | float(0) %}
+          {% set vat_amt = state_attr('sensor.solar_ai_buy_price_breakdown', 'vat_amount') | float(0) %}
+          {% set vat_pct = state_attr('sensor.solar_ai_buy_price_breakdown', 'vat_pct') | float(0) %}
+          {% set total = state_attr('sensor.solar_ai_buy_price_breakdown', 'total_inc_vat') | float(0) %}
+          #### 🔌 Købspris (denne time — Strømligning)
+          | | DKK/kWh |
+          |:---|---:|
+          | Spotpris | {{ '%.3f' | format(spot) }} |
+          | + Elhandler-tillæg | {{ '%.3f' | format(surc) }} |
+          | + Net-tarif (Energinet) | {{ '%.3f' | format(nett) }} |
+          | + System-tarif (Energinet) | {{ '%.3f' | format(syst) }} |
+          | + Distribution (DSO) | {{ '%.3f' | format(dist) }} |
+          | + Elafgift | {{ '%.3f' | format(elaf) }} |
+          | Subtotal (ekskl. moms) | {{ '%.3f' | format(sub_ex_vat) }} |
+          | + Moms ({{ '%.2f' | format(vat_pct) }} %) | {{ '%.3f' | format(vat_amt) }} |
+          | **Samlet købspris** | **{{ '%.3f' | format(total) }}** |
+          *Komponentpriser fra Strømligning. Moms-slideren under Priskonfiguration er deaktiveret — Strømligning leverer momsen direkte.*
+          {% elif bd == 'octopus' %}
+          {% set inc = state_attr('sensor.solar_ai_buy_price_breakdown', 'value_inc_vat') | float(0) %}
+          {% set ex = state_attr('sensor.solar_ai_buy_price_breakdown', 'value_exc_vat') | float(0) %}
+          {% set vat_amt = state_attr('sensor.solar_ai_buy_price_breakdown', 'vat_amount') | float(0) %}
+          {% set vat_pct = state_attr('sensor.solar_ai_buy_price_breakdown', 'vat_pct') | float(0) %}
+          {% set vfrom = state_attr('sensor.solar_ai_buy_price_breakdown', 'valid_from') %}
+          {% set vto = state_attr('sensor.solar_ai_buy_price_breakdown', 'valid_to') %}
+          #### 🔌 Buy price (this slot — Octopus)
+          | | GBP/kWh |
+          |:---|---:|
+          | Value (excl. VAT) | {{ '%.4f' | format(ex) }} |
+          | + VAT ({{ '%.2f' | format(vat_pct) }} %) | {{ '%.4f' | format(vat_amt) }} |
+          | **Buy price (incl. VAT)** | **{{ '%.4f' | format(inc) }}** |
+          *Live tariff from Octopus Energy. The VAT slider under Priskonfiguration is disabled — VAT is taken from the Octopus API directly.*
+          {% if vfrom and vto %}*Valid {{ vfrom[11:16] }}–{{ vto[11:16] }} UTC.*{% endif %}
+          {% else %}
+          {% set spot_markup = states('number.solar_ai_spotpris_tillaeg_elhandlertillaeg') | float(0) %}
+          {% set tariff_total = states('sensor.solar_ai_nettarif_denne_time') | float(0) %}
+          {% set elafgift = states('number.solar_ai_elafgift_dkk_kwh') | float(0) %}
+          {% set network_tariff = tariff_total - elafgift %}
+          {% set vat_pct = states('number.solar_ai_moms_pa_kob') | float(25) %}
+          {% set vat_factor = 1 + vat_pct / 100 %}
+          {% set pretax_buy = spot_ex_vat + spot_markup + tariff_total %}
+          {% set total_buy = pretax_buy * vat_factor %}
           #### 🔌 Købspris (denne time)
           | | DKK/kWh |
           |:---|---:|
@@ -92,6 +136,7 @@ views:
           | Subtotal (ekskl. moms) | {{ '%.3f' | format(pretax_buy) }} |
           | + Moms ({{ vat_pct | int }} %) | {{ '%.3f' | format(pretax_buy * vat_pct / 100) }} |
           | **Samlet købspris** | **{{ '%.3f' | format(total_buy) }}** |
+          {% endif %}
 
           #### ⚖️ Arbitrage-spread
           **{{ '%.3f' | format(spread) }} DKK/kWh** {% if spread >= min_spread %}✅ over grænse ({{ '%.2f' | format(min_spread) }}){% else %}⛔ under grænse ({{ '%.2f' | format(min_spread) }}){% endif %}
