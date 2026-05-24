@@ -9,6 +9,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.37.2] — 2026-05-24
+
+### Fixed — Prisparametre card now greys out *all* shadowed manual sliders
+
+v0.37.1 only greyed out the Moms slider in Strømligning / Octopus modes, but the same logic applies to the other two manual buy-component sliders that share the same code path:
+
+- `number.solar_ai_elafgift_dkk_kwh` (Elafgift)
+- `number.solar_ai_spotpris_tillaeg_elhandlertillaeg` (Spotpris-tillæg / elhandlertillæg)
+
+Both are ignored by `_compute_buy_price` in `stromligning`-no-overrides and `octopus` modes (the API's `total` / `value_inc_vat` field includes their equivalents) but the Prisparametre dashboard card kept them looking active. Now all three are greyed out together when the API provides the full buy-price stack.
+
+The helper was renamed from `_vat_slider_available` to `_manual_buy_component_available` to reflect its broader role; the old name is kept as a compatibility alias.
+
+No buy-price calculation changed.
+
+---
+
 ## [0.37.1] — 2026-05-24
 
 ### Fixed — buy-price breakdown card now matches the buy-price mode
