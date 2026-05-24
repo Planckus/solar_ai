@@ -163,6 +163,7 @@ from .const import (
     EV_HYSTERESIS_STOP_TICKS,
     EV_MAX_AMP_STEP_PER_TICK,
     EV_MIN_AMP_CHANGE,
+    EV_CURTAILMENT_PROBE_SECONDS,
     CONF_EV_CONTROL_INTERVAL_SECONDS,
     CONF_EV_START_WINDOW_SECONDS,
     CONF_EV_STOP_WINDOW_SECONDS,
@@ -314,6 +315,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._st_solar_min_w: float = 200.0
         # Horizon over which the short-term correction decays back to 1.0
         self._st_solar_decay_hours: float = 2.0
+        # v0.36.2 — PV-curtailment signal cached from the inverter's
+        # "PV Power Limited Flag" holding register (49251). Updated once
+        # per coordinator slow tick by `_async_update_data`. Consumed by
+        # `_run_ev_controller` to decide whether to launch a curtailment
+        # probe (replaces the v0.30.1 forecast-substitution heuristic).
+        self._pv_power_limited_flag: bool = False
+        # Timestamp the probe started. None means no probe in flight. The
+        # probe ends when the flag clears or `EV_CURTAILMENT_PROBE_SECONDS`
+        # elapses, whichever comes first.
+        self._ev_probe_started_at: datetime | None = None
         # Decoupled EV control loop: runs at CONF_EV_CONTROL_INTERVAL_SECONDS
         # cadence (independent of the main coordinator fast-poll). Inputs are
         # cached by the main update; the loop consumes the cache.
@@ -1306,6 +1317,17 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # ---- export limit (every tick — enforces solar floor even when disabled) ----
         await self._maintain_export_limit(export_price_raw, min_export_price, new_mode)
 
+        # ---- PV-curtailment flag (v0.36.2) — read inverter reg 49251 every tick ----
+        # The EV controller consumes this cached value to decide whether to
+        # launch a curtailment probe. A failed read leaves the prior value
+        # in place (sticky), which is the safe default — a transient modbus
+        # blip should not toggle the probe state.
+        flag = await self._read_pv_power_limited_flag(
+            self.config.get("foxess_inverter_id", "")
+        )
+        if flag is not None:
+            self._pv_power_limited_flag = flag
+
         # ---- savings tracking (learning tick only — accumulates per interval_h) ----
         if is_learning_tick:
             self._update_savings(
@@ -1614,6 +1636,42 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("Battery Arbitrage: set work mode → %s", mode)
         except Exception as err:
             _LOGGER.error("Failed to set FoxESS work mode to %s: %s", mode, err)
+
+    async def _read_pv_power_limited_flag(self, inverter_id: str) -> bool | None:
+        """Read the FoxESS "PV Power Limited" holding register (49251).
+
+        Returns True when the inverter reports it is actively curtailing PV
+        (MPPT throttled), False when the inverter is delivering all
+        available PV, or None if the read fails. Used by the EV controller
+        as the curtailment trigger (v0.36.2 — replaces the v0.30.1
+        forecast-substitution heuristic).
+        """
+        if not inverter_id:
+            return None
+        try:
+            from .const import FOXESS_PV_POWER_LIMITED_FLAG_REGISTER  # noqa: PLC0415
+            resp = await self.hass.services.async_call(
+                "foxess_modbus", "read_registers",
+                {
+                    "inverter": inverter_id,
+                    "start_address": FOXESS_PV_POWER_LIMITED_FLAG_REGISTER,
+                    "count": 1,
+                    "type": "holding",
+                },
+                blocking=True,
+                return_response=True,
+            )
+            values = ((resp or {}).get("values")
+                      or (resp or {}).get("response", {}).get("values")
+                      or {})
+            raw = values.get(FOXESS_PV_POWER_LIMITED_FLAG_REGISTER)
+            if raw is None:
+                # Some service responses key by stringified address
+                raw = values.get(str(FOXESS_PV_POWER_LIMITED_FLAG_REGISTER))
+            return bool(int(raw)) if raw is not None else None
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Read PV-limited flag (reg 49251) failed: %s", err)
+            return None
 
     async def _set_export_limit(self, inverter_id: str, limit_watts: int) -> None:
         """Write the FoxESS export limit register (46616)."""
@@ -2394,22 +2452,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         house_load_kw = home_power_w / 1000.0
         solar_kw      = pv_power_w / 1000.0
 
-        # v0.30.1 — solar visibility during price-block curtailment:
-        # When the solar export floor is active (export limit = 25 W) AND
-        # the house battery is at/near its max SoC, the FoxESS MPPT
-        # throttles the panels to match local consumption — the EV
-        # controller would otherwise see `pv ≈ load` and conclude there
-        # is no surplus. To unblock the EV in this case, fall back to the
-        # forecast PV value when:
-        #   - the floor is active (curtailment is happening)
-        #   - the house battery is within 2 % of max SoC (no buffer left)
-        #   - the forecast for this slot is meaningfully above what the
-        #     panels are actually producing (clear curtailment signal,
-        #     not just a cloudy moment)
-        # Once the EV starts pulling, panel MPPT rises to match and the
-        # forecast substitution becomes a no-op. If the forecast was
-        # wrong the EV controller's stop-window (default 180 s) backs
-        # the session out before any real harm.
+        # v0.36.2 — curtailment probe (replaces the v0.30.1 forecast-substitution
+        # heuristic). The inverter publishes a "PV Power Limited Flag" on reg
+        # 49251: 1 = MPPT actively throttling PV. When that flag is set and
+        # the house battery has no headroom to absorb more (≥ max_soc − 2 %),
+        # the EV controller starts a probe — it synthesises enough solar to
+        # guarantee `ev_min_charge_kw` of EV demand for EV_CURTAILMENT_PROBE_SECONDS
+        # so MPPT can lift to match. After the window, real PV drives the
+        # target directly (no forecast involved). The flag clearing during
+        # the probe ends it early (MPPT now tracking EV draw, curtailment
+        # resolved). If the window expires with the flag still high, the
+        # probe releases and the normal stop-window (default 180 s) backs
+        # the session out within minutes.
         battery_soc_pct = float(self._get_float_state(
             self.config.get(CONF_BATTERY_SOC_ENTITY, FOXESS_BATTERY_SOC), 0,
         ) or 0)
@@ -2417,32 +2471,62 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "battery_max_soc",
             self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC),
         ))
-        # v0.36.0: attribute renamed (was `_open_floor_block`, clashed with method)
-        floor_active = self._current_floor_block is not None
         battery_near_full = battery_soc_pct >= (configured_max_soc - 2)
-        if floor_active and battery_near_full:
-            try:
-                slot_forecast_w = _current_slot_forecast(
-                    (self._cached_solar_rates or {}).get("rates", []) or [],
-                    datetime.now(timezone.utc),
+        pv_curtailed = self._pv_power_limited_flag
+        now_ts = datetime.now(timezone.utc)
+
+        # Start a probe the first tick we see curtailment + battery-near-full.
+        if pv_curtailed and battery_near_full and self._ev_probe_started_at is None:
+            self._ev_probe_started_at = now_ts
+            _LOGGER.info(
+                "EV controller: PV-limited flag active (reg 49251=1) "
+                "AND battery near full (%.0f%% ≥ max %d%% − 2) — starting "
+                "%d s curtailment probe at min charge to lift MPPT.",
+                battery_soc_pct, configured_max_soc,
+                EV_CURTAILMENT_PROBE_SECONDS,
+            )
+
+        # End the probe when the flag clears OR the window expires.
+        probing = False
+        if self._ev_probe_started_at is not None:
+            elapsed = (now_ts - self._ev_probe_started_at).total_seconds()
+            if not pv_curtailed:
+                _LOGGER.info(
+                    "EV controller: curtailment cleared after probe (%.0fs) "
+                    "— MPPT now tracking EV draw; resuming normal surplus control.",
+                    elapsed,
                 )
-            except Exception:  # noqa: BLE001
-                slot_forecast_w = None
-            if (
-                slot_forecast_w is not None
-                and slot_forecast_w > 1000.0           # > 1 kW expected
-                and slot_forecast_w > pv_power_w * 2   # actual < 50 % of forecast
-            ):
-                # Substitute forecast for actual to drive surplus calc
-                solar_kw = float(slot_forecast_w) / 1000.0
+                self._ev_probe_started_at = None
+            elif elapsed > EV_CURTAILMENT_PROBE_SECONDS:
+                _LOGGER.info(
+                    "EV controller: probe window expired (%.0fs) with flag "
+                    "still active — releasing. Stop-window will back the "
+                    "session out if surplus stays negative.",
+                    elapsed,
+                )
+                self._ev_probe_started_at = None
+            else:
+                probing = True
+
+        # Synthesise solar during the probe window: guarantee at least
+        # ev_min_charge_kw of EV demand. Real PV will reassert once the
+        # probe ends. No forecast involved.
+        if probing:
+            non_ev_load_kw_for_probe = max(0.0, house_load_kw - ev_current_kw)
+            min_kw_probe = float(self._stored.get(
+                "ev_min_charge_kw", DEFAULT_EV_MIN_CHARGE_KW,
+            ))
+            probe_floor_kw = non_ev_load_kw_for_probe + min_kw_probe
+            if solar_kw < probe_floor_kw:
                 _LOGGER.debug(
-                    "EV surplus calc: price-floor curtailment detected "
-                    "(SoC %.0f%% ≥ max %d%%, forecast %.0f W vs actual %.0f W); "
-                    "using forecast for surplus to allow EV to kick-start "
-                    "panel MPPT.",
-                    battery_soc_pct, configured_max_soc,
-                    slot_forecast_w, pv_power_w,
+                    "EV controller: probe in flight (%.0fs/%ds) — "
+                    "synthesising solar %.2f → %.2f kW to keep EV at "
+                    "min charge while MPPT lifts.",
+                    (now_ts - self._ev_probe_started_at).total_seconds(),
+                    EV_CURTAILMENT_PROBE_SECONDS,
+                    solar_kw, probe_floor_kw,
                 )
+                solar_kw = probe_floor_kw
 
         # Surplus = solar minus non-EV portion of house load
         non_ev_load_kw   = max(0.0, house_load_kw - ev_current_kw)
