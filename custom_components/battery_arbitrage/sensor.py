@@ -727,6 +727,13 @@ async def async_setup_entry(
     # manual mode; Octopus's value_inc_vat in octopus mode).
     entities.append(BatteryArbitrageBuyPriceBreakdownSensor(coordinator, entry))
 
+    # v0.38.0 — one slot-summary sensor per EV schedule slot (1..MAX).
+    # State = active/idle/disabled/empty; attributes carry days, times,
+    # mode, name. The dashboard slot cards read everything from these.
+    from .const import EV_SCHEDULES_MAX as _SCHED_MAX
+    for idx in range(1, _SCHED_MAX + 1):
+        entities.append(BatteryArbitrageEvScheduleSlotSensor(coordinator, entry, idx))
+
     async_add_entities(entities)
 
 
@@ -977,3 +984,115 @@ class BatteryArbitrageBuyPriceBreakdownSensor(
         # Manual mode has no extra attributes — the dashboard already has
         # all the inputs as separate `number.*` entities.
         return attrs
+
+
+
+class BatteryArbitrageEvScheduleSlotSensor(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SensorEntity
+):
+    """Per-slot summary sensor for native EV schedules (v0.38.0).
+
+    Four of these are always created — one per `slot in 1..EV_SCHEDULES_MAX`.
+    The dashboard reads everything for a slot card from this single sensor:
+    state tells whether the slot is currently active / idle / disabled / empty;
+    attributes carry the per-day flags and the human-readable summary used
+    in the card header and the day-chip buttons.
+
+    `_stored["ev_schedules"]` is the source. The dashboard service buttons
+    (e.g. toggle_schedule_day, add_schedule_slot) mutate that list and
+    fire a dispatcher signal that this sensor listens for.
+    """
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:calendar-clock"
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+        slot_idx: int,
+    ) -> None:
+        super().__init__(coordinator)
+        self._slot_idx = slot_idx
+        self._attr_translation_key = f"ev_schedule_slot_{slot_idx}_summary"
+        self._attr_unique_id = f"{entry.entry_id}_ev_schedule_slot_{slot_idx}_summary"
+        self._attr_device_info = _device_info(entry)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        from homeassistant.helpers.dispatcher import async_dispatcher_connect   # noqa: PLC0415
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, f"{DOMAIN}_schedules_changed",
+                self.async_write_ha_state,
+            )
+        )
+
+    def _slot(self) -> dict | None:
+        return self.coordinator.get_schedule_slot(self._slot_idx)
+
+    @property
+    def native_value(self) -> str:
+        slot = self._slot()
+        if slot is None:
+            return "empty"
+        if not slot.get("enabled"):
+            return "disabled"
+        if not slot.get("days"):
+            return "disabled"
+        # Active-now is determined by walking the same logic as
+        # _resolve_effective_ev_mode but locally so we can attribute it.
+        from datetime import time as _time, datetime as _dt        # noqa: PLC0415
+        from .const import EV_SCHEDULE_DAYS                         # noqa: PLC0415
+        try:
+            from homeassistant.util import dt as _dt_util           # noqa: PLC0415
+            now_local = _dt_util.now()
+        except Exception:                                           # noqa: BLE001
+            now_local = _dt.now()
+        cur_t = now_local.time()
+        weekday_today = EV_SCHEDULE_DAYS[now_local.weekday()]
+        weekday_yesterday = EV_SCHEDULE_DAYS[(now_local.weekday() - 1) % 7]
+        def _parse(s):
+            try:
+                p = (s or "").split(":")
+                return _time(int(p[0]), int(p[1]) if len(p) > 1 else 0)
+            except (ValueError, IndexError):
+                return None
+        st = _parse(slot.get("start"))
+        en = _parse(slot.get("end"))
+        days = slot.get("days") or []
+        if st is None or en is None:
+            return "idle"
+        if st < en:
+            if weekday_today in days and st <= cur_t < en:
+                return "active"
+        elif st > en:
+            if weekday_today in days and cur_t >= st:
+                return "active"
+            if weekday_yesterday in days and cur_t < en:
+                return "active"
+        return "idle"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        from .const import EV_SCHEDULE_DAYS                         # noqa: PLC0415
+        slot = self._slot()
+        if slot is None:
+            return {"slot": self._slot_idx, "empty": True}
+        days = slot.get("days") or []
+        start_s = (slot.get("start") or "??")[:5]
+        end_s = (slot.get("end") or "??")[:5]
+        return {
+            "slot":     self._slot_idx,
+            "enabled":  bool(slot.get("enabled")),
+            "mode":     slot.get("mode"),
+            "name":     slot.get("name") or f"Skema {self._slot_idx}",
+            "start":    slot.get("start"),
+            "end":      slot.get("end"),
+            "days":     days,
+            # Per-day boolean flags so dashboard chips can colour individually
+            # without parsing the list. Order matches EV_SCHEDULE_DAYS.
+            **{f"day_{d}": (d in days) for d in EV_SCHEDULE_DAYS},
+            "summary":  f"{start_s}–{end_s}" if days else "Ingen dage valgt",
+        }
+

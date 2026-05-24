@@ -116,6 +116,7 @@ CONF_EV_SCHEDULE_LINKS = "ev_schedule_links"
 CONF_EV_SCHEDULED_FALLBACK_MODE = "ev_scheduled_fallback_mode"
 DEFAULT_EV_SCHEDULED_FALLBACK_MODE = EV_MODE_LOCKED
 EV_SCHEDULE_LINKS_MAX = 4    # Practical cap; revisit if real users need more
+EV_SCHEDULES_MAX = 4         # v0.38.0 — same cap, new native-schedule data model
 
 # v0.37.0 — per-slot mode dropdown on the EV/OCPP dashboard tab.
 # `locked` and `scheduled` are deliberately excluded: a schedule that
@@ -127,6 +128,23 @@ EV_SCHEDULE_LINK_MODE_OPTIONS = [EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL]
 # `mode` field set via the options flow, so the dashboard selects act
 # as the canonical source once a user has touched them.
 EV_SCHEDULE_LINK_MODE_STORAGE_PREFIX = "ev_schedule_link_"
+
+# ── EV schedules — v0.38.0 native model ───────────────────────────────────
+# Schedules are owned entirely by Solar AI and edited from the dashboard.
+# No dependency on HA's `schedule.*` helper integration. Each slot lives
+# in `_stored["ev_schedules"]` as:
+#   {"slot": 1, "enabled": True, "mode": "pv_battery",
+#    "start": "23:00", "end": "06:00",
+#    "days": ["mon", "tue", "wed", "thu", "fri"]}
+# When `_ev_active_mode == EV_MODE_SCHEDULED`, the resolver walks the
+# list in slot-order and returns the first enabled slot whose `days`
+# include today AND whose `[start, end)` covers the current local time
+# (end < start means the slot wraps midnight).
+EV_SCHEDULE_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+EV_SCHEDULE_DEFAULT_START = "23:00"
+EV_SCHEDULE_DEFAULT_END = "06:00"
+EV_SCHEDULE_DEFAULT_DAYS = ["mon", "tue", "wed", "thu", "fri"]
+EV_SCHEDULE_DEFAULT_MODE = EV_MODE_PV_BATTERY
 DEFAULT_EV_CONTROLLER_ENABLED = False       # opt-in feature
 # 3-phase Danish standard: 230 V × √3 × A → kW
 EV_VOLTAGE = 230.0

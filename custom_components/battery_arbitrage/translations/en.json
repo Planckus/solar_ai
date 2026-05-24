@@ -309,7 +309,11 @@
       "charger_lifetime_energy": { "name": "Charger lifetime energy" },
       "charger_info": { "name": "Charger info" },
       "charger_session_log": { "name": "Charger session log" },
-      "buy_price_breakdown": { "name": "Buy price breakdown" }
+      "buy_price_breakdown": { "name": "Buy price breakdown" },
+      "ev_schedule_slot_1_summary": { "name": "Schedule 1" },
+      "ev_schedule_slot_2_summary": { "name": "Schedule 2" },
+      "ev_schedule_slot_3_summary": { "name": "Schedule 3" },
+      "ev_schedule_slot_4_summary": { "name": "Schedule 4" }
     },
     "select": {
       "ev_mode": {
@@ -428,7 +432,21 @@
       "notify_charge_start":        { "name": "Notify: charging started" },
       "notify_charge_stop":         { "name": "Notify: charging stopped" },
       "notify_solar_floor_blocked": { "name": "Notify: solar export blocked (price floor)" },
-      "notify_solar_floor_resumed": { "name": "Notify: solar export resumed" }
+      "notify_solar_floor_resumed": { "name": "Notify: solar export resumed" },
+      "ev_schedule_slot_1_enabled": { "name": "Schedule 1 enabled" },
+      "ev_schedule_slot_2_enabled": { "name": "Schedule 2 enabled" },
+      "ev_schedule_slot_3_enabled": { "name": "Schedule 3 enabled" },
+      "ev_schedule_slot_4_enabled": { "name": "Schedule 4 enabled" }
+    },
+    "time": {
+      "ev_schedule_slot_1_start": { "name": "Schedule 1 start" },
+      "ev_schedule_slot_1_end":   { "name": "Schedule 1 end" },
+      "ev_schedule_slot_2_start": { "name": "Schedule 2 start" },
+      "ev_schedule_slot_2_end":   { "name": "Schedule 2 end" },
+      "ev_schedule_slot_3_start": { "name": "Schedule 3 start" },
+      "ev_schedule_slot_3_end":   { "name": "Schedule 3 end" },
+      "ev_schedule_slot_4_start": { "name": "Schedule 4 start" },
+      "ev_schedule_slot_4_end":   { "name": "Schedule 4 end" }
     }
   },
   "services": {
