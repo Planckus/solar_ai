@@ -113,7 +113,7 @@ async def async_setup_entry(
             mode=NumberMode.BOX,
             # v0.37.1 — slider is greyed out in Strømligning-no-overrides
             # and Octopus modes, where the API price already includes VAT.
-            available_when=_vat_slider_available,
+            available_when=_manual_buy_component_available,
         ),
         BatteryArbitrageConfigNumber(
             coordinator, entry,
@@ -137,6 +137,9 @@ async def async_setup_entry(
             max_val=3.0,
             step=0.001,
             mode=NumberMode.BOX,
+            # v0.37.2 — also greyed out when the API supplies elafgift directly
+            # (Strømligning no-overrides; Octopus value_inc_vat).
+            available_when=_manual_buy_component_available,
         ),
         BatteryArbitrageConfigNumber(
             coordinator, entry,
@@ -149,6 +152,9 @@ async def async_setup_entry(
             max_val=0.50,
             step=0.005,
             mode=NumberMode.BOX,
+            # v0.37.2 — also greyed out when the API supplies retailer markup
+            # (Strømligning no-overrides; Octopus value_inc_vat).
+            available_when=_manual_buy_component_available,
         ),
         BatteryArbitrageConfigNumber(
             coordinator, entry,
@@ -353,21 +359,26 @@ class BatteryArbitrageConfigNumber(
         self.async_write_ha_state()
 
 
-def _vat_slider_available(coordinator: BatteryArbitrageCoordinator) -> bool:
-    """Return whether the buy-side VAT slider has an effect on the buy price.
+def _manual_buy_component_available(coordinator: BatteryArbitrageCoordinator) -> bool:
+    """Return whether the user's manual buy-side component sliders have an
+    effect on the buy price.
 
-    The slider drives `_compute_buy_price`'s `vat_factor` only in:
-      - `manual` mode (always × VAT factor), or
-      - `stromligning` mode WITH `use_manual_overrides=True` (Strømligning's
-        ex-VAT components × VAT factor).
+    The Moms, Elafgift, and Spotpris-tillæg sliders all feed
+    `_compute_buy_price`'s `(spot + markup + tariff + elafgift) × vat_factor`
+    formula. They're in play in:
+      - `manual` mode (always), or
+      - `stromligning` mode WITH `use_manual_overrides=True` — the manual
+        markup/elafgift/VAT slide is recombined with Strømligning's
+        ex-VAT spot/distribution/transmission components.
 
-    It is ignored in:
-      - `stromligning` mode without overrides — `entry.price.price.total`
-        is taken verbatim, VAT already baked in.
+    They're ignored in:
+      - `stromligning` mode without overrides — Strømligning's
+        `entry.price.price.total` is taken verbatim, VAT and tariffs
+        and retailer markup all baked in already.
       - `octopus` mode (UK) — `value_inc_vat` is taken verbatim.
 
-    Greying the slider out in the ignored cases makes the dashboard honest
-    about which knob actually controls the buy price.
+    Greying the sliders out in the ignored cases makes the dashboard
+    honest about which knobs actually control the buy price.
     """
     mode = coordinator.config.get(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE)
     if mode == BUY_PRICE_MODE_OCTOPUS:
@@ -378,3 +389,10 @@ def _vat_slider_available(coordinator: BatteryArbitrageCoordinator) -> bool:
             DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES,
         ))
     return True   # manual mode
+
+
+# v0.37.1 compatibility alias — the helper was renamed when it grew from
+# only-VAT to all-manual-buy-components. Keep the old name pointing at
+# the new function so external dashboards / scripts referencing it via
+# import-by-name don't break.
+_vat_slider_available = _manual_buy_component_available
