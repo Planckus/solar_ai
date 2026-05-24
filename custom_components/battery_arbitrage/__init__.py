@@ -399,10 +399,149 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             coordinator.reset_learned_rates()
 
+    async def handle_add_schedule_slot(call: ServiceCall) -> None:
+        """v0.37.0 — Create a `schedule.solar_ai_skema_N` helper and link it.
+
+        Picks the lowest unused slot index (1..4). If all four slots are
+        already populated the call is a no-op. Returns nothing — the
+        dashboard refreshes via the standard entry reload.
+        """
+        from .const import EV_SCHEDULE_LINKS_MAX, EV_MODE_PV  # noqa: PLC0415
+        from .schedule_helpers import create_solar_ai_schedule  # noqa: PLC0415
+
+        entries = hass.config_entries.async_entries(DOMAIN)
+        if not entries:
+            _LOGGER.warning("add_schedule_slot called but no battery_arbitrage entry found")
+            return
+        entry = entries[0]
+        existing = list(entry.data.get(CONF_EV_SCHEDULE_LINKS, []) or [])
+        # Pad to MAX so positional indexing is stable
+        while len(existing) < EV_SCHEDULE_LINKS_MAX:
+            existing.append({})
+        # Find lowest empty (no schedule_entity) slot
+        free_idx = next(
+            (i for i, link in enumerate(existing)
+             if not (isinstance(link, dict) and (link.get("schedule_entity") or "").strip())),
+            None,
+        )
+        if free_idx is None:
+            _LOGGER.info("add_schedule_slot: all %d slots in use", EV_SCHEDULE_LINKS_MAX)
+            return
+        slot_num = free_idx + 1
+        try:
+            new_entity_id = await create_solar_ai_schedule(hass, slot_num)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.error("add_schedule_slot: failed to create helper: %s", err)
+            return
+        existing[free_idx] = {"schedule_entity": new_entity_id, "mode": EV_MODE_PV}
+        # Trim trailing empties for a clean stored list
+        while existing and not (isinstance(existing[-1], dict) and existing[-1].get("schedule_entity")):
+            existing.pop()
+        new_data = {**entry.data, CONF_EV_SCHEDULE_LINKS: existing}
+        hass.config_entries.async_update_entry(entry, data=new_data)
+        await hass.config_entries.async_reload(entry.entry_id)
+        _LOGGER.info("add_schedule_slot: created %s in slot %d", new_entity_id, slot_num)
+
+    async def handle_remove_schedule_slot(call: ServiceCall) -> None:
+        """v0.37.0 — Remove slot `slot` (1-based). Deletes the linked
+        schedule helper and unlinks the slot. Slots are not renumbered;
+        the gap stays so other slot positions remain stable."""
+        from .const import EV_SCHEDULE_LINKS_MAX  # noqa: PLC0415
+        from .schedule_helpers import delete_schedule_by_entity_id  # noqa: PLC0415
+
+        slot = int(call.data.get("slot", 0))
+        if not (1 <= slot <= EV_SCHEDULE_LINKS_MAX):
+            _LOGGER.warning("remove_schedule_slot: slot %d out of range 1..%d",
+                            slot, EV_SCHEDULE_LINKS_MAX)
+            return
+        entries = hass.config_entries.async_entries(DOMAIN)
+        if not entries:
+            return
+        entry = entries[0]
+        existing = list(entry.data.get(CONF_EV_SCHEDULE_LINKS, []) or [])
+        idx = slot - 1
+        if idx >= len(existing):
+            return
+        link = existing[idx] if isinstance(existing[idx], dict) else {}
+        entity_id = (link.get("schedule_entity") or "").strip()
+        if entity_id:
+            try:
+                await delete_schedule_by_entity_id(hass, entity_id)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("remove_schedule_slot: helper delete failed (%s) — unlinking anyway", err)
+        # Clear the slot; trim trailing empties.
+        existing[idx] = {}
+        while existing and not (isinstance(existing[-1], dict) and existing[-1].get("schedule_entity")):
+            existing.pop()
+        new_data = {**entry.data, CONF_EV_SCHEDULE_LINKS: existing}
+        hass.config_entries.async_update_entry(entry, data=new_data)
+        await hass.config_entries.async_reload(entry.entry_id)
+        _LOGGER.info("remove_schedule_slot: removed slot %d (%s)", slot, entity_id or "empty")
+
     hass.services.async_register(DOMAIN, "force_export", handle_force_export)
     hass.services.async_register(DOMAIN, "force_grid_charge", handle_force_grid_charge)
     hass.services.async_register(DOMAIN, "restore_normal", handle_restore_normal)
     hass.services.async_register(DOMAIN, "reset_learning", handle_reset_learning)
+    hass.services.async_register(DOMAIN, "add_schedule_slot", handle_add_schedule_slot)
+    hass.services.async_register(DOMAIN, "remove_schedule_slot", handle_remove_schedule_slot)
+
+    async def handle_force_stop_charger(call: ServiceCall) -> None:
+        """v0.37.0 — Force-stop a runaway OCPP session.
+
+        Use when Solar AI has lost the transaction id (e.g. after multiple
+        HA restarts) and the charger keeps drawing power despite the EV
+        controller commanding 0 A. Sends `RemoteStopTransaction` against
+        a list of candidate transaction ids until the charger accepts one:
+            1) the user-supplied `transaction_id` if any
+            2) the ChargePoint's own `session_transaction_id` if tracked
+            3) the well-known fallback values 1 and 0 (most chargers stop
+               the only active transaction regardless of the id supplied)
+
+        Targets all connected chargers unless `charger_id` is given.
+        Returns nothing — check `sensor.solar_ai_lader_status` to see
+        whether the charger transitioned out of `Charging`.
+        """
+        coordinator = _get_coordinator(call)
+        if not coordinator or not getattr(coordinator, "ocpp_server", None):
+            _LOGGER.warning("force_stop_charger: no OCPP server running")
+            return
+        server = coordinator.ocpp_server
+        target_id = (call.data.get("charger_id") or "").strip()
+        custom_tx = call.data.get("transaction_id")
+        try:
+            custom_tx = int(custom_tx) if custom_tx is not None else None
+        except (TypeError, ValueError):
+            custom_tx = None
+
+        chargers = [(cid, cp) for cid, cp in server.charge_points.items()
+                    if not target_id or cid == target_id]
+        if not chargers:
+            _LOGGER.warning(
+                "force_stop_charger: no connected chargers (target=%r)", target_id or "any"
+            )
+            return
+
+        for cid, cp in chargers:
+            tried: list[int] = []
+            for tx in (custom_tx, getattr(cp, "session_transaction_id", None), 1, 0):
+                if tx is None or tx in tried:
+                    continue
+                tried.append(tx)
+                try:
+                    ok = await cp.remote_stop_transaction(int(tx))
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "force_stop_charger %s: tx=%s raised %s", cid, tx, err,
+                    )
+                    continue
+                _LOGGER.info(
+                    "force_stop_charger %s: RemoteStopTransaction(tx=%s) accepted=%s",
+                    cid, tx, ok,
+                )
+                if ok:
+                    break
+
+    hass.services.async_register(DOMAIN, "force_stop_charger", handle_force_stop_charger)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

@@ -187,6 +187,9 @@ from .const import (
     CONF_EV_SCHEDULE_LINKS,
     CONF_EV_SCHEDULED_FALLBACK_MODE,
     DEFAULT_EV_SCHEDULED_FALLBACK_MODE,
+    EV_SCHEDULE_LINKS_MAX,
+    EV_SCHEDULE_LINK_MODE_OPTIONS,
+    EV_SCHEDULE_LINK_MODE_STORAGE_PREFIX,
     DSO_OPTIONS,
     SELL_SIDE_COMPANY_OPTIONS,
     BUY_PRICE_MODE_MANUAL,
@@ -531,6 +534,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "ev_active_mode",
                 self.config.get(CONF_EV_DEFAULT_MODE, DEFAULT_EV_DEFAULT_MODE),
             )
+            # v0.37.0 — seed per-slot schedule-link mode overrides from the
+            # config-entry link list. After this point the dashboard select
+            # entities are the canonical source; the link dict's `mode` field
+            # is treated as the initial value only.
+            links = self.config.get(CONF_EV_SCHEDULE_LINKS, []) or []
+            for idx, link in enumerate(links, start=1):
+                if not isinstance(link, dict):
+                    continue
+                seeded = link.get("mode")
+                if not seeded:
+                    continue
+                self._stored.setdefault(
+                    f"{EV_SCHEDULE_LINK_MODE_STORAGE_PREFIX}{idx}_mode", seeded,
+                )
         # Hydrate the in-memory active mode from storage
         self._ev_active_mode = self._stored.get("ev_active_mode", EV_MODE_LOCKED)
         # Restore enabled state — default OFF so user must consciously turn on
@@ -2951,6 +2968,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     "serial": cp.serial,
                     "last_energy_wh_total": cp.energy_wh_total,
                     "saved_at": datetime.now(timezone.utc).isoformat(),
+                    # v0.37.0 — session-tracking snapshot. Persisting these
+                    # alongside vendor/model lets a HA restart preserve the
+                    # transaction id, which RemoteStopTransaction needs to
+                    # target a runaway session. Without this, today's
+                    # observed runaway (Item 5) repeats: charger keeps
+                    # drawing, Solar AI's stop commands have nothing to
+                    # target. Fields are restored in OcppServer._handle_connection.
+                    "session_active": cp.session_active,
+                    "session_transaction_id": cp.session_transaction_id,
+                    "session_start_ts": (
+                        cp.session_start_ts.isoformat()
+                        if cp.session_start_ts is not None else None
+                    ),
+                    "session_start_energy_wh": cp.session_start_energy_wh,
+                    "session_energy_wh": cp.session_energy_wh,
+                    "session_solar_wh": cp.session_solar_wh,
+                    "session_grid_wh": cp.session_grid_wh,
                 }
 
     def _harvest_ocpp_sessions(self) -> None:
@@ -3319,11 +3353,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return requested_mode, None
 
         links = self.config.get(CONF_EV_SCHEDULE_LINKS, []) or []
-        for link in links:
+        for idx, link in enumerate(links, start=1):
             if not isinstance(link, dict):
                 continue
             entity_id = link.get("schedule_entity") or ""
-            mode = link.get("mode") or ""
+            # v0.37.0 — prefer the live `_stored` override (set by the new
+            # per-slot dashboard selects) over the link dict's mode field.
+            # First-time read after upgrade is seeded by the migration in
+            # `async_setup_entry`.
+            mode = (
+                self._stored.get(f"{EV_SCHEDULE_LINK_MODE_STORAGE_PREFIX}{idx}_mode")
+                or link.get("mode")
+                or ""
+            )
             if not entity_id or not mode:
                 continue
             state = self.hass.states.get(entity_id)
@@ -3343,6 +3385,29 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if fallback not in (EV_MODE_LOCKED, EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL):
             fallback = EV_MODE_LOCKED
         return fallback, None
+
+    def set_schedule_link_mode(self, slot_idx: int, new_mode: str) -> None:
+        """Public setter used by the per-slot dashboard select entities (v0.37.0).
+
+        Writes the user's choice to `_stored[f"ev_schedule_link_{idx}_mode"]`
+        so `_resolve_effective_ev_mode` picks it up on the next tick — no
+        OptionsFlow trip required. Persisted to disk so it survives restart.
+        """
+        if new_mode not in EV_SCHEDULE_LINK_MODE_OPTIONS:
+            _LOGGER.warning(
+                "Schedule link %d: unknown mode '%s' ignored", slot_idx, new_mode,
+            )
+            return
+        if not (1 <= slot_idx <= EV_SCHEDULE_LINKS_MAX):
+            _LOGGER.warning(
+                "Schedule link slot %d out of range (1..%d)",
+                slot_idx, EV_SCHEDULE_LINKS_MAX,
+            )
+            return
+        key = f"{EV_SCHEDULE_LINK_MODE_STORAGE_PREFIX}{slot_idx}_mode"
+        self._stored[key] = new_mode
+        if self.hass:
+            self.hass.async_create_task(self._store.async_save(self._stored))
 
     def set_ev_mode(self, new_mode: str) -> None:
         """Public setter used by the mode select entity."""

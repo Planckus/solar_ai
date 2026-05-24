@@ -9,6 +9,55 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.37.0] — 2026-05-24
+
+### Fixed — OCPP transaction tracking survives HA restarts (Item 5)
+
+Resolves a class of runaway charging sessions where Solar AI's stop commands (`SetChargingProfile current=0`, `RemoteStopTransaction`) silently failed because the integration had lost track of the active OCPP transaction id after a HA restart or transport reconnect. Two complementary recovery paths:
+
+1. **MeterValues recovery (live path)** — OCPP 1.6 lets chargers include the active `transactionId` on every `MeterValues.req`. `on_meter_values` now parses it and:
+   - Adopts it as the current session if the integration has no tracked session (the canonical "after-restart" case — charger keeps charging, Solar AI thought IDLE).
+   - Detects drift and re-syncs to the charger's view if a different id arrives (mid-disconnect session swap, e.g. car re-plugged during HA downtime).
+   - Seeds `session_start_energy_wh` from the first `Energy.Active.Import.Register` after recovery so the in-session counter starts at 0 rather than going negative against a stale start.
+
+2. **Persistence (cross-restart path)** — `_persist_charger_metadata` now snapshots `session_active`, `session_transaction_id`, `session_start_ts`, `session_start_energy_wh`, `session_energy_wh`, `session_solar_wh`, `session_grid_wh` alongside the existing vendor/model fields. `OcppServer._handle_connection` restores them onto the new `ChargePoint` instance on reconnect, so `RemoteStopTransaction` works from the first tick after HA comes back — before any MeterValues even arrives.
+
+3. **`TriggerMessage(MeterValues)` on reconnect** — `request_status_refresh` now requests MeterValues in addition to Status + Boot. If a session is active when Solar AI (re)connects to the charger, the charger's immediate response carries the `transactionId`, which `on_meter_values` picks up via path (1). Belt-and-braces with path (2).
+
+### Added — `battery_arbitrage.force_stop_charger` service
+
+Brute-force escape hatch for the rare case where the recovery paths above didn't catch the session (e.g. crash before persistence flush, charger that doesn't include `transactionId` on MeterValues). The service walks a list of candidate transaction ids — user-supplied → tracked → 1 → 0 — and sends `RemoteStopTransaction` for each until the charger accepts. Most OCPP chargers stop the only active transaction regardless of the id supplied, so even tx=1 or tx=0 usually works.
+
+Optional parameters:
+- `transaction_id: <int>` — try this id first
+- `charger_id: <cpid>` — limit to one charger (otherwise targets all connected)
+
+### Added — EV schedules fully managed from the dashboard
+
+Two complementary changes that move EV-charging scheduling out of the Configure flow and onto the EV/OCPP tab:
+
+1. **Per-slot mode select** — each configured schedule link gets its own select entity (`select.solar_ai_skema_N_tilstand`, `N = 1..4`). Options: `PV`, `PV+Bat`, `Full`. The select writes to coordinator storage and `_resolve_effective_ev_mode` reads storage every tick (initial seed from the link dict's `mode` field via a one-shot migration on `async_setup_entry`). Users who already configured schedules pre-0.37.0 keep their setup.
+2. **Create / remove schedule helpers from a service call** — two new HA services let the dashboard provision schedule helpers without sending the user to Settings → Helpers:
+   - `battery_arbitrage.add_schedule_slot` — picks the lowest unused slot index, creates `schedule.solar_ai_skema_<N>` via the HA `schedule` storage collection, links it in PV mode, reloads the config entry. No params needed.
+   - `battery_arbitrage.remove_schedule_slot(slot)` — deletes the helper for `slot` (1–4) and unlinks it.
+
+Locked and Scheduled modes are deliberately excluded from the per-slot dropdown: an empty schedule already "locks" charging during its time window, and a `Scheduled` schedule that defers to another schedule would loop.
+
+The dashboard layout (master mode selector + 4 slot positions with conditional "Opret skema N" buttons + edit-schedule popup) ships in a follow-up Lovelace push using the entity ids verified live after the integration deploy.
+
+### Why
+
+The v0.36.0 EV scheduling Phase A made schedule helpers + the link configuration possible, but every mode change required reopening Configure, and creating a new schedule meant a detour to Settings → Helpers. The dashboard now owns both flows.
+
+### Internal
+- `EV_SCHEDULE_LINK_MODE_OPTIONS = [pv, pv_battery, full]` in `const.py`.
+- `set_schedule_link_mode(slot_idx, mode)` setter on the coordinator.
+- `BatteryArbitrageEvScheduleLinkModeSelect` in `select.py`, one instance per configured link.
+- New `schedule_helpers.py` module wrapping HA's `schedule` storage collection — handles both the historical (`hass.data["schedule"]` = collection) and dict-wrapped (`{"storage_collection": coll}`) layouts. Raises a clear error if the internal API ever changes; the rest of the integration continues to work and the user can create helpers manually via the UI as a fallback.
+- Translation keys added to `strings.json`, `translations/en.json`, `translations/da.json`.
+
+---
+
 ## [0.36.2] — 2026-05-24
 
 ### Changed — EV curtailment trigger now reads the inverter, not the forecast
