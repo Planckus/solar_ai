@@ -26,6 +26,8 @@ from .const import (
     EV_SCHEDULE_LINKS_MAX,
     EV_SCHEDULE_LINK_MODE_OPTIONS,
     EV_SCHEDULE_LINK_MODE_STORAGE_PREFIX,
+    EV_SCHEDULES_MAX,
+    EV_SCHEDULE_DEFAULT_MODE,
 )
 from .coordinator import BatteryArbitrageCoordinator
 from .sensor import _device_info
@@ -64,19 +66,14 @@ async def async_setup_entry(
         BatteryArbitrageEvMaxAmpsSelect(coordinator, entry),
         BatteryArbitrageEvDefaultModeSelect(coordinator, entry),
     ]
-    # v0.37.0 — one per-slot schedule-mode select per *configured* link.
-    # Empty slots produce no entity (and no entry in the entity registry).
-    # The Lovelace dashboard hides slot cards conditional on the entity
-    # existing, so unconfigured slots are invisible there too.
-    links = (entry.data.get(CONF_EV_SCHEDULE_LINKS, []) or
-             entry.options.get(CONF_EV_SCHEDULE_LINKS, []) or [])
-    for idx, link in enumerate(links[:EV_SCHEDULE_LINKS_MAX], start=1):
-        if not isinstance(link, dict):
-            continue
-        if not (link.get("schedule_entity") or "").strip():
-            continue
+    # v0.38.0 — always create 4 per-slot mode selects (one per maximum
+    # slot index). The select reads/writes `_stored["ev_schedules"]`
+    # directly; for slots that haven't been added yet the select reports
+    # the default mode and writing creates the slot on demand. Lovelace
+    # cards hide empty-slot UI based on the slot summary sensor's state.
+    for idx in range(1, EV_SCHEDULES_MAX + 1):
         entities.append(
-            BatteryArbitrageEvScheduleLinkModeSelect(coordinator, entry, idx),
+            BatteryArbitrageEvScheduleSlotModeSelect(coordinator, entry, idx),
         )
     async_add_entities(entities)
 
@@ -251,22 +248,22 @@ class BatteryArbitrageEvDefaultModeSelect(
         self.async_write_ha_state()
 
 
-class BatteryArbitrageEvScheduleLinkModeSelect(
+class BatteryArbitrageEvScheduleSlotModeSelect(
     CoordinatorEntity[BatteryArbitrageCoordinator], SelectEntity
 ):
-    """Per-slot EV mode picker for a configured schedule link (v0.37.0).
+    """Per-slot EV mode picker for native EV schedules (v0.38.0).
 
-    Each configured link in the OptionsFlow (`CONF_EV_SCHEDULE_LINKS`) gets
-    its own select on the dashboard so users can swap a schedule's mode
-    (PV / PV+Battery / Full) without reopening the OptionsFlow. Locked
-    and Scheduled are deliberately excluded — see EV_SCHEDULE_LINK_MODE_OPTIONS.
+    Four of these always exist, one per `slot in 1..EV_SCHEDULES_MAX`.
+    Backed by `_stored["ev_schedules"]` — the same source the
+    `_resolve_effective_ev_mode` walker reads. Selecting an option on
+    a slot that doesn't yet exist in storage creates the slot with
+    defaults (no days, disabled). The dashboard cards hide / dim
+    inactive slots based on the slot summary sensor, so the select
+    being always-available isn't visually noisy.
 
-    The selection is persisted to
-    `_stored["ev_schedule_link_{idx}_mode"]`. `_resolve_effective_ev_mode`
-    reads `_stored` first and falls back to the link dict's `mode` field
-    (initial seed). Both edit paths stay in sync because the OptionsFlow
-    saves to entry.data and the migration in `async_setup_entry` seeds
-    storage from there.
+    Options are restricted to `PV`, `PV+Bat`, `Full` — `Locked` and
+    `Scheduled` are not valid sub-modes of a schedule (an empty
+    schedule already "locks" charging during its window).
     """
 
     _attr_has_entity_name = True
@@ -281,33 +278,23 @@ class BatteryArbitrageEvScheduleLinkModeSelect(
     ) -> None:
         super().__init__(coordinator)
         self._slot_idx = slot_idx
-        # Per-slot translation key so HA can render the right label per slot
-        # ("Skema 1 tilstand", "Skema 2 tilstand", ...). Defined in
-        # strings.json under `entity.select.ev_schedule_link_N_mode`.
+        # Reuse the v0.37.0 translation key for back-compat — the entity
+        # id stays `select.solar_ai_skema_N_tilstand` on existing installs.
         self._attr_translation_key = f"ev_schedule_link_{slot_idx}_mode"
         self._attr_unique_id = f"{entry.entry_id}_ev_schedule_link_{slot_idx}_mode"
         self._attr_device_info = _device_info(entry)
-        self._entry = entry
 
     @property
     def current_option(self) -> str | None:
-        key = f"{EV_SCHEDULE_LINK_MODE_STORAGE_PREFIX}{self._slot_idx}_mode"
-        stored = self.coordinator._stored.get(key)
-        if stored in EV_SCHEDULE_LINK_MODE_OPTIONS:
-            return stored
-        # Fall back to the link dict's seeded mode
-        links = (self._entry.data.get(CONF_EV_SCHEDULE_LINKS, []) or
-                 self._entry.options.get(CONF_EV_SCHEDULE_LINKS, []) or [])
-        if self._slot_idx - 1 < len(links):
-            link = links[self._slot_idx - 1]
-            if isinstance(link, dict):
-                seeded = link.get("mode")
-                if seeded in EV_SCHEDULE_LINK_MODE_OPTIONS:
-                    return seeded
-        return EV_MODE_PV   # safe default if storage and config disagree
+        slot = self.coordinator.get_schedule_slot(self._slot_idx)
+        if slot is not None:
+            mode = slot.get("mode")
+            if mode in EV_SCHEDULE_LINK_MODE_OPTIONS:
+                return mode
+        return EV_SCHEDULE_DEFAULT_MODE
 
     async def async_select_option(self, option: str) -> None:
         if option not in EV_SCHEDULE_LINK_MODE_OPTIONS:
             return
-        self.coordinator.set_schedule_link_mode(self._slot_idx, option)
+        self.coordinator.set_schedule_slot_mode(self._slot_idx, option)
         self.async_write_ha_state()

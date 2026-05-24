@@ -9,6 +9,84 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.38.0] — 2026-05-24
+
+### Changed — EV scheduling moved entirely into the dashboard (native model)
+
+The v0.36.0 Phase A scheduling required users to create `schedule.*` helpers in Settings → Helpers, then link them in the Configure flow, then flip the master mode to `Scheduled`. Every time-range edit took a Settings → Helpers detour. The v0.37.0 `add_schedule_slot` service that tried to create helpers programmatically required a HA restart to surface them on installs where the schedule integration was dormant. Both were friction.
+
+v0.38.0 drops the dependency on HA's `schedule.*` helper integration entirely. Solar AI now owns the schedule data, owns the UI, and the dashboard is the only place schedules exist.
+
+### New data model
+
+`coordinator._stored["ev_schedules"]` is a list of slot dicts:
+
+```jsonc
+{
+  "slot": 1, "enabled": true, "mode": "pv_battery",
+  "name": "Skema 1",
+  "start": "23:00", "end": "06:00",
+  "days": ["mon", "tue", "wed", "thu", "fri"]
+}
+```
+
+Up to `EV_SCHEDULES_MAX` (=4) slots. `end < start` means the window wraps midnight.
+
+### `_resolve_effective_ev_mode` rewrite
+
+Walks `_stored["ev_schedules"]` in slot-order. Returns the first enabled slot where:
+- today's weekday is in `days`, and
+- the current local time falls inside `[start, end)` (or the wrap-around half if `end < start`)
+
+If no slot matches, falls back to the user-configured fallback mode (unchanged).
+
+### New entities per slot (always created, 1..4)
+
+| Entity | Type | What it backs |
+|---|---|---|
+| `select.solar_ai_skema_N_tilstand` | select | mode (PV / PV+Bat / Full) — kept from v0.37.0, now reads new data |
+| `switch.solar_ai_skema_N_aktiveret` | switch | enabled toggle |
+| `time.solar_ai_skema_N_starttid` | time | start (native HA time picker) |
+| `time.solar_ai_skema_N_sluttid` | time | end (native HA time picker) |
+| `sensor.solar_ai_skema_N` | sensor | state = `active` / `idle` / `disabled` / `empty`; attributes carry days, summary, name |
+
+All four sets always exist so the dashboard cards always have entities to bind to. Empty slots have `state = "empty"` so the dashboard knows to render a "+ Tilføj skema" affordance.
+
+Day toggling is service-driven (no per-day switch spam):
+
+- `battery_arbitrage.toggle_schedule_day` (slot, day)
+- `battery_arbitrage.set_schedule_days` (slot, days)
+- `battery_arbitrage.add_schedule_slot` — allocates the next free slot with defaults (no HA `schedule.*` helper created, no restart needed)
+- `battery_arbitrage.remove_schedule_slot` (slot) — clears the slot's data
+
+### Migration v0.37.x → v0.38.0
+
+On first load, if `_stored["ev_schedules"]` is absent and `ev_schedule_links` exists in the config entry:
+
+1. For each link, look up the linked `schedule.*` helper's per-day attributes.
+2. Take the first non-empty range as the new slot's `start`/`end` (one range per day in the new model — multiple ranges are dropped; user can re-edit on the dashboard).
+3. Build `days` from the helper's day list.
+4. Mode preserves the v0.37.0 `_stored["ev_schedule_link_N_mode"]` override or falls back to the link's `mode` field.
+
+The old `schedule.*` helpers stay in Settings → Helpers (Solar AI doesn't delete user data) but Solar AI no longer reads them. Users can delete the helpers themselves once they're sure the migration looks correct.
+
+### Removed
+
+- The old `BatteryArbitrageEvScheduleLinkModeSelect` class (replaced by the new `BatteryArbitrageEvScheduleSlotModeSelect` that reads `ev_schedules`)
+- The `add_schedule_slot` `.storage/schedule` direct-write path (and `schedule_helpers.py`'s `create_solar_ai_schedule` / `delete_schedule_by_entity_id` functions are no longer called by the integration — kept on disk for one cycle to avoid surprise breakages; deletable in v0.38.1)
+- The Configure flow's "EV charge schedules" step exposure (kept readable for migration, but no longer editable — the flow step will be removed in v0.38.1)
+
+### Added — `Platform.TIME` to the integration's platform list
+
+So the new start/end time entities can be loaded by HA's `time` component.
+
+### Internal
+- 7 new coordinator setters: `set_schedule_slot_mode`, `set_schedule_slot_enabled`, `set_schedule_slot_time`, `toggle_schedule_slot_day`, `set_schedule_slot_days`, `delete_schedule_slot`, `add_schedule_slot_native`.
+- `get_schedule_slot(slot_idx)` lookup helper.
+- Dispatcher signal `battery_arbitrage_schedules_changed` fires on every mutation so the slot sensors, time entities, and enabled switches re-render in sync.
+
+---
+
 ## [0.37.2] — 2026-05-24
 
 ### Fixed — Prisparametre card now greys out *all* shadowed manual sliders

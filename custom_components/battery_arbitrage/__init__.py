@@ -6,6 +6,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import (
     CONF_BATTERY_CHARGE_ENTITY,
@@ -43,6 +44,7 @@ from .const import (
     CONF_TARIFF_FETCH_ENABLED,
     CONF_EV_SCHEDULE_LINKS,
     CONF_EV_SCHEDULED_FALLBACK_MODE,
+    EV_SCHEDULES_MAX,
     CONF_FAST_POLL_INTERVAL,
     DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
     DEFAULT_EV_START_WINDOW_SECONDS,
@@ -105,6 +107,7 @@ PLATFORMS = [
     Platform.NUMBER,
     Platform.SWITCH,
     Platform.SELECT,
+    Platform.TIME,        # v0.38.0 — per-schedule-slot start/end time pickers
 ]
 
 
@@ -400,83 +403,61 @@ def _register_services(hass: HomeAssistant) -> None:
             coordinator.reset_learned_rates()
 
     async def handle_add_schedule_slot(call: ServiceCall) -> None:
-        """v0.37.0 — Create a `schedule.solar_ai_skema_N` helper and link it.
-
-        Picks the lowest unused slot index (1..4). If all four slots are
-        already populated the call is a no-op. Returns nothing — the
-        dashboard refreshes via the standard entry reload.
-        """
-        from .const import EV_SCHEDULE_LINKS_MAX, EV_MODE_PV  # noqa: PLC0415
-        from .schedule_helpers import create_solar_ai_schedule  # noqa: PLC0415
-
-        entries = hass.config_entries.async_entries(DOMAIN)
-        if not entries:
-            _LOGGER.warning("add_schedule_slot called but no battery_arbitrage entry found")
+        """v0.38.0 — Allocate the next free EV-schedule slot in coordinator
+        storage and seed it with defaults. No HA `schedule.*` helper is
+        created (the v0.37.0 link-based path is gone). The new slot
+        materialises instantly across mode select, enabled switch,
+        start/end time, and slot-summary sensor."""
+        coordinator = _get_coordinator(call)
+        if not coordinator:
             return
-        entry = entries[0]
-        existing = list(entry.data.get(CONF_EV_SCHEDULE_LINKS, []) or [])
-        # Pad to MAX so positional indexing is stable
-        while len(existing) < EV_SCHEDULE_LINKS_MAX:
-            existing.append({})
-        # Find lowest empty (no schedule_entity) slot
-        free_idx = next(
-            (i for i, link in enumerate(existing)
-             if not (isinstance(link, dict) and (link.get("schedule_entity") or "").strip())),
-            None,
-        )
-        if free_idx is None:
-            _LOGGER.info("add_schedule_slot: all %d slots in use", EV_SCHEDULE_LINKS_MAX)
+        new_slot = coordinator.add_schedule_slot_native()
+        if new_slot is None:
+            _LOGGER.info("add_schedule_slot: all %d slots already in use",
+                         EV_SCHEDULES_MAX)
             return
-        slot_num = free_idx + 1
-        try:
-            new_entity_id = await create_solar_ai_schedule(hass, slot_num)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.error("add_schedule_slot: failed to create helper: %s", err)
-            return
-        existing[free_idx] = {"schedule_entity": new_entity_id, "mode": EV_MODE_PV}
-        # Trim trailing empties for a clean stored list
-        while existing and not (isinstance(existing[-1], dict) and existing[-1].get("schedule_entity")):
-            existing.pop()
-        new_data = {**entry.data, CONF_EV_SCHEDULE_LINKS: existing}
-        hass.config_entries.async_update_entry(entry, data=new_data)
-        await hass.config_entries.async_reload(entry.entry_id)
-        _LOGGER.info("add_schedule_slot: created %s in slot %d", new_entity_id, slot_num)
+        _LOGGER.info("add_schedule_slot: allocated slot %d (defaults)", new_slot)
+        # Notify entities so they re-render
+        async_dispatcher_send(hass, f"{DOMAIN}_schedules_changed")
 
     async def handle_remove_schedule_slot(call: ServiceCall) -> None:
-        """v0.37.0 — Remove slot `slot` (1-based). Deletes the linked
-        schedule helper and unlinks the slot. Slots are not renumbered;
-        the gap stays so other slot positions remain stable."""
-        from .const import EV_SCHEDULE_LINKS_MAX  # noqa: PLC0415
-        from .schedule_helpers import delete_schedule_by_entity_id  # noqa: PLC0415
-
+        """v0.38.0 — Remove an EV-schedule slot's data from coordinator
+        storage. Slot's entities stay (always-materialised 1..MAX) and
+        report as 'empty' until the slot is re-added."""
         slot = int(call.data.get("slot", 0))
-        if not (1 <= slot <= EV_SCHEDULE_LINKS_MAX):
+        if not (1 <= slot <= EV_SCHEDULES_MAX):
             _LOGGER.warning("remove_schedule_slot: slot %d out of range 1..%d",
-                            slot, EV_SCHEDULE_LINKS_MAX)
+                            slot, EV_SCHEDULES_MAX)
             return
-        entries = hass.config_entries.async_entries(DOMAIN)
-        if not entries:
+        coordinator = _get_coordinator(call)
+        if not coordinator:
             return
-        entry = entries[0]
-        existing = list(entry.data.get(CONF_EV_SCHEDULE_LINKS, []) or [])
-        idx = slot - 1
-        if idx >= len(existing):
+        coordinator.delete_schedule_slot(slot)
+        _LOGGER.info("remove_schedule_slot: cleared slot %d", slot)
+        async_dispatcher_send(hass, f"{DOMAIN}_schedules_changed")
+
+    async def handle_toggle_schedule_day(call: ServiceCall) -> None:
+        """v0.38.0 — Flip a single weekday on/off for a slot."""
+        slot = int(call.data.get("slot", 0))
+        day = str(call.data.get("day", "")).lower()[:3]
+        coordinator = _get_coordinator(call)
+        if not coordinator:
             return
-        link = existing[idx] if isinstance(existing[idx], dict) else {}
-        entity_id = (link.get("schedule_entity") or "").strip()
-        if entity_id:
-            try:
-                await delete_schedule_by_entity_id(hass, entity_id)
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.warning("remove_schedule_slot: helper delete failed (%s) — unlinking anyway", err)
-        # Clear the slot; trim trailing empties.
-        existing[idx] = {}
-        while existing and not (isinstance(existing[-1], dict) and existing[-1].get("schedule_entity")):
-            existing.pop()
-        new_data = {**entry.data, CONF_EV_SCHEDULE_LINKS: existing}
-        hass.config_entries.async_update_entry(entry, data=new_data)
-        await hass.config_entries.async_reload(entry.entry_id)
-        _LOGGER.info("remove_schedule_slot: removed slot %d (%s)", slot, entity_id or "empty")
+        coordinator.toggle_schedule_slot_day(slot, day)
+        async_dispatcher_send(hass, f"{DOMAIN}_schedules_changed")
+
+    async def handle_set_schedule_days(call: ServiceCall) -> None:
+        """v0.38.0 — Replace a slot's weekday list with the supplied list."""
+        slot = int(call.data.get("slot", 0))
+        raw = call.data.get("days", [])
+        if isinstance(raw, str):
+            raw = [d.strip() for d in raw.split(",")]
+        days = [str(d).lower()[:3] for d in (raw or [])]
+        coordinator = _get_coordinator(call)
+        if not coordinator:
+            return
+        coordinator.set_schedule_slot_days(slot, days)
+        async_dispatcher_send(hass, f"{DOMAIN}_schedules_changed")
 
     hass.services.async_register(DOMAIN, "force_export", handle_force_export)
     hass.services.async_register(DOMAIN, "force_grid_charge", handle_force_grid_charge)
@@ -484,6 +465,8 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, "reset_learning", handle_reset_learning)
     hass.services.async_register(DOMAIN, "add_schedule_slot", handle_add_schedule_slot)
     hass.services.async_register(DOMAIN, "remove_schedule_slot", handle_remove_schedule_slot)
+    hass.services.async_register(DOMAIN, "toggle_schedule_day", handle_toggle_schedule_day)
+    hass.services.async_register(DOMAIN, "set_schedule_days", handle_set_schedule_days)
 
     async def handle_force_stop_charger(call: ServiceCall) -> None:
         """v0.37.0 — Force-stop a runaway OCPP session.
