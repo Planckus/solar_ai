@@ -308,7 +308,8 @@
       "charger_session_duration": { "name": "Sessions-varighed" },
       "charger_lifetime_energy": { "name": "Lader livstidsenergi" },
       "charger_info": { "name": "Lader-info" },
-      "charger_session_log": { "name": "Lader sessions-log" }
+      "charger_session_log": { "name": "Lader sessions-log" },
+      "buy_price_breakdown": { "name": "Indkøbspris-opdeling" }
     },
     "select": {
       "ev_mode": {
