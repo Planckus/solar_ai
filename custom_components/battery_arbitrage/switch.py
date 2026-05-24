@@ -7,7 +7,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+
+from .const import DOMAIN, EV_SCHEDULES_MAX
 from .coordinator import BatteryArbitrageCoordinator
 from .sensor import _device_info
 
@@ -52,6 +54,10 @@ async def async_setup_entry(
             entities.append(
                 BatteryArbitrageNotifyTargetSwitch(coordinator, entry, full_service, friendly)
             )
+    # v0.38.0 — one enabled-switch per EV schedule slot (always created
+    # so the dashboard cards always have an entity to bind to).
+    for idx in range(1, EV_SCHEDULES_MAX + 1):
+        entities.append(BatteryArbitrageEvScheduleSlotEnabledSwitch(coordinator, entry, idx))
     async_add_entities(entities)
 
 
@@ -266,3 +272,56 @@ class BatteryArbitrageNotifyTargetSwitch(
         self.coordinator._stored["notify_targets"] = targets
         await self.coordinator._store.async_save(self.coordinator._stored)
         self.async_write_ha_state()
+
+
+
+class BatteryArbitrageEvScheduleSlotEnabledSwitch(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SwitchEntity
+):
+    """Per-slot enabled toggle for native EV schedules (v0.38.0).
+
+    Backed by `_stored["ev_schedules"][slot].enabled`. When off, the
+    slot is skipped by `_resolve_effective_ev_mode` even if its time
+    window matches now. Lets the user pause a schedule without losing
+    the day/time configuration. Toggling on a slot that does not yet
+    exist creates it with default times so the switch always has
+    something to write to.
+    """
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:calendar-check"
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+        slot_idx: int,
+    ) -> None:
+        super().__init__(coordinator)
+        self._slot_idx = slot_idx
+        self._attr_translation_key = f"ev_schedule_slot_{slot_idx}_enabled"
+        self._attr_unique_id = f"{entry.entry_id}_ev_schedule_slot_{slot_idx}_enabled"
+        self._attr_device_info = _device_info(entry)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, f"{DOMAIN}_schedules_changed",
+                self.async_write_ha_state,
+            )
+        )
+
+    @property
+    def is_on(self) -> bool:
+        slot = self.coordinator.get_schedule_slot(self._slot_idx)
+        return bool(slot and slot.get("enabled"))
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        self.coordinator.set_schedule_slot_enabled(self._slot_idx, True)
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        self.coordinator.set_schedule_slot_enabled(self._slot_idx, False)
+        self.async_write_ha_state()
+

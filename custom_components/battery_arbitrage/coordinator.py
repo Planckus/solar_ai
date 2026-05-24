@@ -190,6 +190,12 @@ from .const import (
     EV_SCHEDULE_LINKS_MAX,
     EV_SCHEDULE_LINK_MODE_OPTIONS,
     EV_SCHEDULE_LINK_MODE_STORAGE_PREFIX,
+    EV_SCHEDULES_MAX,
+    EV_SCHEDULE_DAYS,
+    EV_SCHEDULE_DEFAULT_START,
+    EV_SCHEDULE_DEFAULT_END,
+    EV_SCHEDULE_DEFAULT_DAYS,
+    EV_SCHEDULE_DEFAULT_MODE,
     DSO_OPTIONS,
     SELL_SIDE_COMPANY_OPTIONS,
     BUY_PRICE_MODE_MANUAL,
@@ -548,6 +554,65 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 self._stored.setdefault(
                     f"{EV_SCHEDULE_LINK_MODE_STORAGE_PREFIX}{idx}_mode", seeded,
                 )
+            # v0.38.0 — native schedules. Migrate from v0.36.x/v0.37.x
+            # ev_schedule_links + linked schedule.* helpers if present;
+            # otherwise initialise as an empty list. Schedules are now
+            # owned by Solar AI; the dashboard is the only edit surface.
+            if "ev_schedules" not in self._stored:
+                migrated: list[dict] = []
+                for idx, link in enumerate(links, start=1):
+                    if idx > EV_SCHEDULES_MAX or not isinstance(link, dict):
+                        continue
+                    entity_id = (link.get("schedule_entity") or "").strip()
+                    if not entity_id:
+                        continue
+                    sched_state = self.hass.states.get(entity_id) if self.hass else None
+                    if sched_state is None:
+                        continue
+                    attrs = sched_state.attributes or {}
+                    # Pick the first non-empty per-day range as the slot's
+                    # canonical (start, end). One range per day in the new
+                    # model — if the helper had multiple, the rest are
+                    # dropped (and the user can re-edit on the dashboard).
+                    start_s: str | None = None
+                    end_s: str | None = None
+                    days_present: list[str] = []
+                    for day_key, day_code in zip(
+                        ("monday", "tuesday", "wednesday", "thursday",
+                         "friday", "saturday", "sunday"),
+                        EV_SCHEDULE_DAYS,
+                    ):
+                        ranges = attrs.get(day_key) or []
+                        if ranges:
+                            days_present.append(day_code)
+                            if start_s is None and isinstance(ranges[0], dict):
+                                start_s = (ranges[0].get("from") or "")[:5]
+                                end_s = (ranges[0].get("to") or "")[:5]
+                    if not start_s or not end_s or not days_present:
+                        continue
+                    # Mode: prefer the v0.37.0 _stored override over link dict
+                    stored_mode_key = f"{EV_SCHEDULE_LINK_MODE_STORAGE_PREFIX}{idx}_mode"
+                    mode = (self._stored.get(stored_mode_key)
+                            or link.get("mode") or EV_SCHEDULE_DEFAULT_MODE)
+                    if mode not in (EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL):
+                        mode = EV_SCHEDULE_DEFAULT_MODE
+                    migrated.append({
+                        "slot": idx,
+                        "enabled": True,
+                        "mode": mode,
+                        "name": f"Skema {idx}",
+                        "start": start_s,
+                        "end": end_s,
+                        "days": days_present,
+                    })
+                self._stored["ev_schedules"] = migrated
+                if migrated:
+                    _LOGGER.info(
+                        "v0.38.0 native-schedule migration: imported %d slot(s) "
+                        "from ev_schedule_links — orphaned schedule.* helpers "
+                        "may remain in Settings → Helpers and can be deleted.",
+                        len(migrated),
+                    )
         # Hydrate the in-memory active mode from storage
         self._ev_active_mode = self._stored.get("ev_active_mode", EV_MODE_LOCKED)
         # Restore enabled state — default OFF so user must consciously turn on
@@ -3343,48 +3408,74 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         For LOCKED / PV / PV_BATTERY / FULL the requested mode IS the
         effective mode — returned unchanged.
 
-        For SCHEDULED (v0.36.0 — Phase A scheduling) the resolver walks the
-        configured list of (HA schedule entity → EV mode) links in order and
-        returns the first link whose schedule entity is currently `on`. The
-        active link's schedule_entity is returned as the second tuple element
-        for telemetry. If no link is active, falls back to the user-configured
-        fallback mode (default `locked`).
+        For SCHEDULED (v0.38.0 — native schedules) the resolver walks
+        `_stored["ev_schedules"]` in slot-order and returns the first
+        enabled slot whose `days` include today AND whose `[start, end)`
+        window contains the current local time. End-before-start is
+        handled as midnight-wrap. If no slot matches, falls back to the
+        user-configured fallback mode (default `locked`).
 
-        The link list lives under `entry.data[CONF_EV_SCHEDULE_LINKS]` as a
-        list of dicts, edited via the options flow. Users edit the underlying
-        schedule entities themselves in Settings → Helpers → Schedule, where
-        HA's native schedule helper provides per-weekday time ranges.
+        Schedules are owned entirely by Solar AI and edited from the
+        dashboard — no HA `schedule.*` helper involvement (v0.36.0
+        Phase A link-based design replaced).
         """
         if requested_mode != EV_MODE_SCHEDULED:
             return requested_mode, None
 
-        links = self.config.get(CONF_EV_SCHEDULE_LINKS, []) or []
-        for idx, link in enumerate(links, start=1):
-            if not isinstance(link, dict):
-                continue
-            entity_id = link.get("schedule_entity") or ""
-            # v0.37.0 — prefer the live `_stored` override (set by the new
-            # per-slot dashboard selects) over the link dict's mode field.
-            # First-time read after upgrade is seeded by the migration in
-            # `async_setup_entry`.
-            mode = (
-                self._stored.get(f"{EV_SCHEDULE_LINK_MODE_STORAGE_PREFIX}{idx}_mode")
-                or link.get("mode")
-                or ""
-            )
-            if not entity_id or not mode:
-                continue
-            state = self.hass.states.get(entity_id)
-            if state is None or state.state in ("unknown", "unavailable"):
-                continue
-            if state.state == "on":
-                if mode in (EV_MODE_LOCKED, EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL):
-                    return mode, entity_id
-                _LOGGER.debug(
-                    "Scheduled mode link → unknown sub-mode '%s' on %s; skipping",
-                    mode, entity_id,
-                )
-        # No active link — use fallback
+        slots = self._stored.get("ev_schedules", []) or []
+        if slots:
+            from datetime import time as _time, timedelta as _td   # noqa: PLC0415
+            try:
+                from homeassistant.util import dt as dt_util       # noqa: PLC0415
+                now_local = dt_util.now()
+            except Exception:                                      # noqa: BLE001
+                now_local = datetime.now()                         # naive local fallback
+
+            cur_t = now_local.time()
+            weekday_today = EV_SCHEDULE_DAYS[now_local.weekday()]
+            weekday_yesterday = EV_SCHEDULE_DAYS[(now_local.weekday() - 1) % 7]
+
+            def _parse(s: str) -> "_time | None":
+                try:
+                    parts = (s or "").split(":")
+                    return _time(int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+                except (ValueError, IndexError):
+                    return None
+
+            for slot in slots:
+                if not isinstance(slot, dict) or not slot.get("enabled"):
+                    continue
+                mode = slot.get("mode") or ""
+                if mode not in (EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL):
+                    continue
+                days = slot.get("days") or []
+                if not days:
+                    continue
+                start_t = _parse(slot.get("start"))
+                end_t = _parse(slot.get("end"))
+                if start_t is None or end_t is None:
+                    continue
+                slot_num = slot.get("slot", "?")
+                label = f"Skema {slot_num}"
+
+                if start_t == end_t:
+                    # Degenerate "always on" — treat as covering all 24 h
+                    if weekday_today in days:
+                        return mode, label
+                    continue
+
+                if start_t < end_t:
+                    # Same-day window
+                    if weekday_today in days and start_t <= cur_t < end_t:
+                        return mode, label
+                else:
+                    # Midnight wrap — slot spans (start..midnight..end)
+                    if weekday_today in days and cur_t >= start_t:
+                        return mode, label
+                    if weekday_yesterday in days and cur_t < end_t:
+                        return mode, label
+
+        # No slot matched — use fallback
         fallback = self.config.get(
             CONF_EV_SCHEDULED_FALLBACK_MODE, DEFAULT_EV_SCHEDULED_FALLBACK_MODE,
         )
@@ -3414,6 +3505,119 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._stored[key] = new_mode
         if self.hass:
             self.hass.async_create_task(self._store.async_save(self._stored))
+
+    # v0.38.0 — native-schedule mutators. These are the only blessed paths
+    # for editing `_stored["ev_schedules"]`. Dashboard cards bind directly
+    # to entities (mode select / enabled switch / start+end time) that
+    # call these, or to `battery_arbitrage.*` services that wrap them.
+    # All mutators persist asynchronously and notify listeners so platform
+    # entities re-render.
+
+    def get_schedule_slot(self, slot_idx: int) -> dict | None:
+        """Return a copy of the slot dict or None."""
+        slots = self._stored.get("ev_schedules") or []
+        for s in slots:
+            if isinstance(s, dict) and s.get("slot") == slot_idx:
+                return dict(s)
+        return None
+
+    def _get_or_create_slot(self, slot_idx: int) -> dict:
+        """Return the live slot dict; create a default if absent."""
+        slots: list = self._stored.setdefault("ev_schedules", [])
+        for s in slots:
+            if isinstance(s, dict) and s.get("slot") == slot_idx:
+                return s
+        new_slot = {
+            "slot": slot_idx,
+            "enabled": False,
+            "mode": EV_SCHEDULE_DEFAULT_MODE,
+            "name": f"Skema {slot_idx}",
+            "start": EV_SCHEDULE_DEFAULT_START,
+            "end": EV_SCHEDULE_DEFAULT_END,
+            "days": list(EV_SCHEDULE_DEFAULT_DAYS),
+        }
+        slots.append(new_slot)
+        # Keep stable slot order
+        slots.sort(key=lambda x: (x.get("slot") if isinstance(x, dict) else 99))
+        return new_slot
+
+    def _persist_schedules(self) -> None:
+        """Async-save the storage; called after every schedule mutation."""
+        if self.hass:
+            self.hass.async_create_task(self._store.async_save(self._stored))
+
+    def set_schedule_slot_mode(self, slot_idx: int, new_mode: str) -> None:
+        if new_mode not in (EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL):
+            _LOGGER.warning("set_schedule_slot_mode: bad mode '%s'", new_mode); return
+        if not (1 <= slot_idx <= EV_SCHEDULES_MAX): return
+        slot = self._get_or_create_slot(slot_idx)
+        slot["mode"] = new_mode
+        self._persist_schedules()
+
+    def set_schedule_slot_enabled(self, slot_idx: int, enabled: bool) -> None:
+        if not (1 <= slot_idx <= EV_SCHEDULES_MAX): return
+        slot = self._get_or_create_slot(slot_idx)
+        slot["enabled"] = bool(enabled)
+        self._persist_schedules()
+
+    def set_schedule_slot_time(self, slot_idx: int, which: str, hhmm: str) -> None:
+        """Update start or end time. `which` is 'start' or 'end'. `hhmm` is HH:MM[:SS]."""
+        if which not in ("start", "end"): return
+        if not (1 <= slot_idx <= EV_SCHEDULES_MAX): return
+        # Normalise to HH:MM (drop seconds if present)
+        normalised = (hhmm or "")[:5]
+        if len(normalised) != 5 or normalised[2] != ":":
+            _LOGGER.warning("set_schedule_slot_time: bad time '%s'", hhmm); return
+        try:
+            h = int(normalised[:2]); m = int(normalised[3:])
+            assert 0 <= h <= 23 and 0 <= m <= 59
+        except (ValueError, AssertionError):
+            _LOGGER.warning("set_schedule_slot_time: out-of-range '%s'", hhmm); return
+        slot = self._get_or_create_slot(slot_idx)
+        slot[which] = normalised
+        self._persist_schedules()
+
+    def toggle_schedule_slot_day(self, slot_idx: int, day: str) -> None:
+        if day not in EV_SCHEDULE_DAYS: return
+        if not (1 <= slot_idx <= EV_SCHEDULES_MAX): return
+        slot = self._get_or_create_slot(slot_idx)
+        days: list = slot.setdefault("days", [])
+        if day in days:
+            days.remove(day)
+        else:
+            days.append(day)
+            # Keep canonical order
+            days.sort(key=EV_SCHEDULE_DAYS.index)
+        self._persist_schedules()
+
+    def set_schedule_slot_days(self, slot_idx: int, days: list[str]) -> None:
+        if not (1 <= slot_idx <= EV_SCHEDULES_MAX): return
+        clean = [d for d in (days or []) if d in EV_SCHEDULE_DAYS]
+        clean.sort(key=EV_SCHEDULE_DAYS.index)
+        slot = self._get_or_create_slot(slot_idx)
+        slot["days"] = clean
+        self._persist_schedules()
+
+    def delete_schedule_slot(self, slot_idx: int) -> None:
+        """Remove a slot's entry entirely. The slot's entities stay (always-created)
+        but report as 'empty' until the slot is added again."""
+        if not (1 <= slot_idx <= EV_SCHEDULES_MAX): return
+        slots = self._stored.get("ev_schedules") or []
+        new = [s for s in slots if not (isinstance(s, dict) and s.get("slot") == slot_idx)]
+        self._stored["ev_schedules"] = new
+        self._persist_schedules()
+
+    def add_schedule_slot_native(self) -> int | None:
+        """Allocate the lowest unused slot index (1..MAX) and seed it with
+        the default schedule. Returns the slot index or None if full."""
+        slots = self._stored.setdefault("ev_schedules", [])
+        used = {s.get("slot") for s in slots if isinstance(s, dict)}
+        for i in range(1, EV_SCHEDULES_MAX + 1):
+            if i not in used:
+                self._get_or_create_slot(i)
+                self._persist_schedules()
+                return i
+        return None
 
     def set_ev_mode(self, new_mode: str) -> None:
         """Public setter used by the mode select entity."""

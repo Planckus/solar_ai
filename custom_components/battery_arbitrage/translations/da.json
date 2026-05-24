@@ -309,7 +309,11 @@
       "charger_lifetime_energy": { "name": "Lader livstidsenergi" },
       "charger_info": { "name": "Lader-info" },
       "charger_session_log": { "name": "Lader sessions-log" },
-      "buy_price_breakdown": { "name": "Indkøbspris-opdeling" }
+      "buy_price_breakdown": { "name": "Indkøbspris-opdeling" },
+      "ev_schedule_slot_1_summary": { "name": "Skema 1" },
+      "ev_schedule_slot_2_summary": { "name": "Skema 2" },
+      "ev_schedule_slot_3_summary": { "name": "Skema 3" },
+      "ev_schedule_slot_4_summary": { "name": "Skema 4" }
     },
     "select": {
       "ev_mode": {
@@ -428,7 +432,21 @@
       "notify_charge_start":        { "name": "Notifikation: opladning startet" },
       "notify_charge_stop":         { "name": "Notifikation: opladning stoppet" },
       "notify_solar_floor_blocked": { "name": "Notifikation: solareksport blokeret (prisgulv)" },
-      "notify_solar_floor_resumed": { "name": "Notifikation: solareksport genoptaget" }
+      "notify_solar_floor_resumed": { "name": "Notifikation: solareksport genoptaget" },
+      "ev_schedule_slot_1_enabled": { "name": "Skema 1 aktiveret" },
+      "ev_schedule_slot_2_enabled": { "name": "Skema 2 aktiveret" },
+      "ev_schedule_slot_3_enabled": { "name": "Skema 3 aktiveret" },
+      "ev_schedule_slot_4_enabled": { "name": "Skema 4 aktiveret" }
+    },
+    "time": {
+      "ev_schedule_slot_1_start": { "name": "Skema 1 starttid" },
+      "ev_schedule_slot_1_end":   { "name": "Skema 1 sluttid" },
+      "ev_schedule_slot_2_start": { "name": "Skema 2 starttid" },
+      "ev_schedule_slot_2_end":   { "name": "Skema 2 sluttid" },
+      "ev_schedule_slot_3_start": { "name": "Skema 3 starttid" },
+      "ev_schedule_slot_3_end":   { "name": "Skema 3 sluttid" },
+      "ev_schedule_slot_4_start": { "name": "Skema 4 starttid" },
+      "ev_schedule_slot_4_end":   { "name": "Skema 4 sluttid" }
     }
   },
   "services": {
