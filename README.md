@@ -4,7 +4,26 @@
 
 A Home Assistant integration that schedules a FoxESS battery against Nord Pool day-ahead prices, drives an OCPP 1.6 EV charger from solar surplus, and learns from observed production and consumption.
 
-The integration runs as a coordinator that pulls live state from FoxESS Modbus (and optionally EVCC), refreshes day-ahead prices from Energi Data Service once per hour, runs a backward-induction dynamic programming optimiser over a 24- to 48-hour horizon, and executes the resulting plan through FoxESS work-mode + force-charge controls and (optionally) OCPP `RemoteStartTransaction` / `SetChargingProfile` commands.
+---
+
+## Overview
+
+If you have solar panels, a FoxESS hybrid inverter with a battery, and variable electricity prices, you have a daily optimisation problem with too many moving parts to solve by hand:
+
+- Day-ahead spot prices change every hour and often vary 10× between the cheap night hours and the evening peak.
+- Solar production depends on weather forecasts that are wrong 20–30% of the time.
+- Network distribution tariffs (DK) and elafgift add a time-of-use surcharge on top of the spot price.
+- House load is irregular — a kettle, an oven, a heat pump cycling.
+- Cycling the battery costs something in degradation that has to be weighed against the price spread it captures.
+- An EV that wants to charge now might be better off charging tomorrow if a sunny day is coming.
+
+Solar AI handles all of this in one decision loop. Every hour it runs a backward-induction **dynamic programming optimiser** over a 48-hour horizon at 15-minute resolution. The model includes battery state of charge (1% steps), terminal value of energy left in the battery at the horizon, degradation cost, the full DK or UK price stack (spot + retailer markup + DSO tariff + Energinet + elafgift + VAT on the buy side; spot − indfødningstarif − seller fees on the sell side), and a per-hour learned solar accuracy factor with a short-term residual correction on top. The output is an ordered plan of CHARGE / EXPORT / IDLE actions per slot.
+
+Between plan refreshes a **15-second execution tick** reads live FoxESS Modbus state, decides what the plan implies for *right now*, and writes the inverter's work mode, force-charge / force-discharge power, and export-limit register. An **embedded OCPP 1.6 server** (no separate integration required — the charger connects directly to `ws://<ha-ip>:9000/<cpid>/`) drives a connected EV charger from the same loop. Five EV modes are available: locked, solar-only, solar + battery-to-minimum, full power, and schedule-driven.
+
+The integration **learns**: it tracks per-hour solar forecast accuracy over the last 4 days, intra-hour residual error over the last 2 hours, actual battery charge/discharge rates at different temperatures, and your real house load by hour. Those corrections feed back into the next optimiser run, so after a few weeks of operation the plan reflects your specific install rather than a generic model. A live dashboard shows every decision and why; a session log records each EV charging session split into solar vs grid kWh; a savings tracker accumulates the realised arbitrage spread against a baseline of doing nothing.
+
+Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price areas + DatahubPricelist tariff fetch) and **United Kingdom** (Octopus Energy + GSP region picker). Other Nord Pool / EU markets work with the manual price-stack inputs.
 
 ---
 
