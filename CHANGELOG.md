@@ -9,6 +9,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.36.2] — 2026-05-24
+
+### Changed — EV curtailment trigger now reads the inverter, not the forecast
+
+The v0.30.1 forecast-substitution heuristic compared Solcast's predicted PV against actual PV to detect when the export-limit floor was throttling the panels. It worked, but only when (a) Solcast was accurate and (b) the curtailment was caused by Solar AI's own price floor. Other curtailment causes (grid-operator limits, battery-full with low export ceiling, frequency-response events) were invisible to it, and a wrong forecast on a partly-cloudy day could trigger spurious EV starts.
+
+v0.36.2 replaces the heuristic with a direct read of the inverter's own curtailment signal: FoxESS holding register `49251` ("PV Power Limited Flag"). The value is 1 whenever the MPPT is actively throttling PV output, 0 otherwise — regardless of why. The coordinator reads this register every fast tick alongside the existing export-limit write (reg `46616`) and caches the value for the EV controller.
+
+When the flag is 1 *and* the house battery is at/near its configured max SoC, the EV controller launches a 60-second probe: it synthesises just enough solar in the surplus calculation to guarantee `ev_min_charge_kw` of EV demand. MPPT lifts to deliver real PV through the charger, and after the probe ends the live solar reading takes over — no forecast involved. If the flag clears during the probe, the probe ends early and normal surplus control resumes. If the window expires with the flag still set (curtailment cause we can't undo), the probe releases and the existing 180-s stop-window backs the session out within minutes.
+
+What this changes for the user:
+- EV kick-start during curtailment is now reactive (factual) rather than predictive (forecast-based).
+- Catches grid-operator and battery-full curtailment in addition to the price-floor case.
+- No dependency on Solcast forecast accuracy for the EV trigger.
+- Worst-case cost of a wrong probe is ~60 s × `ev_min_charge_kw` imported from the grid (≈ 0.07 kWh on three-phase 6 A) before the stop-window backs out.
+
+The forecast remains the input for everything else (DP optimiser, planning chart, dashboard) — only the EV-controller trigger changed.
+
+### New
+- `FOXESS_PV_POWER_LIMITED_FLAG_REGISTER = 49251` constant.
+- `EV_CURTAILMENT_PROBE_SECONDS = 60` probe-window constant.
+- `_read_pv_power_limited_flag()` coordinator helper.
+- Per-tick cached `_pv_power_limited_flag` on the coordinator.
+- `_ev_probe_started_at` state field tracking an in-flight probe.
+
+### Removed
+- The forecast-substitution block in `_run_ev_controller` (`pv_power_w * 2` and `slot_forecast_w > 1000.0` heuristics).
+
+---
+
 ## [0.36.1] — 2026-05-24
 
 ### Fixed — README note about 15-s card refresh

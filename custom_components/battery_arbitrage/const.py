@@ -137,6 +137,15 @@ EV_HYSTERESIS_STOP_TICKS  = 2     # legacy — ticks below stop threshold before
 EV_MAX_AMP_STEP_PER_TICK  = 2     # max ramp rate (A) per control-loop tick
 EV_MIN_AMP_CHANGE         = 1     # don't bother sending OCPP write below this delta
 
+# v0.36.2 — Curtailment-probe parameters.
+# When the inverter reports PV curtailment (reg 49251 = 1) and the house
+# battery is at/near its max SoC, the EV controller starts a probe: it
+# guarantees `min charge kW` of EV demand for this many seconds, giving
+# MPPT time to lift its output to match. After the window the real solar
+# reading drives the EV target — no forecast needed. If the flag clears
+# during the probe, the probe ends early and normal control resumes.
+EV_CURTAILMENT_PROBE_SECONDS = 60
+
 # EV control loop (v0.26.0) — decoupled from main coordinator fast-poll.
 # Lets the user match the loop cadence to their charger's OCPP write tolerance,
 # and tune the start/stop windows in seconds (not ticks).
@@ -202,6 +211,13 @@ FOXESS_WORK_MODE_ENTITY = "select.foxessmodbus_work_mode"
 FOXESS_FORCE_CHARGE_ENTITY = "number.foxessmodbus_force_charge_power"
 FOXESS_FORCE_DISCHARGE_ENTITY = "number.foxessmodbus_force_discharge_power"
 FOXESS_EXPORT_LIMIT_REGISTER = 46616
+# RO holding register: 0 = inverter not curtailing PV; 1 = MPPT actively
+# throttled (set whenever the inverter is clipping PV output for any
+# reason — price-floor export limit, grid-operator limit, battery-full
+# with low export ceiling, etc.). Used by the EV controller as the
+# trigger for the curtailment probe (v0.36.2 — replaces the v0.30.1
+# forecast-substitution heuristic).
+FOXESS_PV_POWER_LIMITED_FLAG_REGISTER = 49251
 
 # Strømligning
 STROMLIGNING_SPOTPRICE_EX_VAT = "sensor.stromligning_spotprice_ex_vat"
