@@ -308,7 +308,8 @@
       "charger_session_duration": { "name": "Charger session duration" },
       "charger_lifetime_energy": { "name": "Charger lifetime energy" },
       "charger_info": { "name": "Charger info" },
-      "charger_session_log": { "name": "Charger session log" }
+      "charger_session_log": { "name": "Charger session log" },
+      "buy_price_breakdown": { "name": "Buy price breakdown" }
     },
     "select": {
       "ev_mode": {
