@@ -97,7 +97,25 @@ EV_MODE_LOCKED      = "locked"
 EV_MODE_PV          = "pv"
 EV_MODE_PV_BATTERY  = "pv_battery"
 EV_MODE_FULL        = "full"
+EV_MODE_SCHEDULED   = "scheduled"          # v0.36.0: defer to user-configured HA schedule entities
 DEFAULT_EV_DEFAULT_MODE = EV_MODE_LOCKED   # safe choice on first connect
+
+# ── EV scheduling (Phase A — v0.36.0) ──────────────────────────────────────
+# When `_ev_active_mode == EV_MODE_SCHEDULED`, the controller resolves the
+# active mode by walking a user-configured list of (HA schedule entity → EV
+# mode) links. First link whose schedule entity is in state "on" wins.
+# When no link is active, the configured fallback mode applies.
+#
+# The link list lives in entry.data under CONF_EV_SCHEDULE_LINKS as a list of
+# dicts: [{"schedule_entity": "schedule.cheap_nights", "mode": "full"}, ...].
+# Up to four links are configurable in the options flow. Users edit the
+# schedule entities themselves via Settings → Helpers → Schedule (HA's
+# native schedule helper), where they can set per-weekday time ranges with
+# the full HA UI.
+CONF_EV_SCHEDULE_LINKS = "ev_schedule_links"
+CONF_EV_SCHEDULED_FALLBACK_MODE = "ev_scheduled_fallback_mode"
+DEFAULT_EV_SCHEDULED_FALLBACK_MODE = EV_MODE_LOCKED
+EV_SCHEDULE_LINKS_MAX = 4    # Practical cap; revisit if real users need more
 DEFAULT_EV_CONTROLLER_ENABLED = False       # opt-in feature
 # 3-phase Danish standard: 230 V × √3 × A → kW
 EV_VOLTAGE = 230.0
@@ -242,7 +260,7 @@ SOLAR_ACCURACY_HOUR_MIN_SAMPLES = 8   # Need ≥ 8 daylight samples per hour bef
 # Hour buckets fall back to the global rolling median until they warm up.
 
 # Coordinator update intervals
-DEFAULT_FAST_POLL_SECONDS = 30       # Live EVCC data poll (configurable)
+DEFAULT_FAST_POLL_SECONDS = 15       # v0.36.0: dropped from 30 → 15 so Lovelace cards driven by integration sensors refresh every 15 s (configurable 10–300)
 CONF_FAST_POLL_INTERVAL = "fast_poll_interval"
 TARIFF_REFRESH_INTERVAL_SECONDS = 3600   # Hourly tariff/price refresh (not configurable)
 LEARNING_TICK_INTERVAL_SECONDS = 300     # Learning model write cadence (5 min)
