@@ -13,6 +13,7 @@ from .const import (
     EV_MODE_PV,
     EV_MODE_PV_BATTERY,
     EV_MODE_FULL,
+    EV_MODE_SCHEDULED,
     EV_VOLTAGE,
     EV_PHASES,
     EV_OCPP_MIN_AMPS,
@@ -26,7 +27,7 @@ from .coordinator import BatteryArbitrageCoordinator
 from .sensor import _device_info
 
 
-EV_MODES = [EV_MODE_LOCKED, EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL]
+EV_MODES = [EV_MODE_LOCKED, EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL, EV_MODE_SCHEDULED]
 
 
 # Build amp options as raw integer-strings ("6", "7", ..., "16") — translated
