@@ -362,6 +362,22 @@
           "15": "15 A (10,35 kW)",
           "16": "16 A (11,04 kW)"
         }
+      },
+      "ev_schedule_link_1_mode": {
+        "name": "Skema 1 tilstand",
+        "state": { "pv": "PV", "pv_battery": "PV+Bat", "full": "Fuld" }
+      },
+      "ev_schedule_link_2_mode": {
+        "name": "Skema 2 tilstand",
+        "state": { "pv": "PV", "pv_battery": "PV+Bat", "full": "Fuld" }
+      },
+      "ev_schedule_link_3_mode": {
+        "name": "Skema 3 tilstand",
+        "state": { "pv": "PV", "pv_battery": "PV+Bat", "full": "Fuld" }
+      },
+      "ev_schedule_link_4_mode": {
+        "name": "Skema 4 tilstand",
+        "state": { "pv": "PV", "pv_battery": "PV+Bat", "full": "Fuld" }
       }
     },
     "binary_sensor": {

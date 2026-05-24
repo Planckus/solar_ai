@@ -172,8 +172,58 @@ class ChargePoint(_Cp if _Cp is not None else object):
         return call_result.StatusNotification()
 
     @on(Action.meter_values if hasattr(Action, "meter_values") else "MeterValues")
-    async def on_meter_values(self, connector_id=None, meter_value=None, **kwargs):
+    async def on_meter_values(self, connector_id=None, meter_value=None,
+                              transaction_id=None, **kwargs):
         self.last_seen = datetime.now(timezone.utc)
+
+        # v0.37.0 — Transaction-id recovery.
+        # OCPP 1.6 specifies `transactionId` as an OPTIONAL field on
+        # MeterValues.req. When a session is active, well-behaved chargers
+        # include it on every MeterValues frame. We use it to:
+        #   (a) RECOVER state after a HA restart killed our session tracking
+        #       (the canonical Item 5 OCPP bug — charger keeps draining the
+        #        EV while Solar AI thinks IDLE and can't issue RemoteStop
+        #        because the transaction id is None). The first MeterValues
+        #        after reconnect re-syncs us to the active transaction.
+        #   (b) DETECT drift if the charger ended one session and started
+        #       another while we weren't watching (e.g. car re-plugged
+        #       during HA downtime). We adopt the new id and reset session
+        #       counters.
+        try:
+            incoming_tx = int(transaction_id) if transaction_id is not None else None
+        except (TypeError, ValueError):
+            incoming_tx = None
+        if incoming_tx and incoming_tx > 0:
+            if self.session_transaction_id is None or not self.session_active:
+                # Recovered session — populate the bare minimum so RemoteStop
+                # can target it. session_start_ts is best-effort (we don't
+                # know the real start); session_start_energy_wh is taken
+                # from the current Energy.Active.Import.Register if present
+                # in the same frame (handled below by the existing loop).
+                _LOGGER.info(
+                    "OCPP charger %s: recovered active transaction id=%d "
+                    "from MeterValues (was untracked — likely after HA restart)",
+                    self.id, incoming_tx,
+                )
+                self.session_active = True
+                self.session_transaction_id = incoming_tx
+                if self.session_start_ts is None:
+                    self.session_start_ts = datetime.now(timezone.utc)
+            elif self.session_transaction_id != incoming_tx:
+                # Drift — adopt the charger's view and reset counters.
+                _LOGGER.warning(
+                    "OCPP charger %s: transaction id drift "
+                    "(tracked=%d, charger reports=%d) — resyncing",
+                    self.id, self.session_transaction_id, incoming_tx,
+                )
+                self.session_transaction_id = incoming_tx
+                self.session_start_ts = datetime.now(timezone.utc)
+                self.session_start_energy_wh = None
+                self.session_energy_wh = 0.0
+                self.session_solar_wh = 0.0
+                self.session_grid_wh = 0.0
+                self._session_split_last_ts = None
+
         if not meter_value:
             return call_result.MeterValues()
         for mv in meter_value:
@@ -192,6 +242,14 @@ class ChargePoint(_Cp if _Cp is not None else object):
                 elif measurand == "Energy.Active.Import.Register":
                     wh = value * 1000.0 if unit == "kWh" else value
                     self.energy_wh_total = wh
+                    # v0.37.0 — if this is the FIRST MeterValues after a
+                    # recovered transaction (session_start_energy_wh still
+                    # None), seed the start register from this value so the
+                    # in-session counter starts from now rather than going
+                    # negative against a stale start.
+                    if (self.session_active
+                            and self.session_start_energy_wh is None):
+                        self.session_start_energy_wh = wh
                     if self.session_active and self.session_start_energy_wh is not None:
                         self.session_energy_wh = max(
                             0.0, wh - self.session_start_energy_wh,
@@ -402,7 +460,14 @@ class ChargePoint(_Cp if _Cp is not None else object):
         (just logs at debug, no error spam).
         """
         any_accepted = False
-        for msg_type in ("StatusNotification", "BootNotification"):
+        # v0.37.0 — added MeterValues to the trigger list. If a session is
+        # active when we (re)connect, the charger's response includes the
+        # current transactionId, which `on_meter_values` uses to recover
+        # session tracking (Item 5 fix). Order matters: ask for Status
+        # first so on_status fires before on_meter_values, ensuring the
+        # charger's "Charging" status is recorded before we treat the
+        # incoming tx_id as authoritative.
+        for msg_type in ("StatusNotification", "BootNotification", "MeterValues"):
             try:
                 req = call.TriggerMessage(
                     requested_message=msg_type,
@@ -613,21 +678,38 @@ class OcppServer:
             _LOGGER.info(
                 "OCPP charger %s reconnecting — replacing previous instance", cp_id,
             )
-            # Capture metadata from the previous instance so a within-session
-            # reconnect doesn't lose vendor/model/serial.
+            # Capture metadata + session state from the previous instance so a
+            # within-session reconnect doesn't lose vendor/model/serial AND
+            # transaction tracking (v0.37.0 — Item 5 fix).
             old_cp = self.charge_points[cp_id]
-            if old_cp.vendor or old_cp.model or old_cp.serial:
+            if old_cp.vendor or old_cp.model or old_cp.serial or old_cp.session_active:
                 self.persisted_metadata[cp_id] = {
                     "vendor": old_cp.vendor,
                     "model": old_cp.model,
                     "firmware": old_cp.firmware,
                     "serial": old_cp.serial,
                     "last_energy_wh_total": old_cp.energy_wh_total,
+                    # v0.37.0 — session state survives a reconnect within
+                    # the same HA process. Cross-restart survival comes
+                    # from the coordinator's _persist_charger_metadata
+                    # snapshot, which writes the same fields to disk.
+                    "session_active": old_cp.session_active,
+                    "session_transaction_id": old_cp.session_transaction_id,
+                    "session_start_ts": (
+                        old_cp.session_start_ts.isoformat()
+                        if old_cp.session_start_ts is not None else None
+                    ),
+                    "session_start_energy_wh": old_cp.session_start_energy_wh,
+                    "session_energy_wh": old_cp.session_energy_wh,
+                    "session_solar_wh": old_cp.session_solar_wh,
+                    "session_grid_wh": old_cp.session_grid_wh,
                 }
         cp = ChargePoint(cp_id, connection, remote_start_cooldown_s=self.remote_start_cooldown_s)
         # Pre-populate from persisted metadata (v0.27.3) — vendor/model/serial
         # survive HA restarts, so sensors show real data even before the
         # charger sends a fresh BootNotification (which it usually won't).
+        # v0.37.0 — extended to restore session-tracking state so RemoteStop
+        # works after a restart that happened mid-session.
         md = self.persisted_metadata.get(cp_id)
         if md:
             cp.vendor = md.get("vendor", "")
@@ -635,6 +717,28 @@ class OcppServer:
             cp.firmware = md.get("firmware", "")
             cp.serial = md.get("serial", "")
             cp.energy_wh_total = md.get("last_energy_wh_total", 0.0)
+            # v0.37.0 — session state restore. The transaction id is the
+            # critical piece for RemoteStop to work. If MeterValues come in
+            # with a different id, on_meter_values syncs to the new one.
+            if md.get("session_active"):
+                cp.session_active = True
+                cp.session_transaction_id = md.get("session_transaction_id")
+                start_ts = md.get("session_start_ts")
+                if start_ts:
+                    try:
+                        cp.session_start_ts = datetime.fromisoformat(start_ts)
+                    except (TypeError, ValueError):
+                        cp.session_start_ts = datetime.now(timezone.utc)
+                cp.session_start_energy_wh = md.get("session_start_energy_wh")
+                cp.session_energy_wh = md.get("session_energy_wh", 0.0)
+                cp.session_solar_wh = md.get("session_solar_wh", 0.0)
+                cp.session_grid_wh = md.get("session_grid_wh", 0.0)
+                _LOGGER.info(
+                    "OCPP charger %s: restored active session (tx=%s, energy=%.2f kWh) "
+                    "from persisted metadata — RemoteStop is now wired",
+                    cp_id, cp.session_transaction_id,
+                    (cp.session_energy_wh or 0) / 1000.0,
+                )
             _LOGGER.info(
                 "OCPP charger %s: pre-populated from persisted metadata (model=%s, serial=%s)",
                 cp_id, cp.model, cp.serial,
