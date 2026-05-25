@@ -58,6 +58,8 @@ async def async_setup_entry(
     # so the dashboard cards always have an entity to bind to).
     for idx in range(1, EV_SCHEDULES_MAX + 1):
         entities.append(BatteryArbitrageEvScheduleSlotEnabledSwitch(coordinator, entry, idx))
+    # v0.39.0 — opt-in switch for auto-Full on negative buy price.
+    entities.append(BatteryArbitrageAutoFullSwitch(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -325,3 +327,47 @@ class BatteryArbitrageEvScheduleSlotEnabledSwitch(
         self.coordinator.set_schedule_slot_enabled(self._slot_idx, False)
         self.async_write_ha_state()
 
+
+
+class BatteryArbitrageAutoFullSwitch(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SwitchEntity
+):
+    """v0.39.0 — Opt-in switch for auto-Full on negative buy price.
+
+    When ON, the coordinator auto-promotes the EV master mode to Full
+    whenever buy_price ≤ 0 for AUTO_FULL_DEBOUNCE_SECONDS (5 min) while
+    the EV is plugged in. The previous mode is stashed and restored on
+    the next floor-block-close edge.
+
+    Manual mode changes clear the auto state (the user's choice wins).
+    EV unplug clears the auto state. Default OFF — the feature is
+    opt-in for backwards-compatible behaviour.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "auto_full_on_negative_price"
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:cash-minus"
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_auto_full_on_negative_price"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.coordinator._stored.get("auto_full_on_negative_price", False))
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        self.coordinator._stored["auto_full_on_negative_price"] = True
+        await self.coordinator._store.async_save(self.coordinator._stored)
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        self.coordinator._stored["auto_full_on_negative_price"] = False
+        await self.coordinator._store.async_save(self.coordinator._stored)
+        self.async_write_ha_state()

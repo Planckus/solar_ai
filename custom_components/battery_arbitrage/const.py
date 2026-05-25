@@ -202,6 +202,23 @@ EV_STOP_RECOVERY_SECONDS = 10
 # start timer.
 EV_START_DROP_TIMEOUT_SECONDS = 10
 
+# v0.39.0 — Auto-promote EV master mode to Full when the live buy price
+# goes negative, then auto-revert to the pre-promotion mode when the
+# price-floor block closes (export price rises back above the user's
+# min_export_price). Opt-in via switch — default OFF to preserve
+# backwards-compatible behaviour. Once enabled:
+#   - Trigger IN: buy_price ≤ 0 sustained for AUTO_FULL_DEBOUNCE_SECONDS
+#                 AND EV plugged in AND master mode is not already Full
+#   - Trigger OUT: floor block transitions from active → inactive
+# Manual mode overrides clear the auto state. EV unplug clears it too.
+CONF_AUTO_FULL_ON_NEGATIVE_PRICE = "auto_full_on_negative_price"
+DEFAULT_AUTO_FULL_ON_NEGATIVE_PRICE = False
+# Debounce window — buy price must be sustained ≤ 0 for this many
+# seconds before the auto-promotion fires. Avoids flapping on
+# zero-crossing noise (~5 minutes is plenty given price changes
+# hourly in DK).
+AUTO_FULL_DEBOUNCE_SECONDS = 300   # 5 minutes
+
 # EV control loop (v0.26.0) — decoupled from main coordinator fast-poll.
 # Lets the user match the loop cadence to their charger's OCPP write tolerance,
 # and tune the start/stop windows in seconds (not ticks).
