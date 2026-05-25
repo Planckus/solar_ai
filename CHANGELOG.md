@@ -9,6 +9,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.1] — 2026-05-25
+
+### Fixed — Strømligning cache lookups always failed silently
+
+The `buy-price-breakdown` sensor (`sensor.solar_ai_indkobspris_opdeling`) reported `mode = stromligning` with all per-component attributes (`spot`, `surcharge`, `net_tariff`, `system_tariff`, `distribution`, `elafgift`) at 0.0 and the state coming from the manual-stack fallback. Concretely on a DK install: dashboard read ~1.39 DKK/kWh while `sensor.stromligning_current_price_vat` read 0.654 DKK/kWh — Solar AI was using the wrong buy price for arbitrage decisions.
+
+Root cause: `stromligning.py fetch_prices` stored each entry under the API's `entry.date` field as-is. Strømligning's API returns timestamps in `"2026-05-20T07:00:00+00:00"` ISO format. The lookups in `_compute_buy_price` (coordinator) and `_current_stromligning_entry` (breakdown sensor) both use `"%Y-%m-%dT%H:%M:%S.000Z"` format. **Mismatch on every slot.** Every lookup silently returned None, every call fell back to the manual stack. Bug was present since v0.35.1 when Strømligning support was introduced.
+
+### Fix
+
+Normalise the storage key in `fetch_prices` to UTC hour-aligned `.000Z` format — matches the lookup format regardless of which ISO variant the API uses. No callers touched, no behavior change other than "lookups now succeed".
+
+### Internal
+- ~10 lines added to `stromligning.py`. Existing imports of `datetime`, `timezone` reused.
+- Unparseable date fields are skipped with a debug log instead of crashing.
+
+---
+
 ## [0.39.0] — 2026-05-25
 
 ### Added — Auto-Full on negative buy price (opt-in)
