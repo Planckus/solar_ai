@@ -9,6 +9,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.38.4] — 2026-05-25
+
+### Fixed — Intra-hour solar correction no longer poisoned by export-floor curtailment
+
+The v0.28.6 short-term solar learner (compares actual PV to Solcast in 15-min slots, computes a rolling ratio over the last 4 slots, applies with 2-hour linear decay) had no guard against the solar export floor. When the user's `min_export_price` is crossed and Solar AI drops the export limit to 25 W, the inverter clips PV to match local load. The learner reads actual=1 kW vs forecast=8 kW, computes ratio=0.125 (clamped to 0.3), and that bad ratio drives the rolling factor for up to 2 hours after the floor closes. The "justeret 24h" / "justeret 6h" forecasts then read ~30% of raw for the rest of the afternoon on otherwise-normal days.
+
+The v0.30.1 fix only filtered the per-hour accuracy learner. The intra-hour learner was missed.
+
+v0.38.4 extends the filter: any 15-min slot in which `_current_floor_block is not None` for at least one tick is discarded at rollover. Its residual is not appended to the ring buffer, and `_st_solar_factor` keeps the last valid value computed from non-curtailed slots. The forecast adjustments resume normally once the floor closes and a fresh clean slot completes.
+
+### New
+- `coordinator._st_solar_floor_seen_during_slot: bool` — sticky per-slot flag.
+- `coordinator._st_solar_last_curtailed_skip_iso: str | None` — diagnostic timestamp of the most recent skipped slot, exposed on the data dict as `solar_short_term_last_curtailed_skip` so the dashboard / logbook can confirm the filter is firing.
+- INFO-level log entry on each skip: `Short-term solar correction: skipping slot HH:MM — solar export floor was active …`
+
+### Trade-off
+
+A few times a year, midday floor blocks during sunny low-price periods will discard up to ~8 slots of learning data. Acceptable — the alternative (factor stuck at 0.3 for 2 hours after the floor closes) was significantly worse.
+
+---
+
 ## [0.38.3] — 2026-05-25
 
 ### Fixed — EV stop-window no longer resets on noise blips above min

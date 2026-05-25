@@ -326,6 +326,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._st_solar_min_w: float = 200.0
         # Horizon over which the short-term correction decays back to 1.0
         self._st_solar_decay_hours: float = 2.0
+        # v0.38.4 — Sticky flag: True if the solar export floor was active
+        # at ANY tick during the current accumulating 15-min slot. When True
+        # at slot rollover, the slot's residual is discarded — the actual
+        # PV reading was clipped by the export-limit register, so the
+        # actual/forecast ratio is artificially small. Mirrors the v0.30.1
+        # filter that was added for the per-hour accuracy learner; without
+        # it, a 2-hour midday floor block could clamp `_st_solar_factor` to
+        # 0.3 for the next 2 hours, skewing the "justeret" forecast even
+        # after the floor closed.
+        self._st_solar_floor_seen_during_slot: bool = False
+        # Diagnostic — ISO timestamp of the most recent slot we skipped
+        # because of curtailment. None = never. Exposed on the data dict
+        # so the dashboard can confirm the filter is firing.
+        self._st_solar_last_curtailed_skip_iso: str | None = None
         # v0.36.2 — PV-curtailment signal cached from the inverter's
         # "PV Power Limited Flag" holding register (49251). Updated once
         # per coordinator slow tick by `_async_update_data`. Consumed by
@@ -1537,6 +1551,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             solar_short_term_samples=len(self._st_solar_residuals),
             solar_short_term_recent=list(self._st_solar_residuals[-4:]),
             solar_short_term_decay_h=self._st_solar_decay_hours,
+            # v0.38.4 — diagnostic: timestamp of the most recent slot the
+            # intra-hour learner dropped because the export floor was active.
+            # None = never. Lets the dashboard / logbook confirm the
+            # curtailment filter is firing as expected.
+            solar_short_term_last_curtailed_skip=self._st_solar_last_curtailed_skip_iso,
             **ev_telemetry,
             **savings,
         )
@@ -2213,9 +2232,26 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 self._st_solar_forecast_sum_w / self._st_solar_forecast_count
                 if self._st_solar_forecast_count > 0 else 0.0
             )
+            # v0.38.4 — Discard the slot if the export floor was active at
+            # any tick during it. The actual PV reading was clipped by the
+            # export-limit register, so the actual/forecast ratio is
+            # artificially small. Letting it through corrupts
+            # `_st_solar_factor` for up to 2 hours after the floor closes.
+            if self._st_solar_floor_seen_during_slot:
+                self._st_solar_last_curtailed_skip_iso = (
+                    prev_start + timedelta(minutes=15)
+                ).isoformat()
+                _LOGGER.info(
+                    "Short-term solar correction: skipping slot %s — solar "
+                    "export floor was active (actual=%.0fW forecast=%.0fW). "
+                    "Sample dropped to prevent ratio corruption.",
+                    prev_start.strftime("%H:%M"),
+                    actual_mean_w, forecast_mean_w,
+                )
             # Only emit a residual when there's meaningful sun in BOTH
             # readings (avoids dawn/dusk noise and night divide-by-zero)
-            if (
+            # AND the slot wasn't curtailed.
+            elif (
                 actual_mean_w >= self._st_solar_min_w
                 and forecast_mean_w >= self._st_solar_min_w
             ):
@@ -2247,6 +2283,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._st_solar_pv_count = 0
             self._st_solar_forecast_sum_w = 0.0
             self._st_solar_forecast_count = 0
+            self._st_solar_floor_seen_during_slot = False   # v0.38.4
+
+        # v0.38.4 — Mark this slot as curtailed if the floor block is open
+        # at this tick. Sticky for the whole slot — even a single curtailed
+        # tick poisons the slot's actual/forecast ratio, so we play it safe.
+        if self._current_floor_block is not None:
+            self._st_solar_floor_seen_during_slot = True
 
         # Always accumulate the live readings for the current slot
         if pv_power_w is not None and pv_power_w >= 0:
