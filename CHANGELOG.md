@@ -9,6 +9,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.3] — 2026-05-25
+
+### Fixed — UnboundLocalError in v0.39.0 auto-Full call
+
+The v0.39.0 commit added a call to `_maybe_auto_full_negative_price` that referenced `current_buy_price` — a variable that is only defined inside a later grid-charge conditional block in `_async_update_data`. On code paths that didn't enter that block, the variable was undefined and the coordinator threw `UnboundLocalError`, putting the integration in `setup_retry` loop.
+
+Caught during the staged-and-tested cycle before the public push — no GitHub release was made with the broken v0.39.0 / v0.39.1 / v0.39.2 in it. Live HA was briefly in `setup_retry` until v0.39.3 landed.
+
+Fix: use `buy_price_next_slot` instead — same semantic value (the all-in buy price for the current/next slot), defined unconditionally at line ~880 in both the `if grid_slots:` and `else:` branches.
+
+### Internal
+- One-line change to `_async_update_data` swapping the variable name.
+- Inline comment marks v0.39.3 fix so future readers see the bug-and-fix context together.
+
+---
+
 ## [0.39.2] — 2026-05-25
 
 ### Added — `binary_sensor.solar_ai_eksport_stop_aktiv` for the EV/OCPP tab
