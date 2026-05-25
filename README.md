@@ -29,6 +29,12 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ## Recent releases
 
+### v0.38.x — EV scheduling on the dashboard + curtailment-probe refinements
+
+- **Native EV scheduling, owned end-to-end by the integration.** v0.38.0 drops the dependency on HA's `schedule.*` helper integration. Schedule data lives in `coordinator._stored["ev_schedules"]` and is edited entirely from the dashboard — no Settings → Helpers detour, no Configure-flow step. Four slots per install with mode (PV / PV+Bat / Full), enabled toggle, start/end times (native HA time picker), and per-weekday chips. New services: `add_schedule_slot`, `remove_schedule_slot`, `toggle_schedule_day`, `set_schedule_days`. Migration imports any pre-existing `ev_schedule_links` automatically; the old `schedule.*` helpers stay around but are no longer read.
+- **Curtailment-probe trigger fixes.** v0.38.1 dropped the `battery_near_full` precondition that was falsely blocking the probe when the battery had drifted a few percent (car-swap mid-curtailment, post-cloud restart). v0.38.2 added a `_current_floor_block is not None` gate so the probe is now coupled 1:1 to the user's price-floor feature — fires only during price-floor blocks, ignores rare non-price-floor curtailment cases that the EV couldn't help with anyway. Added a 15-minute cool-down after a failed probe (MPPT didn't lift) so grid-import waste is capped.
+- **Stop-window stuck-in-COOLING fix.** v0.38.3 made the stop timer require ≥ 10 s of sustained surplus above min before clearing, so 50–200 W noise blips on borderline surplus no longer keep the controller perpetually "about to stop" while the charger holds at minimum from solar. Telemetry override during cool-down hold reports the actual commanded power (`target_kw`) and an honest reason ("oplader fortsætter ved minimum… i nedkøling") instead of `target_kw = 0 / "stoppet"`.
+
 ### v0.37.x — OCPP transaction recovery + EV schedule modes on the dashboard
 
 - **OCPP transaction tracking survives HA restarts.** Multi-restart sessions used to lose the active `transactionId`, leaving Solar AI unable to send `RemoteStopTransaction` — the charger kept drawing while the integration thought IDLE. v0.37.0 adds three coordinated recovery paths: live capture of `transactionId` from every `MeterValues` frame (with drift detection), persistence of session state alongside vendor/model metadata, and `TriggerMessage(MeterValues)` on reconnect so a fresh frame arrives within ~2 s.
