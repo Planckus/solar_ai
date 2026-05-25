@@ -2587,13 +2587,28 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_probe_cooldown_until is not None
             and now_ts < self._ev_probe_cooldown_until
         )
+        # v0.38.2 — Restrict the probe to fire only while Solar AI's own
+        # price-floor block is open (`_current_floor_block is not None`).
+        # That couples the probe 1:1 to the user-controlled price floor:
+        # the EV starts on a kick-in only when the user's configured min
+        # export price has been crossed and Solar AI has dropped the
+        # export limit. Catches the bread-and-butter case (battery-full
+        # during a price-floor period) and ignores the rare "curtailed
+        # for other reasons" cases (grid-operator hard limit, faults)
+        # that the EV can't reliably help with anyway. In-flight probes
+        # are still allowed to run out their 60 s window if the floor
+        # closes mid-probe — that avoids stuttering when the price
+        # hovers near the floor.
+        floor_active = self._current_floor_block is not None
         if (pv_curtailed
+                and floor_active
                 and self._ev_probe_started_at is None
                 and not probe_cooldown_active):
             self._ev_probe_started_at = now_ts
             _LOGGER.info(
                 "EV controller: PV-limited flag active (reg 49251=1) "
-                "— starting %d s curtailment probe at min charge to lift MPPT.",
+                "AND price-floor block open — starting %d s curtailment "
+                "probe at min charge to lift MPPT.",
                 EV_CURTAILMENT_PROBE_SECONDS,
             )
 
