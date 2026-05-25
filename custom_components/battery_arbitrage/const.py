@@ -192,6 +192,16 @@ EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS = 900   # 15 minutes
 # even though the physical outcome is fine).
 EV_STOP_RECOVERY_SECONDS = 10
 
+# v0.38.5 — Mirror image of EV_STOP_RECOVERY_SECONDS for the start-window
+# side. When the EV is IDLE with a start timer running (surplus has been
+# above min for some of the start_window already), a single tick of
+# surplus dipping below min should NOT immediately reset the timer to
+# zero — that's the cause of "EV won't start on borderline surplus even
+# though it averages above min" (mirror of the v0.38.3 stop-window bug).
+# Require sustained below-min for this many seconds before clearing the
+# start timer.
+EV_START_DROP_TIMEOUT_SECONDS = 10
+
 # EV control loop (v0.26.0) — decoupled from main coordinator fast-poll.
 # Lets the user match the loop cadence to their charger's OCPP write tolerance,
 # and tune the start/stop windows in seconds (not ticks).
