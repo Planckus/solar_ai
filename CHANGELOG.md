@@ -9,6 +9,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.38.3] — 2026-05-25
+
+### Fixed — EV stop-window no longer resets on noise blips above min
+
+Observed: a car had been plugged in for 30 minutes drawing ~3.9 kW (the 6 A OCPP minimum) entirely from solar — but the dashboard sensors read `target_kw = 0`, `ev_status = COOLING`, `reason = "stoppet"`. The car was physically charging the whole time while Solar AI's state machine thought it was perpetually "about to stop".
+
+Root cause — two issues:
+
+1. **Stop timer cleared on a single tick of recovery.** The anti-flap window for stopping (`stop_window_seconds`, default 180 s) was intended to absorb cloud-flicker on the surplus signal. But the implementation cleared `_ev_surplus_below_min_since_ts` the moment surplus crossed *briefly* above min — even for a single 10-second tick. When the EV is drawing close to min on borderline surplus, the surplus oscillates by 50–200 W. Each oscillation cleared the stop timer, so the 180 s window never completed and the charger held at min indefinitely. From the user's perspective the car was charging fine; from Solar AI's perspective it was always "in the process of stopping but never quite there".
+
+2. **Misleading status during the hold.** While in this state, the controller was actively sending the last-commanded amps (e.g. 6 A) to the charger every tick — but `target_kw`, `target_amps`, and the `reason` sensor all reported as if the EV were stopped. `last_commanded_amps = 6` was the only sensor telling the truth.
+
+### Changes
+
+- **`_apply_ev_time_window` requires sustained recovery before clearing the stop timer.** New constant `EV_STOP_RECOVERY_SECONDS = 10`. When charging with a pending stop, surplus must hold above min for ≥ 10 s before the cool-down resets. Brief noise blips no longer interrupt the count-down.
+- **Telemetry reflects reality during cool-down hold.** When `final_amps > 0` while `target_kw == 0` (the cool-down-holding case), `reported_target_kw` is overridden to the actual commanded power and `reason` becomes "PV: overskud N.N kW < min — oplader fortsætter ved minimum (X.X kW) i nedkøling (Ns)". The dashboard now matches the physical state of the charger.
+
+### Internal
+- One-line clamp + extra branch in `_apply_ev_time_window`.
+- Reason / target_kw override at the end of `_run_ev_controller`.
+
+---
+
 ## [0.38.2] — 2026-05-25
 
 ### Changed — Curtailment probe now only fires during price-floor blocks
