@@ -183,6 +183,15 @@ EV_CURTAILMENT_PROBE_SECONDS = 60
 # previous session's failed probe.
 EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS = 900   # 15 minutes
 
+# v0.38.3 — Once the EV stop-window is armed (surplus dipped below min
+# and we're counting down to actually stop), require this many seconds
+# of sustained ABOVE-min surplus before clearing the stop timer. Without
+# this, a single ~50 W noise blip clears the timer and the system can
+# never actually transition to stopped — it spends hours in COOLING
+# while the charger keeps drawing at min from solar (cosmetically wrong
+# even though the physical outcome is fine).
+EV_STOP_RECOVERY_SECONDS = 10
+
 # EV control loop (v0.26.0) — decoupled from main coordinator fast-poll.
 # Lets the user match the loop cadence to their charger's OCPP write tolerance,
 # and tune the start/stop windows in seconds (not ticks).
