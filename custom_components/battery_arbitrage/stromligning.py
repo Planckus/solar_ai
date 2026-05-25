@@ -137,10 +137,33 @@ async def fetch_prices(
 
     out: dict[str, dict[str, Any]] = {}
     for entry in data.get("prices", []):
-        ts = entry.get("date")
-        if not ts:
+        ts_raw = entry.get("date")
+        if not ts_raw:
             continue
-        out[ts] = entry
+        # v0.39.1 — Normalise the slot key. Strømligning's `date` field
+        # can come back in either of two ISO formats depending on the
+        # API revision: "2026-05-20T07:00:00+00:00" or
+        # "2026-05-20T07:00:00.000Z". The lookups in
+        # `_compute_buy_price` (coordinator) and `_current_stromligning_entry`
+        # (breakdown sensor) both use the `.000Z` variant. Without
+        # normalisation, lookups silently miss every slot — the
+        # buy-price breakdown attributes all read 0.0 and the
+        # coordinator falls back to the manual stack despite the
+        # cache being populated. Normalise to UTC hour-aligned
+        # `.000Z` format here so the storage key always matches the
+        # lookup key regardless of which API variant we got.
+        try:
+            dt = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+            canonical = dt.astimezone(timezone.utc).replace(
+                minute=0, second=0, microsecond=0,
+            ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        except (ValueError, AttributeError) as err:
+            _LOGGER.debug(
+                "Strømligning entry has unparseable date '%s' (%s) — skipping",
+                ts_raw, err,
+            )
+            continue
+        out[canonical] = entry
     return out
 
 
