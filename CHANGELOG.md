@@ -9,6 +9,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.0] — 2026-05-25
+
+### Added — Auto-Full on negative buy price (opt-in)
+
+When enabled, the integration automatically promotes the EV master mode to **Full** during negative-price periods and reverts to the previous mode when the price-floor block closes. Designed for the specific situation where:
+
+1. The buy price drops to or below 0 DKK/kWh — you're being paid to import
+2. The export floor block is active — solar is being clipped because price is below your `min_export_price`
+3. Free grid + wasted PV simultaneously — both reasons to charge the EV as hard as possible
+
+### Behaviour
+
+| Direction | Trigger |
+|---|---|
+| **Switch to Full (auto)** | Opt-in switch ON *AND* EV plugged in *AND* master mode ≠ Full *AND* `buy_price ≤ 0` sustained for `AUTO_FULL_DEBOUNCE_SECONDS` (5 min) |
+| **Switch back (auto)** | Price-floor block transitions from active → inactive (export price rises back above `min_export_price`) |
+
+The pre-promotion mode is stashed and restored on the revert. If you were in PV, you go back to PV. If Scheduled, back to Scheduled. The revert trigger is the floor-block-close edge rather than buy-price-going-positive — it's a single discrete signal Solar AI already tracks, no zero-crossing noise.
+
+### Safety measures
+
+1. **Opt-in.** New switch `switch.solar_ai_auto_full_paa_negativ_pris` — default OFF. Backwards-compatible.
+2. **Manual override wins.** If you manually change the master mode while auto-Full is active, the auto state clears and stays cleared until the next negative-price event.
+3. **EV unplug resets.** Disconnecting clears the auto state. Next plug-in starts clean.
+4. **Verbose logging.** Every transition logs at INFO level so the logbook tells you what Solar AI did and why.
+
+### Known trade-off
+
+If the buy price goes briefly positive (e.g. +0.02 DKK/kWh) while the floor block is still active, you stay in Full mode and pay full price for grid import. Worst-case ~0.24 DKK/hour. Acceptable for the simplicity of the trigger.
+
+### Internal
+- `CONF_AUTO_FULL_ON_NEGATIVE_PRICE` config key, `AUTO_FULL_DEBOUNCE_SECONDS = 300`.
+- New coordinator state: `_ev_auto_full_active_since_ts`, `_ev_pre_auto_full_mode`, `_ev_neg_price_seen_since_ts`, `_ev_prev_floor_block_active`.
+- New method `_maybe_auto_full_negative_price` called once per main update tick after the floor state has been updated.
+- `set_ev_mode` accepts a private `_from_auto_full=True` flag so the coordinator's own auto-promotion calls can be distinguished from user-triggered mode changes — manual overrides clear the auto state.
+- `BatteryArbitrageAutoFullSwitch` entity in `switch.py`.
+
+---
+
 ## [0.38.5] — 2026-05-25
 
 ### Fixed — EV start-window no longer resets on noise blips below min

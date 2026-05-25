@@ -432,7 +432,8 @@
       "ev_schedule_slot_1_enabled": { "name": "Schedule 1 enabled" },
       "ev_schedule_slot_2_enabled": { "name": "Schedule 2 enabled" },
       "ev_schedule_slot_3_enabled": { "name": "Schedule 3 enabled" },
-      "ev_schedule_slot_4_enabled": { "name": "Schedule 4 enabled" }
+      "ev_schedule_slot_4_enabled": { "name": "Schedule 4 enabled" },
+      "auto_full_on_negative_price": { "name": "Auto-Full on negative price" }
     },
     "time": {
       "ev_schedule_slot_1_start": { "name": "Schedule 1 start" },
