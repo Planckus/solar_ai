@@ -167,6 +167,9 @@ from .const import (
     EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS,
     EV_STOP_RECOVERY_SECONDS,
     EV_START_DROP_TIMEOUT_SECONDS,
+    CONF_AUTO_FULL_ON_NEGATIVE_PRICE,
+    DEFAULT_AUTO_FULL_ON_NEGATIVE_PRICE,
+    AUTO_FULL_DEBOUNCE_SECONDS,
     CONF_EV_CONTROL_INTERVAL_SECONDS,
     CONF_EV_START_WINDOW_SECONDS,
     CONF_EV_STOP_WINDOW_SECONDS,
@@ -305,6 +308,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # start timer is cleared (genuine drop). Brief blips don't reset
         # it — mirror image of the v0.38.3 stop-recovery logic.
         self._ev_arm_drop_since_ts: datetime | None = None
+        # v0.39.0 — Auto-promote-to-Full on negative buy price state.
+        # When `auto_full_on_negative_price` is enabled and the buy price
+        # has been ≤ 0 for AUTO_FULL_DEBOUNCE_SECONDS, the coordinator
+        # auto-saves the current master mode and switches to Full. On the
+        # floor-block-close edge, the previous mode is restored. If the
+        # user manually changes mode while in auto-Full, the auto state
+        # is cleared and stays cleared until the next negative-price
+        # event. Reset on EV disconnect.
+        self._ev_neg_price_seen_since_ts: datetime | None = None
+        self._ev_auto_full_active_since_ts: datetime | None = None
+        self._ev_pre_auto_full_mode: str | None = None
+        # Tracks the floor-block state on the prior tick, so we can
+        # detect the active → inactive edge that triggers auto-revert.
+        self._ev_prev_floor_block_active: bool = False
         self._ev_prev_connected: bool = False               # last known plug state
         self._ev_last_reason: str = ""                      # human-readable status
         # Battery-lock state (v0.27.2): when EV is FULL-mode charging, we
@@ -1439,6 +1456,17 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         )
         if flag is not None:
             self._pv_power_limited_flag = flag
+
+        # ---- v0.39.0 Auto-Full on negative buy price ----
+        # When the opt-in switch is on and buy_price ≤ 0 for ≥
+        # AUTO_FULL_DEBOUNCE_SECONDS AND the EV is plugged in AND the
+        # master mode is not already Full, save the current mode and
+        # switch to Full. On the next floor-block-close edge, restore
+        # the saved mode. Manual mode changes and EV unplug both clear
+        # the auto state. See operating_log v0.39.0 design lock entry.
+        await self._maybe_auto_full_negative_price(
+            now_local=now, buy_price_now=current_buy_price,
+        )
 
         # ---- savings tracking (learning tick only — accumulates per interval_h) ----
         if is_learning_tick:
@@ -3784,11 +3812,28 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 return i
         return None
 
-    def set_ev_mode(self, new_mode: str) -> None:
-        """Public setter used by the mode select entity."""
+    def set_ev_mode(self, new_mode: str, *, _from_auto_full: bool = False) -> None:
+        """Public setter used by the mode select entity.
+
+        v0.39.0 — `_from_auto_full=True` is set when the negative-price
+        auto-promotion calls this setter, so we can distinguish that path
+        from a user-triggered mode change. A user-triggered change while
+        auto-Full is active clears the auto state — the user's choice wins.
+        """
         if new_mode not in (EV_MODE_LOCKED, EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL, EV_MODE_SCHEDULED):
             _LOGGER.warning("EV controller: unknown mode '%s' ignored", new_mode)
             return
+        # v0.39.0 — user manually changed the mode while auto-Full was
+        # active. Clear the auto state. The next negative-price event
+        # will start fresh.
+        if not _from_auto_full and self._ev_auto_full_active_since_ts is not None:
+            _LOGGER.info(
+                "EV controller: auto-Full state cleared because user "
+                "manually changed master mode (%s → %s).",
+                self._ev_active_mode, new_mode,
+            )
+            self._ev_auto_full_active_since_ts = None
+            self._ev_pre_auto_full_mode = None
         self._ev_active_mode = new_mode
         self._stored["ev_active_mode"] = new_mode
         # Reset hysteresis state so the new mode takes effect on the next loop iteration
@@ -3799,6 +3844,118 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Persist asynchronously
         if self.hass:
             self.hass.async_create_task(self._store.async_save(self._stored))
+
+    async def _maybe_auto_full_negative_price(
+        self, now_local: datetime, buy_price_now: float,
+    ) -> None:
+        """v0.39.0 — Promote EV mode to Full during negative-price periods
+        and revert when the price-floor block closes.
+
+        Behaviour
+        ---------
+        - Opt-in via `auto_full_on_negative_price` storage flag (the switch
+          entity). Default OFF.
+        - Promotion gate: switch ON + EV plugged + master mode != Full +
+          buy_price ≤ 0 sustained for AUTO_FULL_DEBOUNCE_SECONDS.
+        - Revert gate: floor block transitions from active to inactive.
+        - Pre-promotion mode is stashed and restored on revert. Manual
+          mode changes clear the auto state (see `set_ev_mode`).
+        - EV unplug clears the auto state and the debounce timestamp.
+
+        This logic is the only place that flips master mode automatically.
+        """
+        enabled = bool(self._stored.get(
+            "auto_full_on_negative_price",
+            self.config.get(CONF_AUTO_FULL_ON_NEGATIVE_PRICE,
+                            DEFAULT_AUTO_FULL_ON_NEGATIVE_PRICE),
+        ))
+        if not enabled:
+            # Feature off — clear any lingering state but otherwise no-op.
+            if self._ev_auto_full_active_since_ts is not None:
+                self._ev_auto_full_active_since_ts = None
+                self._ev_pre_auto_full_mode = None
+            self._ev_neg_price_seen_since_ts = None
+            self._ev_prev_floor_block_active = self._current_floor_block is not None
+            return
+
+        # EV plug state — read same way as the EV controller.
+        charger_id = self.config.get(CONF_EV_OCPP_CHARGE_POINT_ID, "")
+        ev_connected = False
+        if charger_id:
+            try:
+                status = self._get_ocpp_status(charger_id)
+                ev_connected = status in (
+                    "Preparing", "Charging", "SuspendedEV",
+                    "SuspendedEVSE", "Finishing",
+                )
+            except Exception:  # noqa: BLE001
+                ev_connected = False
+        if not ev_connected:
+            # Clear all auto state on disconnect — next plug-in starts clean.
+            if (self._ev_auto_full_active_since_ts is not None
+                    or self._ev_neg_price_seen_since_ts is not None):
+                _LOGGER.info(
+                    "Auto-Full: EV disconnected — clearing auto state.",
+                )
+            self._ev_auto_full_active_since_ts = None
+            self._ev_pre_auto_full_mode = None
+            self._ev_neg_price_seen_since_ts = None
+            self._ev_prev_floor_block_active = self._current_floor_block is not None
+            return
+
+        floor_active = self._current_floor_block is not None
+
+        # ---- Revert edge: floor was active last tick, inactive this tick ----
+        if (self._ev_prev_floor_block_active and not floor_active
+                and self._ev_auto_full_active_since_ts is not None):
+            restore_mode = self._ev_pre_auto_full_mode or EV_MODE_PV
+            _LOGGER.info(
+                "Auto-Full: price-floor block closed — restoring master "
+                "mode to %s (had been auto-promoted from %s to Full at %s).",
+                restore_mode, self._ev_pre_auto_full_mode,
+                self._ev_auto_full_active_since_ts.isoformat(timespec="seconds"),
+            )
+            self._ev_auto_full_active_since_ts = None
+            self._ev_pre_auto_full_mode = None
+            self.set_ev_mode(restore_mode, _from_auto_full=True)
+            # Don't return — still update prev_floor + maybe re-promote.
+
+        self._ev_prev_floor_block_active = floor_active
+
+        # ---- Promotion gate ----
+        # Track sustained-below-zero on the buy price.
+        try:
+            buy_price = float(buy_price_now)
+        except (TypeError, ValueError):
+            buy_price = 0.001   # treat non-numeric as positive — no promotion
+        if buy_price <= 0.0:
+            if self._ev_neg_price_seen_since_ts is None:
+                self._ev_neg_price_seen_since_ts = now_local
+        else:
+            self._ev_neg_price_seen_since_ts = None
+
+        if self._ev_auto_full_active_since_ts is not None:
+            return   # already promoted, nothing to do
+        if self._ev_neg_price_seen_since_ts is None:
+            return   # buy price not currently negative
+        if self._ev_active_mode == EV_MODE_FULL:
+            return   # user already in Full — no promotion needed
+        elapsed = (now_local - self._ev_neg_price_seen_since_ts).total_seconds()
+        if elapsed < AUTO_FULL_DEBOUNCE_SECONDS:
+            return   # not sustained long enough
+
+        # All gates passed — promote.
+        prev_mode = self._ev_active_mode
+        self._ev_pre_auto_full_mode = prev_mode
+        self._ev_auto_full_active_since_ts = now_local
+        _LOGGER.info(
+            "Auto-Full: buy_price=%.4f DKK/kWh has been ≤ 0 for %.0fs "
+            "(threshold %ds) — promoting master mode %s → Full. Will "
+            "auto-revert to %s when the price-floor block closes.",
+            buy_price, elapsed, AUTO_FULL_DEBOUNCE_SECONDS,
+            prev_mode, prev_mode,
+        )
+        self.set_ev_mode(EV_MODE_FULL, _from_auto_full=True)
 
     # ------------------------------------------------------------------ #
     # Decoupled EV control loop (v0.26.0)                                   #

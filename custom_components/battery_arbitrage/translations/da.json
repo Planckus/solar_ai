@@ -436,7 +436,8 @@
       "ev_schedule_slot_1_enabled": { "name": "Skema 1 aktiveret" },
       "ev_schedule_slot_2_enabled": { "name": "Skema 2 aktiveret" },
       "ev_schedule_slot_3_enabled": { "name": "Skema 3 aktiveret" },
-      "ev_schedule_slot_4_enabled": { "name": "Skema 4 aktiveret" }
+      "ev_schedule_slot_4_enabled": { "name": "Skema 4 aktiveret" },
+      "auto_full_on_negative_price": { "name": "Auto-Fuld ved negativ pris" }
     },
     "time": {
       "ev_schedule_slot_1_start": { "name": "Skema 1 starttid" },
