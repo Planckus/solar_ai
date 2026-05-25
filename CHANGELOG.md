@@ -9,6 +9,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.2] — 2026-05-25
+
+### Added — `binary_sensor.solar_ai_eksport_stop_aktiv` for the EV/OCPP tab
+
+A live indicator that the solar export floor block is currently open — i.e. Solar AI has dropped the export limit register (46616) to 25 W because the live export price is at or below the user's configured `min_export_price`. Useful for dashboard chips that tell the user at a glance "your panels are being clipped right now".
+
+- **state**: `on` when `_current_floor_block is not None`, else `off`
+- **attributes**:
+  - `since` — ISO timestamp the current block opened
+  - `floor` — the price floor that triggered it (DKK/kWh)
+  - `price_at_start` — the export price when the block opened (DKK/kWh)
+
+### Internal
+- 4 new keys on the coordinator's data dict: `export_stop_active`, `export_stop_start_ts`, `export_stop_floor`, `export_stop_price_at_start`. All derived from existing `_current_floor_block` state — no new internal state.
+- New entry in `BINARY_SENSORS` tuple in `binary_sensor.py`. Translation keys in en + da.
+- Dashboard chip on the EV/OCPP tab to ship as a Lovelace push (separate from the integration code).
+
+---
+
 ## [0.39.1] — 2026-05-25
 
 ### Fixed — Strømligning cache lookups always failed silently

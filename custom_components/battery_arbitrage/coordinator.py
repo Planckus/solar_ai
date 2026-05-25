@@ -1537,6 +1537,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # entity to read regardless of buy_price_mode.
             buy_price_next_slot=buy_price_next_slot,
             export_price=export_price,
+            # v0.39.2 — export-stop indicator. True when the solar export
+            # floor block is currently open (export limit register dropped
+            # to 25 W because the live export price ≤ min_export_price).
+            # Backs `binary_sensor.solar_ai_eksport_stop_aktiv` for the
+            # EV/OCPP tab chip.
+            export_stop_active=self._current_floor_block is not None,
+            export_stop_start_ts=(
+                self._current_floor_block.get("start_ts")
+                if self._current_floor_block else None
+            ),
+            export_stop_floor=(
+                self._current_floor_block.get("floor")
+                if self._current_floor_block else None
+            ),
+            export_stop_price_at_start=(
+                self._current_floor_block.get("price_at_start")
+                if self._current_floor_block else None
+            ),
             grid_arbitrage_spread=grid_arbitrage_spread,
             battery_soc=battery_soc,
             cell_temp_low=cell_temp_low,

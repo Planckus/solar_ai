@@ -387,6 +387,7 @@
     },
     "binary_sensor": {
       "should_export": { "name": "Bør eksportere" },
+      "export_stop_active": { "name": "Eksport-stop aktiv" },
       "should_grid_charge": { "name": "Bør netoplade" },
       "vacation_mode": {
         "name": "Tilstedeværelse",
