@@ -9,6 +9,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.38.2] — 2026-05-25
+
+### Changed — Curtailment probe now only fires during price-floor blocks
+
+The probe trigger gains a third condition: `_current_floor_block is not None` (Solar AI's existing flag for "price is below the user-configured minimum export floor right now and Solar AI has dropped the export limit to 25 W").
+
+Before: probe fired whenever the inverter reported PV curtailment (reg `49251 = 1`), regardless of the underlying cause. That caught the bread-and-butter case (battery full while the price-floor block was open) plus a handful of rare edge cases (grid-operator hard limits, frequency-response events, inverter faults).
+
+After: probe fires only when curtailment AND the price-floor block is open. The rare cases are skipped — they were a few hours per year at most on typical residential installs, and the probe couldn't reliably help with grid-operator limits anyway (MPPT can't lift past a hard cap).
+
+What this buys: 1:1 correlation between "EV started on a kick-in" and "Solar AI's price-floor logic is currently active". Easier to reason about, easier to debug, and exactly matches what the user actually wants the feature to do.
+
+In-flight probes are unaffected if the floor closes mid-probe — the existing window-expiry / flag-clears end conditions still apply. No stuttering when the price hovers near the floor.
+
+### Internal
+- Single-line condition added to the v0.38.1 probe trigger in `_run_ev_controller`.
+- Log message updated to mention the floor-block precondition.
+
+---
+
 ## [0.38.1] — 2026-05-25
 
 ### Fixed — Curtailment probe now triggers on car-swap and post-cloud restart
