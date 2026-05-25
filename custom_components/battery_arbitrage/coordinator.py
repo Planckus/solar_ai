@@ -165,6 +165,7 @@ from .const import (
     EV_MIN_AMP_CHANGE,
     EV_CURTAILMENT_PROBE_SECONDS,
     EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS,
+    EV_STOP_RECOVERY_SECONDS,
     CONF_EV_CONTROL_INTERVAL_SECONDS,
     CONF_EV_START_WINDOW_SECONDS,
     CONF_EV_STOP_WINDOW_SECONDS,
@@ -2803,12 +2804,44 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if want_lock != self._ev_battery_locked:
             await self._set_battery_lock(want_lock)
 
+        # v0.38.3 — honest telemetry during COOLING. When the controller
+        # wants to stop (target_kw == 0) but the anti-flap window is still
+        # holding the last-commanded amps at the charger, the user-facing
+        # `reason` and `target_kw` should reflect reality: charging *is*
+        # continuing at minimum during the cool-down, not "stopped".
+        # Without this override the dashboard reads target=0 / "stoppet"
+        # while the charger is drawing 3.9 kW — confusing.
+        reported_target_kw = target_kw
+        if final_amps > 0 and target_kw <= 0.0:
+            # The hysteresis held us in charging-at-minimum mode.
+            reported_target_kw = round(
+                final_amps * EV_VOLTAGE * EV_PHASES / 1000.0, 2,
+            )
+            cooling_left_s: int | None = None
+            if self._ev_surplus_below_min_since_ts is not None:
+                stop_window = int(self.config.get(
+                    CONF_EV_STOP_WINDOW_SECONDS, DEFAULT_EV_STOP_WINDOW_SECONDS,
+                ))
+                elapsed = (datetime.now() - self._ev_surplus_below_min_since_ts).total_seconds()
+                cooling_left_s = max(0, int(stop_window - elapsed))
+            if cooling_left_s is not None:
+                reason = (
+                    f"PV: overskud {net_surplus_for_ev_kw:.1f} kW < min — "
+                    f"oplader fortsætter ved minimum ({reported_target_kw:.1f} kW) "
+                    f"i nedkøling ({cooling_left_s}s)"
+                )
+            else:
+                reason = (
+                    f"PV: overskud {net_surplus_for_ev_kw:.1f} kW < min — "
+                    f"oplader fortsætter ved minimum ({reported_target_kw:.1f} kW)"
+                )
+
         self._ev_last_reason = reason
         # v0.27.5: show NET surplus on the dashboard (after battery's current
         # absorption), not the raw PV-minus-house-load number. Below the
         # priority threshold this will show 0 because the battery is
         # consuming everything.
-        return self._ev_telemetry(target_kw, final_amps, net_surplus_for_ev_kw, reason)
+        return self._ev_telemetry(reported_target_kw, final_amps, net_surplus_for_ev_kw, reason)
 
     def _compute_ev_target_kw(
         self, mode: str, solar_surplus: float, battery_soc: float,
@@ -3267,7 +3300,25 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 return target_amps                         # confirmed start
             return 0                                       # not enough sustained surplus yet
 
-        # Already charging — live ramp, no hysteresis on amperage
+        # Already charging — two sub-cases.
+        if self._ev_surplus_below_min_since_ts is not None:
+            # v0.38.3 — We're in COOLING (stop pending). A momentary blip of
+            # surplus above min should NOT reset the stop timer — that's the
+            # cause of the "stuck in COOLING for 30 minutes while the charger
+            # keeps drawing" symptom. Require EV_STOP_RECOVERY_SECONDS of
+            # sustained recovery before clearing the stop timer.
+            if self._ev_surplus_above_min_since_ts is None:
+                self._ev_surplus_above_min_since_ts = now
+            elapsed_above = (now - self._ev_surplus_above_min_since_ts).total_seconds()
+            if elapsed_above < EV_STOP_RECOVERY_SECONDS:
+                # Brief blip — keep the stop timer running, hold last amps.
+                return self._ev_last_amps
+            # Sustained recovery — surplus has held above min long enough.
+            self._ev_surplus_above_min_since_ts = None
+            self._ev_surplus_below_min_since_ts = None
+            return target_amps
+
+        # Already charging, no pending stop — normal live ramp.
         self._ev_surplus_above_min_since_ts = None
         self._ev_surplus_below_min_since_ts = None
         return target_amps
