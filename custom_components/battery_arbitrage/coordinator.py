@@ -164,6 +164,7 @@ from .const import (
     EV_MAX_AMP_STEP_PER_TICK,
     EV_MIN_AMP_CHANGE,
     EV_CURTAILMENT_PROBE_SECONDS,
+    EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS,
     CONF_EV_CONTROL_INTERVAL_SECONDS,
     CONF_EV_START_WINDOW_SECONDS,
     CONF_EV_STOP_WINDOW_SECONDS,
@@ -334,6 +335,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # probe ends when the flag clears or `EV_CURTAILMENT_PROBE_SECONDS`
         # elapses, whichever comes first.
         self._ev_probe_started_at: datetime | None = None
+        # v0.38.1 — Cool-down after a probe expired without clearing the
+        # PV-limited flag. MPPT didn't lift → curtailment is for a reason
+        # we can't undo (grid-operator limit, fault, etc.). Wait this long
+        # before trying again. Cleared on EV disconnect so the next plug-in
+        # is a fresh start.
+        self._ev_probe_cooldown_until: datetime | None = None
         # Decoupled EV control loop: runs at CONF_EV_CONTROL_INTERVAL_SECONDS
         # cadence (independent of the main coordinator fast-poll). Inputs are
         # cached by the main update; the loop consumes the cache.
@@ -2531,6 +2538,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if not ev_connected:
             self._ev_last_amps = 0
             self._ev_last_reason = f"EV not connected (status: {ocpp_status})"
+            # v0.38.1 — clear any pending probe state on disconnect so the
+            # next car plug-in is a fresh start. Without this, a failed
+            # probe earlier in the day could leave the cool-down active
+            # and block Car 2 from probing legitimately.
+            if (self._ev_probe_started_at is not None
+                    or self._ev_probe_cooldown_until is not None):
+                self._ev_probe_started_at = None
+                self._ev_probe_cooldown_until = None
             return self._ev_telemetry(0.0, 0, 0.0, ocpp_status)
 
         # ── Compute target ────────────────────────────────────────────────
@@ -2552,25 +2567,33 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # resolved). If the window expires with the flag still high, the
         # probe releases and the normal stop-window (default 180 s) backs
         # the session out within minutes.
-        battery_soc_pct = float(self._get_float_state(
-            self.config.get(CONF_BATTERY_SOC_ENTITY, FOXESS_BATTERY_SOC), 0,
-        ) or 0)
-        configured_max_soc = int(self._stored.get(
-            "battery_max_soc",
-            self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC),
-        ))
-        battery_near_full = battery_soc_pct >= (configured_max_soc - 2)
         pv_curtailed = self._pv_power_limited_flag
         now_ts = datetime.now(timezone.utc)
 
-        # Start a probe the first tick we see curtailment + battery-near-full.
-        if pv_curtailed and battery_near_full and self._ev_probe_started_at is None:
+        # v0.38.1 — Probe trigger: drop the `battery_near_full` precondition
+        # that was added in v0.36.2. It blocked legitimate restarts in two
+        # observed cases:
+        #   1. Plugging in a second car after the first finished — battery
+        #      had drifted a few % below max during the swap, so the gate
+        #      failed even though MPPT was still curtailed.
+        #   2. After clouds passed and sun returned — the battery had been
+        #      covering house load during the cloud and dropped below the
+        #      98% threshold, so the gate failed when curtailment resumed.
+        # The stop-window safety net (180 s) backs out wrong probes within
+        # minutes at a worst-case cost of ~0.07 kWh grid import — small.
+        # A cool-down after failed probes (15 min, see below) caps how often
+        # that can happen.
+        probe_cooldown_active = (
+            self._ev_probe_cooldown_until is not None
+            and now_ts < self._ev_probe_cooldown_until
+        )
+        if (pv_curtailed
+                and self._ev_probe_started_at is None
+                and not probe_cooldown_active):
             self._ev_probe_started_at = now_ts
             _LOGGER.info(
                 "EV controller: PV-limited flag active (reg 49251=1) "
-                "AND battery near full (%.0f%% ≥ max %d%% − 2) — starting "
-                "%d s curtailment probe at min charge to lift MPPT.",
-                battery_soc_pct, configured_max_soc,
+                "— starting %d s curtailment probe at min charge to lift MPPT.",
                 EV_CURTAILMENT_PROBE_SECONDS,
             )
 
@@ -2585,12 +2608,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     elapsed,
                 )
                 self._ev_probe_started_at = None
+                # Successful probe — clear any lingering cool-down too.
+                self._ev_probe_cooldown_until = None
             elif elapsed > EV_CURTAILMENT_PROBE_SECONDS:
+                # Probe expired with flag still set — MPPT didn't respond.
+                # Start a cool-down so we don't keep importing grid every
+                # ~4 minutes (probe + stop-window cycle).
+                self._ev_probe_cooldown_until = now_ts + timedelta(
+                    seconds=EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS,
+                )
                 _LOGGER.info(
                     "EV controller: probe window expired (%.0fs) with flag "
-                    "still active — releasing. Stop-window will back the "
-                    "session out if surplus stays negative.",
-                    elapsed,
+                    "still active — MPPT did not lift. Cooling down for "
+                    "%d s before retry.",
+                    elapsed, EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS,
                 )
                 self._ev_probe_started_at = None
             else:

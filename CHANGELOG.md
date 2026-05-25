@@ -9,6 +9,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.38.1] — 2026-05-25
+
+### Fixed — Curtailment probe now triggers on car-swap and post-cloud restart
+
+Two observed cases where the v0.36.2 curtailment probe failed to start the EV even though the inverter was reporting active PV curtailment (reg `49251 = 1`):
+
+1. **Car swap mid-curtailment** — Car 1 charges through a successful probe, finishes, gets unplugged. A few seconds later Car 2 is plugged in. The battery had drifted from 100% down to ~97.5% during the brief gap while covering house load. The probe's `battery_near_full = soc ≥ max − 2 %` precondition (98% with default max 100%) failed, so the probe didn't fire, and Car 2 stayed at 0 A even though MPPT was still curtailed and there was free PV to extract.
+
+2. **Cloud-then-sun restart** — Car charging from a probe-lifted MPPT. Clouds roll in, surplus drops, stop-window (180 s) stops the EV. Over the following 20–30 min of cloud the battery drops ~3 % covering house load. Sun returns, MPPT curtails again, but `battery_near_full` is now False (97% vs ≥ 98% required) — probe blocked, EV stayed idle.
+
+In both cases the user's workaround was to flip the master mode to PV+Battery (which bypasses the surplus calc and uses the battery to gap-fill), then back to PV-only once MPPT had lifted.
+
+### What changed
+
+- **Dropped `battery_near_full` from the probe trigger.** Probe now fires whenever the PV-limited flag is set and the EV is plugged in. The safety net (180 s stop-window) backs out wrong probes within minutes at a worst-case cost of ~0.07 kWh grid import. The original gate was added in v0.36.2 to avoid probing during grid-operator-imposed curtailment that the EV can't help with — point 2 below replaces that protection.
+
+- **Added a cool-down for failed probes.** When a 60 s probe expires with the flag still set (MPPT didn't respond — typically grid-operator hard limit, not the price-floor case), the controller waits `EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS = 900` (15 minutes) before re-probing. Caps wasted grid import to at most ~0.07 kWh per 15 min in pathological cases.
+
+- **Cool-down clears on EV disconnect.** A failed probe earlier in the day no longer blocks Car 2's plug-in from probing legitimately. Each new session is a fresh start.
+
+- **Successful probe clears the cool-down too.** A flag-cleared probe means MPPT did lift, so any prior failure was specific to an earlier set of conditions; don't keep punishing the new state.
+
+### Internal
+- New state field `_ev_probe_cooldown_until: datetime | None` on the coordinator.
+- New constant `EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS = 900` in `const.py`.
+
+---
+
 ## [0.38.0] — 2026-05-24
 
 ### Changed — EV scheduling moved entirely into the dashboard (native model)
