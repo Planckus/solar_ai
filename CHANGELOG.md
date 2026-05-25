@@ -9,6 +9,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.5] — 2026-05-25
+
+### Fixed — Strømligning buy-price components were always read at the wrong nesting level
+
+The live Strømligning API returns entries shaped like:
+
+```jsonc
+{
+  "date": "2026-05-25T16:00:00.000Z",
+  "price":   { "value": 0.909441, "total": 1.136801, "vat": 0.22736, "unit": "kr/kWh" },
+  "details": { "electricity": {...}, "surcharge": {...},
+               "transmission": { "netTariff": {...}, "systemTariff": {...} },
+               "electricityTax": {...}, "distribution": {...} }
+}
+```
+
+Three sites in the codebase indexed `entry["price"]["price"]["total"]` (two levels of `price`) and `entry["price"]["details"]` instead of `entry["details"]`. The KeyErrors were silently swallowed by surrounding `try/except` blocks, and every read fell through to the manual fallback or default 0.0. Result: the buy-price-breakdown sensor showed `mode=stromligning` with all components 0.0; the coordinator used the manual stack despite the cache being correctly populated; arbitrage decisions used wrong buy prices.
+
+The wrong nesting has been in the code since Strømligning support was introduced (v0.29.0 / v0.35.1).
+
+### Sites fixed
+
+1. `coordinator.py` `_compute_buy_price` (Strømligning no-overrides branch): `entry["price"]["price"]["total"]` → `entry["price"]["total"]`
+2. `sensor.py` `BatteryArbitrageBuyPriceBreakdownSensor.native_value`: same fix
+3. `stromligning.py` `get_price_details`:
+   - `details = price.get("details")` → `details = entry.get("details")`
+   - `inner = price.get("price")` → removed; `total = price.get("total")`, `ex_vat = price.get("value")`
+
+### How this relates to v0.39.1
+
+v0.39.1's cache key normalisation was a defensive improvement (it makes the integration robust against ISO format variations from the API). It didn't fix the buy-price bug because the bug wasn't in the cache key path — it was in the reader paths. Both changes are kept: the cache is correctly normalised AND the readers now use the right nesting.
+
+---
+
 ## [0.39.3] — 2026-05-25
 
 ### Fixed — UnboundLocalError in v0.39.0 auto-Full call

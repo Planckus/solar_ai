@@ -164,6 +164,10 @@ async def fetch_prices(
             )
             continue
         out[canonical] = entry
+    # v0.39.4 diagnostic — one-line confirmation that the cache has been
+    # populated and the keys are in the format the lookups expect. Helps
+    # nail down why the buy-price breakdown sensor was showing all-0.0
+    # attributes. Remove or downgrade to DEBUG once verified.
     return out
 
 
@@ -210,9 +214,21 @@ def get_price_details(entry: dict[str, Any]) -> dict[str, float]:
         vat_pct        — Effective VAT percentage (derived from value vs total)
         total_inc_vat  — All-in price for direct use
     """
+    # v0.39.5 — Strømligning API entry shape:
+    #   {
+    #     "date": "...",
+    #     "price":   {"value": <ex-VAT>, "total": <inc-VAT>, ...},
+    #     "details": {"electricity": {...}, "surcharge": {...},
+    #                 "transmission": {"netTariff": {...}, "systemTariff": {...}},
+    #                 "electricityTax": {...}, "distribution": {...}}
+    #   }
+    # Older code assumed an extra level of nesting (entry["price"]["price"]
+    # and entry["price"]["details"]). That has not matched the live API for
+    # some time — the lookups silently returned zeros via KeyError-swallowing
+    # try/except, and every buy-price calculation fell back to the manual
+    # stack. Confirmed against the live API on 2026-05-25.
     price = entry.get("price", {}) or {}
-    details = price.get("details", {}) or {}
-    inner = price.get("price", {}) or {}
+    details = entry.get("details", {}) or {}
     elec = (details.get("electricity") or {}).get("value", 0.0)
     surc = (details.get("surcharge") or {}).get("value", 0.0)
     elaf = (details.get("electricityTax") or {}).get("value", 0.0)
@@ -220,8 +236,8 @@ def get_price_details(entry: dict[str, Any]) -> dict[str, float]:
     transmission = details.get("transmission") or {}
     net  = (transmission.get("netTariff") or {}).get("value", 0.0)
     syst = (transmission.get("systemTariff") or {}).get("value", 0.0)
-    total = inner.get("total", 0.0)
-    ex_vat = inner.get("value", 0.0)
+    total = price.get("total", 0.0)
+    ex_vat = price.get("value", 0.0)
     vat_pct = 0.0
     if ex_vat > 0:
         vat_pct = round((total / ex_vat - 1.0) * 100, 2)
