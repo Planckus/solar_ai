@@ -166,6 +166,7 @@ from .const import (
     EV_CURTAILMENT_PROBE_SECONDS,
     EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS,
     EV_STOP_RECOVERY_SECONDS,
+    EV_START_DROP_TIMEOUT_SECONDS,
     CONF_EV_CONTROL_INTERVAL_SECONDS,
     CONF_EV_START_WINDOW_SECONDS,
     CONF_EV_STOP_WINDOW_SECONDS,
@@ -297,6 +298,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # exceeds start_window / stop_window seconds.
         self._ev_surplus_above_min_since_ts: datetime | None = None
         self._ev_surplus_below_min_since_ts: datetime | None = None
+        # v0.38.5 — When idle with a start timer (`_ev_surplus_above_min_since_ts`)
+        # running, this tracks when surplus first dropped back below min.
+        # Cleared on any tick where surplus is back above min while idle.
+        # If the drop is sustained for EV_START_DROP_TIMEOUT_SECONDS, the
+        # start timer is cleared (genuine drop). Brief blips don't reset
+        # it — mirror image of the v0.38.3 stop-recovery logic.
+        self._ev_arm_drop_since_ts: datetime | None = None
         self._ev_prev_connected: bool = False               # last known plug state
         self._ev_last_reason: str = ""                      # human-readable status
         # Battery-lock state (v0.27.2): when EV is FULL-mode charging, we
@@ -2576,6 +2584,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_below_stop_count = 0
             self._ev_surplus_above_min_since_ts = None
             self._ev_surplus_below_min_since_ts = None
+            self._ev_arm_drop_since_ts = None              # v0.38.5
             _LOGGER.info("EV plugged in (%s) — resetting mode to %s", charger_id, default_mode)
         self._ev_prev_connected = ev_connected
 
@@ -3301,6 +3310,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if self._ev_effective_mode != EV_MODE_PV:
             self._ev_surplus_above_min_since_ts = None
             self._ev_surplus_below_min_since_ts = None
+            self._ev_arm_drop_since_ts = None              # v0.38.5
             return target_amps
         now = datetime.now()
         start_window = int(self.config.get(
@@ -3316,20 +3326,34 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 if self._ev_surplus_below_min_since_ts is None:
                     self._ev_surplus_below_min_since_ts = now
                 self._ev_surplus_above_min_since_ts = None  # reset start timer
+                self._ev_arm_drop_since_ts = None          # not in ARMING path
                 elapsed = (now - self._ev_surplus_below_min_since_ts).total_seconds()
                 if elapsed >= stop_window:
                     self._ev_surplus_below_min_since_ts = None
                     return 0                              # confirmed stop
                 return self._ev_last_amps                  # keep going until confirmed
-            # v0.28.5 fix: idle AND target dropped to 0 — clear any stale
-            # ARMING timer. Without this, an old `_ev_surplus_above_min_since_ts`
-            # from when surplus was previously above min keeps the state
-            # machine in ARMING with an `arming_until` timestamp in the past,
-            # so the dashboard renders "Starter om -178 sek" (negative
-            # remaining seconds). Once surplus drops back below min, the arm
-            # countdown is no longer valid — restart it fresh when surplus
-            # recovers.
-            self._ev_surplus_above_min_since_ts = None
+            # IDLE AND target dropped to 0.
+            # v0.28.5: stale ARMING timestamps render as "Starter om -178s"
+            # on the dashboard. Need to clear them.
+            # v0.38.5: but a SINGLE TICK of surplus dipping below min should
+            # NOT immediately nuke a partially-accumulated start timer. On
+            # borderline surplus (e.g. cloudy 4.0 kW with noise), the start
+            # timer would reset every few ticks and the EV would never
+            # start even though average surplus exceeded min. Require
+            # sustained below-min for EV_START_DROP_TIMEOUT_SECONDS before
+            # clearing the start timer — mirror of the v0.38.3 stop-recovery
+            # logic.
+            if self._ev_surplus_above_min_since_ts is not None:
+                # Start timer was running. Track how long this drop has lasted.
+                if self._ev_arm_drop_since_ts is None:
+                    self._ev_arm_drop_since_ts = now
+                elapsed_below = (now - self._ev_arm_drop_since_ts).total_seconds()
+                if elapsed_below < EV_START_DROP_TIMEOUT_SECONDS:
+                    # Brief blip — keep start timer accumulating.
+                    return 0
+                # Sustained drop — clear the start timer for real.
+                self._ev_surplus_above_min_since_ts = None
+            self._ev_arm_drop_since_ts = None
             return 0
 
         # Want to charge ── arm the start timer when currently idle
@@ -3337,6 +3361,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             if self._ev_surplus_above_min_since_ts is None:
                 self._ev_surplus_above_min_since_ts = now
             self._ev_surplus_below_min_since_ts = None     # reset stop timer
+            self._ev_arm_drop_since_ts = None              # v0.38.5: recovered from any blip-below
             elapsed = (now - self._ev_surplus_above_min_since_ts).total_seconds()
             if elapsed >= start_window:
                 self._ev_surplus_above_min_since_ts = None

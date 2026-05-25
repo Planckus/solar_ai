@@ -9,6 +9,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.38.5] — 2026-05-25
+
+### Fixed — EV start-window no longer resets on noise blips below min
+
+The mirror image of v0.38.3. The stop-window bug was: a brief blip *above* min reset the stop timer, so the EV could never actually stop. The start-window bug is the same shape on the other side: a brief blip *below* min reset the start timer, so the EV could never actually start on borderline surplus.
+
+Observed scenario: master mode PV, surplus hovering at ~4.0–4.3 kW around the 4.14 kW (6 A) minimum. Cloud-flicker took surplus below 4.14 for one tick every 30–60 s. Each dip cleared `_ev_surplus_above_min_since_ts`, so the 60-second start-window timer never accumulated. EV stayed idle for hours. User had to manually switch to Full to force charging.
+
+### Changes
+
+- New constant `EV_START_DROP_TIMEOUT_SECONDS = 10`. Mirrors `EV_STOP_RECOVERY_SECONDS` from v0.38.3.
+- New state field `_ev_arm_drop_since_ts: datetime | None`. Tracks "first tick we saw below-min while idle with a start timer running".
+- `_apply_ev_time_window` idle-AND-below-min branch: instead of immediately clearing the start timer, require `EV_START_DROP_TIMEOUT_SECONDS` of sustained below-min before clearing. Brief blips keep the timer accumulating; genuine drops clear it.
+- The "want to charge while idle" branch clears `_ev_arm_drop_since_ts` (recovery acknowledged).
+- Hygiene resets in the EV plug-in event and the non-PV-mode early-return.
+
+### Trade-offs
+
+- The 10 s threshold is symmetric with v0.38.3 — no asymmetry between starting and stopping.
+- Genuine sustained drops (clouds rolling in for real, EV cable swap, sun setting) still reset the timer correctly within 10 s. No regression for the "surplus genuinely dropped" path.
+
+---
+
 ## [0.38.4] — 2026-05-25
 
 ### Fixed — Intra-hour solar correction no longer poisoned by export-floor curtailment
