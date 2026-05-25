@@ -904,7 +904,9 @@ class BatteryArbitrageBuyPriceBreakdownSensor(
             entry = self._current_stromligning_entry()
             if entry:
                 try:
-                    return round(float(entry["price"]["price"]["total"]), 4)
+                    # v0.39.5: was entry["price"]["price"]["total"] (wrong
+                    # nesting). API has just `entry.price.total`.
+                    return round(float(entry["price"]["total"]), 4)
                 except (KeyError, TypeError, ValueError):
                     pass
         elif mode == "octopus":

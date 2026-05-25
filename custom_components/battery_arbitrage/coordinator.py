@@ -4183,9 +4183,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if not self.config.get(
             CONF_STROMLIGNING_USE_MANUAL_OVERRIDES, DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES,
         ):
-            # Pure Strømligning — return the all-in number directly
+            # Pure Strømligning — return the all-in number directly.
+            # v0.39.5: was entry["price"]["price"]["total"] (wrong nesting),
+            # silently fell through to the manual stack on every lookup.
             try:
-                return float(entry["price"]["price"]["total"])
+                return float(entry["price"]["total"])
             except (KeyError, TypeError, ValueError):
                 return (spot + spot_markup + tariff_this_hour_dso + elafgift) * vat_factor
 
