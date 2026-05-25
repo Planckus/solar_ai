@@ -1464,8 +1464,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # switch to Full. On the next floor-block-close edge, restore
         # the saved mode. Manual mode changes and EV unplug both clear
         # the auto state. See operating_log v0.39.0 design lock entry.
+        # v0.39.3 fix: was originally using `current_buy_price` which is
+        # only defined inside the grid-charge conditional block further
+        # down. `buy_price_next_slot` is the always-defined canonical
+        # all-in buy price for the current/next slot (computed around
+        # line 880 in both the grid_slots and empty-slots branches).
         await self._maybe_auto_full_negative_price(
-            now_local=now, buy_price_now=current_buy_price,
+            now_local=now, buy_price_now=buy_price_next_slot,
         )
 
         # ---- savings tracking (learning tick only — accumulates per interval_h) ----
