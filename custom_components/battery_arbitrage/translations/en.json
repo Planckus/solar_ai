@@ -387,6 +387,7 @@
     },
     "binary_sensor": {
       "should_export": { "name": "Should export" },
+      "export_stop_active": { "name": "Export stop active" },
       "should_grid_charge": { "name": "Should grid charge" },
       "vacation_mode": {
         "name": "Home presence",
