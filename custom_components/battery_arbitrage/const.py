@@ -175,6 +175,14 @@ EV_MIN_AMP_CHANGE         = 1     # don't bother sending OCPP write below this d
 # during the probe, the probe ends early and normal control resumes.
 EV_CURTAILMENT_PROBE_SECONDS = 60
 
+# v0.38.1 — When a probe expires with the PV-limited flag still set
+# (MPPT didn't respond — usually grid-operator hard limit, not the
+# price-floor case), wait this long before trying again. Avoids
+# hammering MPPT and importing ~0.07 kWh from the grid every 4 minutes.
+# Reset on EV disconnect so a new car plug-in isn't blocked by the
+# previous session's failed probe.
+EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS = 900   # 15 minutes
+
 # EV control loop (v0.26.0) — decoupled from main coordinator fast-poll.
 # Lets the user match the loop cadence to their charger's OCPP write tolerance,
 # and tune the start/stop windows in seconds (not ticks).
