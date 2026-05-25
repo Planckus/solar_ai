@@ -36,6 +36,22 @@ BINARY_SENSORS: tuple[BatteryArbitrageBinarySensorDescription, ...] = (
         icon="mdi:transmission-tower-export",
         value_fn=lambda d: d.get("should_export", False),
     ),
+    # v0.39.2 — Solar export stop (price-floor block) live indicator.
+    # Backs the EV/OCPP tab chip that lets the user see at a glance that
+    # the inverter is currently clipping PV because the live export
+    # price is at or below their configured min_export_price.
+    BatteryArbitrageBinarySensorDescription(
+        key="export_stop_active",
+        translation_key="export_stop_active",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        icon="mdi:transmission-tower-off",
+        value_fn=lambda d: d.get("export_stop_active", False),
+        attr_fn=lambda d: {
+            "since": d.get("export_stop_start_ts"),
+            "floor": d.get("export_stop_floor"),
+            "price_at_start": d.get("export_stop_price_at_start"),
+        },
+    ),
     BatteryArbitrageBinarySensorDescription(
         key="should_grid_charge",
         translation_key="should_grid_charge",
