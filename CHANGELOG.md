@@ -9,6 +9,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.14] — 2026-05-26
+
+### Documentation — README "Recent releases" section updated for v0.39.x
+
+The README's "Recent releases" section stopped at v0.38.x. Added a v0.39.x block grouped by theme:
+
+- **Pricing accuracy** (v0.39.6, v0.39.8, v0.39.13) — Strømligning 15-min cache key, DSO tariff Note filter + Energinet 41000, partial-fetch guard
+- **EV controller** (v0.39.10, v0.39.11, v0.39.12) — FoxESS-mode backfill, symmetric COOLING entry debounce, curtailment probe / start_window race fix
+- **OptionsFlow cleanup** (v0.39.7) — removed obsolete schedule-helper link step
+- **Tooling** (v0.39.9) — `deploy.py` path fix
+- **Smaller patches** (v0.39.0, v0.39.1, v0.39.2, v0.39.3, v0.39.5) — one-line summaries
+
+No code changes. Documentation only. Manifest bumped per the project's per-push version rule.
+
+### What does not change
+
+- All integration code identical to v0.39.13.
+- HA installs already on v0.39.13 see no behaviour change after upgrading to v0.39.14 — the only delta is the README rendered on the HACS / GitHub repo pages.
+
+---
+
 ## [0.39.13] — 2026-05-26
 
 ### Fixed — partial tariff-schedule fetch could lock the cache onto bad data for 24 hours
