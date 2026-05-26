@@ -14,12 +14,13 @@ views:
         | float(0) %}{% set bat_c = states(''sensor.foxessmodbus_battery_charge'') | float(0) %}{% set bat_d = states(''sensor.foxessmodbus_battery_discharge'')
         | float(0) %}{% set imp = states(''sensor.foxessmodbus_grid_consumption'') | float(0) %}{% set exp = states(''sensor.foxessmodbus_feed_in'')
         | float(0) %}{% set ev = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% set soc = states(''sensor.foxessmodbus_battery_soc_1'')
-        | int(0) %}{% set ev_status = states(''sensor.solar_ai_lader_status'') %}{% set total_in = pv + bat_d + imp %}{% set
-        total_out = load + ev + bat_c + exp %}
+        | int(0) %}{% set ev_status = states(''sensor.solar_ai_lader_status'') %}{# foxessmodbus_load_power is total house side incl. EV — subtract EV for true household load #}{%
+        set house = [load - ev, 0] | max %}{% set total_in = pv + bat_d + imp %}{% set total_out = house + ev + bat_c + exp
+        %}
 
         ## ⚡ Solar AI — Energi-flow
 
-        **Batteri: {{ soc }}%** · ☀️ Sol: **{{ ''%.2f'' | format(pv) }} kW** · 🏠 Forbrug: **{{ ''%.2f'' | format(load) }}
+        **Batteri: {{ soc }}%** · ☀️ Sol: **{{ ''%.2f'' | format(pv) }} kW** · 🏠 Forbrug: **{{ ''%.2f'' | format(house) }}
         kW**
 
 
@@ -44,7 +45,7 @@ views:
 
         |---|---|---:|
 
-        | 🏠 | Forbrug | **{{ ''%.2f'' | format(load) }} kW** |
+        | 🏠 | Forbrug (ekskl. EV) | **{{ ''%.2f'' | format(house) }} kW** |
 
         | 🚗 | EV-lader ({{ ev_status }}) | **{{ ''%.2f'' | format(ev) }} kW** |
 
@@ -259,6 +260,29 @@ views:
   max_columns: 2
   sections:
   - type: grid
+    column_span: 2
+    cards:
+    - type: conditional
+      conditions:
+      - condition: state
+        entity: binary_sensor.solar_ai_eksport_stop_aktiv
+        state: 'on'
+      card:
+        type: custom:mushroom-template-card
+        primary: '🛑 Eksport-stop aktiv'
+        secondary: '{% set since = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''since'') %}{% set floor = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'',
+          ''floor'') %}{% set price = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''price_at_start'') | float(0)
+          %}Salgsprisen er under gulvet ({% if floor is not none %}{{ ''%.2f'' | format(floor) }}{% else %}–{% endif %} DKK/kWh).
+          Solcelle-eksport er blokeret.{% if price %} Pris ved start: {{ ''%.3f'' | format(price) }} DKK/kWh.{% endif %}{% if
+          since %} Aktiv siden {{ since[11:16] }}.{% endif %}'
+        icon: mdi:transmission-tower-off
+        icon_color: red
+        fill_container: true
+        multiline_secondary: true
+        entity: binary_sensor.solar_ai_eksport_stop_aktiv
+        tap_action:
+          action: more-info
+  - type: grid
     column_span: 1
     cards:
     - type: vertical-stack
@@ -402,8 +426,9 @@ views:
         | float(0) %}{% set bat_c = states(''sensor.foxessmodbus_battery_charge'') | float(0) %}{% set bat_d = states(''sensor.foxessmodbus_battery_discharge'')
         | float(0) %}{% set imp = states(''sensor.foxessmodbus_grid_consumption'') | float(0) %}{% set exp = states(''sensor.foxessmodbus_feed_in'')
         | float(0) %}{% set ev = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% set soc = states(''sensor.foxessmodbus_battery_soc_1'')
-        | int(0) %}{% set ev_status = states(''sensor.solar_ai_lader_status'') %}{% set total_in = pv + bat_d + imp %}{% set
-        total_out = load + ev + bat_c + exp %}
+        | int(0) %}{% set ev_status = states(''sensor.solar_ai_lader_status'') %}{# load incl. EV — subtract EV for true household load #}{%
+        set house = [load - ev, 0] | max %}{% set total_in = pv + bat_d + imp %}{% set total_out = house + ev + bat_c + exp
+        %}
 
         ## ⚡ Energi-flow  ·  🔋 {{ soc }}%  ·  ☀️ {{ ''%.2f'' | format(pv) }} kW
 
@@ -412,7 +437,7 @@ views:
 
         |---|---:|---|---:|
 
-        | ☀️ Solceller | {{ ''%.2f'' | format(pv) }} | 🏠 Forbrug | {{ ''%.2f'' | format(load) }} |
+        | ☀️ Solceller | {{ ''%.2f'' | format(pv) }} | 🏠 Forbrug (ekskl. EV) | {{ ''%.2f'' | format(house) }} |
 
         | 🔋 Batteri aflader | {{ ''%.2f'' | format(bat_d) }} | 🚗 EV-lader | {{ ''%.2f'' | format(ev) }} |
 
@@ -544,13 +569,80 @@ views:
         data_generator: return (entity.attributes.slots || []).map(s => [new Date(s.start).getTime(), s.adj_kw]);
   - type: grid
     column_span: 2
-    cards: []
+    cards:
+    - type: custom:mushroom-title-card
+      title: Planlagt opladning
+      subtitle: 4 skemaer. Aktiver et eller flere og sæt EV-tilstand til "Planlagt" for at bruge dem.
+    - type: markdown
+      content: '{% set slots = [1, 2, 3, 4] %}
+
+        | # | Aktiv | Tilstand | Start | Slut |
+
+        |:-:|:-----:|:---------|:------|:-----|
+
+        {% for n in slots %}{% set enabled = is_state(''switch.solar_ai_skema_'' ~ n ~ ''_aktiveret'', ''on'') %}{% set mode
+        = states(''select.solar_ai_skema_'' ~ n ~ ''_tilstand'') %}{% set start = states(''time.solar_ai_skema_'' ~ n ~ ''_starttid'')
+        %}{% set end = states(''time.solar_ai_skema_'' ~ n ~ ''_sluttid'') %}{% set mark = ''✅'' if enabled else ''⛔'' %}
+
+        | {{ n }} | {{ mark }} | {{ mode }} | {{ start[:5] }} | {{ end[:5] }} |{% endfor %}'
   - type: grid
-    column_span: 2
-    cards: []
+    column_span: 1
+    cards:
+    - type: entities
+      title: Skema 1
+      icon: mdi:calendar-clock
+      show_header_toggle: false
+      entities:
+      - entity: switch.solar_ai_skema_1_aktiveret
+        name: Aktiveret
+      - entity: select.solar_ai_skema_1_tilstand
+        name: Tilstand
+      - entity: time.solar_ai_skema_1_starttid
+        name: Starttid
+      - entity: time.solar_ai_skema_1_sluttid
+        name: Sluttid
+    - type: entities
+      title: Skema 2
+      icon: mdi:calendar-clock
+      show_header_toggle: false
+      entities:
+      - entity: switch.solar_ai_skema_2_aktiveret
+        name: Aktiveret
+      - entity: select.solar_ai_skema_2_tilstand
+        name: Tilstand
+      - entity: time.solar_ai_skema_2_starttid
+        name: Starttid
+      - entity: time.solar_ai_skema_2_sluttid
+        name: Sluttid
   - type: grid
-    column_span: 2
-    cards: []
+    column_span: 1
+    cards:
+    - type: entities
+      title: Skema 3
+      icon: mdi:calendar-clock
+      show_header_toggle: false
+      entities:
+      - entity: switch.solar_ai_skema_3_aktiveret
+        name: Aktiveret
+      - entity: select.solar_ai_skema_3_tilstand
+        name: Tilstand
+      - entity: time.solar_ai_skema_3_starttid
+        name: Starttid
+      - entity: time.solar_ai_skema_3_sluttid
+        name: Sluttid
+    - type: entities
+      title: Skema 4
+      icon: mdi:calendar-clock
+      show_header_toggle: false
+      entities:
+      - entity: switch.solar_ai_skema_4_aktiveret
+        name: Aktiveret
+      - entity: select.solar_ai_skema_4_tilstand
+        name: Tilstand
+      - entity: time.solar_ai_skema_4_starttid
+        name: Starttid
+      - entity: time.solar_ai_skema_4_sluttid
+        name: Sluttid
   dense_section_placement: false
 - title: Priser & Plan
   path: priser

@@ -9,6 +9,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.9] — 2026-05-26
+
+### Fixed — `deploy.py` read from a stale legacy YAML and could destroy the live dashboard
+
+`deploy.py`'s `DASHBOARD_YAML` constant pointed at `dashboard/battery_arbitrage_dashboard.yaml` — a backward-compatibility mirror that was supposed to track `dashboard/dashboard_da.yaml` but had silently drifted to a 1-view stale state. Every routine deploy (including any `--dashboard-only` call) pushed the stale file over the live Lovelace storage. Users editing `dashboard_da.yaml` (the file the README documents) had their edits ignored and risked having their live dashboard overwritten with the 1-view stub on the next deploy.
+
+The v0.39.8 release tarball shipped to GitHub also contained the stale file. Anyone deploying v0.39.8 fresh with the default `deploy.py` mode would have destroyed their dashboard.
+
+### Sites fixed
+
+1. `deploy.py` — `DASHBOARD_YAML` repointed to `dashboard/dashboard_da.yaml` (the canonical Danish dashboard, documented in README).
+2. `dashboard/battery_arbitrage_dashboard.yaml` — deleted. The README has documented `dashboard_da.yaml` and `dashboard_en.yaml` as the canonical files for some time; the legacy mirror was a footgun.
+
+### Three dashboard improvements (originally drafted for v0.39.8, lost in the deploy mishap, now re-applied)
+
+These were added to `dashboard_da.yaml` earlier in the session but never landed live because the deploy pushed from the wrong file:
+
+- **Energy-flow card no longer double-counts EV in `total_out`.** Both Oversigt and EV / OCPP energy-flow markdown cards now compute `house = max(load - ev, 0)` (where `load = sensor.foxessmodbus_load_power` is the inverter's total house-side reading, which includes the EV) and use `house` for the "Forbrug" row + the outbound total. The "Forbrug" row is renamed to "Forbrug (ekskl. EV)" to make the exclusion explicit.
+- **Conditional export-stop chip on EV / OCPP tab.** A `mushroom-template-card` wrapped in a `conditional` block now appears at the top of the EV / OCPP tab whenever `binary_sensor.solar_ai_eksport_stop_aktiv = on`. Shows the floor price that triggered the block, the activation time, and the spot price at block start. Hidden when export is allowed.
+- **EV charge schedule cards on EV / OCPP tab.** The four native v0.38.0 schedule slots (`switch.solar_ai_skema_N_aktiveret`, `select.solar_ai_skema_N_tilstand`, `time.solar_ai_skema_N_starttid/sluttid`) now have dedicated cards: a "Planlagt opladning" summary markdown table at the top followed by four `entities` cards (Skema 1+2 side-by-side, Skema 3+4 side-by-side). Set the EV mode to `Scheduled` to use them.
+
+### Why this came up
+
+`deploy.py` had been pointing at the legacy file since the v0.21.x dashboard reorganisation. The dual-file scheme worked as long as a maintainer remembered to keep them in sync; once that broke, the script silently kept pushing the stale version. The destruction wasn't noticed earlier because the two files had been mostly identical until the recent (v0.36-v0.39) live dashboard work was never mirrored back to either file in the repo.
+
+### What does not change
+
+- `dashboard/dashboard_en.yaml` is unaffected. UK users still import the English version manually.
+- Integration code (sensors, optimiser, OCPP server, EV controller) is unchanged from v0.39.8.
+
+---
+
 ## [0.39.8] — 2026-05-26
 
 ### Fixed — manual-stack network tariffs were both over-included (DSO) and under-included (Energinet)

@@ -40,6 +40,8 @@ DEFAULT_FAST_POLL_SECONDS dropped 30 → 15 with migration. README note about Fo
 
 Phase A shipped. New EV mode `Scheduled` + up to four `(HA schedule helper → EV mode)` links + fallback mode. Users create schedule entities at Settings → Helpers → Schedule (HA's native per-weekday time-range UI), then link them in Configure → EV charge schedules. Coordinator's `_resolve_effective_ev_mode()` walks links every tick, first link with schedule `on` wins.
 
+**Updated 2026-05-26 (v0.38.0 + v0.39.7):** the workflow above is no longer current. v0.38.0 moved schedules into the dashboard — 4 native slots per install via `select.solar_ai_skema_N_tilstand`, `switch.solar_ai_skema_N_aktiveret`, `time.solar_ai_skema_N_starttid/sluttid`, `sensor.solar_ai_skema_N`. v0.39.7 removed the now-redundant `Configure → EV charge schedules` OptionsFlow step. Set the EV mode select to `Scheduled` and edit the 4 slot rows on the EV / OCPP tab. Coordinator's `_resolve_effective_ev_mode()` still walks them every tick. Pre-v0.38.0 installs are migrated once on coordinator setup (coordinator.py:604-662 reads any legacy `CONF_EV_SCHEDULE_LINKS` data).
+
 **Phase B (deferred to a future release)** — optimiser-driven departure scheduling (target SoC by time, DP optimizer plans EV charging slots alongside existing CHARGE/EXPORT/IDLE actions). Matches EVCC's "Plan" feature. Estimated 8–12 h work. Worth shipping after Phase A is verified in real use.
 
 **Phase C (future)** — multi-vehicle, holiday calendar, cabin pre-conditioning. Listed so Phase B's data model has room.
