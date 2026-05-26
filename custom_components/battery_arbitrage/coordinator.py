@@ -882,6 +882,35 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             for lp_ in loadpoints
         )
 
+        # v0.39.10 — FoxESS-only mode backfill for `ev_charging_now` and
+        # `ev_charging_solar`. In FoxESS-only mode there is no EVCC poll so
+        # `loadpoints = []`, which means the two `any(...)` expressions above
+        # are always False — the binary_sensor.solar_ai_ev_oplader_solenergi
+        # never lit up even when the embedded OCPP server was actively
+        # charging the car, and the optimizer's `should_export` guard at the
+        # "hold the battery for the EV" check (later in this method) was
+        # never engaged either.
+        #
+        # v0.28.0 fixed the same pattern for `ev_charge_power_w` but missed
+        # these two flags. The fix mirrors that backfill: when loadpoints is
+        # empty, derive the flags from the live OCPP draw + the EV
+        # controller's effective mode (the mode the controller actually
+        # applies each tick, resolved by `_resolve_effective_ev_mode` —
+        # `_ev_active_mode` may be `scheduled`, but `_ev_effective_mode` is
+        # always one of locked/pv/pv_battery/full).
+        #
+        # Mode → flag mapping (matches the EVCC semantics used above):
+        #   pv         → ev_charging_solar (pure surplus)
+        #   pv_battery → ev_charging_now (uses house battery — same
+        #                  "hold the battery for the EV" rationale as the
+        #                  EVCC minpv mode, so should_export is suppressed)
+        #   full       → ev_charging_now (fast charge — like EVCC `now`)
+        if not loadpoints and ev_charge_power_w > ev_charge_threshold_w:
+            if self._ev_effective_mode == EV_MODE_PV:
+                ev_charging_solar = True
+            elif self._ev_effective_mode in (EV_MODE_PV_BATTERY, EV_MODE_FULL):
+                ev_charging_now = True
+
         # EVCC battery mode: "normal", "hold", or "charge"
         # If EVCC (not us) has set it to hold/charge, we must not override it
         evcc_battery_mode = evcc_state.get("batteryMode", EVCC_BATTERY_NORMAL)

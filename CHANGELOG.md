@@ -9,6 +9,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.10] — 2026-05-26
+
+### Fixed — `ev_charging_now` and `ev_charging_solar` were hardwired False in FoxESS-only mode
+
+Both flags were computed by walking `loadpoints` (the EVCC `/api/state` `loadpoints` array). In **FoxESS-only mode** there is no EVCC poll, so `loadpoints = []` and `any(...)` returns `False` regardless of what the EV is actually doing. Two visible effects:
+
+1. **`binary_sensor.solar_ai_ev_oplader_solenergi` ("EV på solenergi") was permanently `off`** for FoxESS-only users even while the embedded OCPP server was actively serving a PV-mode charging session. The indicator users rely on to see "EV is absorbing curtailed solar / export-blocked surplus" never lit up.
+2. **The optimizer's `should_export` guard ("don't fight EVCC: if EV is fast-charging, hold the battery for it") was never engaged.** Without `ev_charging_now`, the optimizer could decide to export the battery while the EV was simultaneously fast-charging from the grid. Net effect: the battery's stored energy could be exported at sell prices while grid power was used to charge the EV at higher buy prices. Magnitude depends on the user's actual usage of FULL / PV+battery modes.
+
+The same defect class was fixed for `ev_charge_power_w` in v0.28.0 (the v0.28.0 fix added a backfill from the embedded OCPP server). That backfill was never extended to these two flags.
+
+### Sites fixed
+
+`coordinator.py:885-913` — added a single backfill block right after the loadpoints-based computations. When `loadpoints` is empty AND the OCPP draw is above the configured threshold, set the appropriate flag based on `_ev_effective_mode` (the controller's resolved active mode — accounts for `scheduled` mode resolution since v0.36.0):
+
+| `_ev_effective_mode` | Flag set | Why |
+|---|---|---|
+| `pv` | `ev_charging_solar` | Pure surplus — same as EVCC `pv` mode |
+| `pv_battery` | `ev_charging_now` | Uses house battery — same "hold the battery for the EV" rationale as EVCC `minpv` |
+| `full` | `ev_charging_now` | Fast charge from grid — like EVCC `now` |
+| `locked` | neither | Not charging |
+
+### Behaviour changes for existing users
+
+- FoxESS-only users will now see `binary_sensor.solar_ai_ev_oplader_solenergi` correctly toggle on/off while charging on PV.
+- FoxESS-only users in PV+battery or Full mode will see the optimizer correctly suppress battery export while the EV is drawing. PV-only mode users see no behaviour change from the optimizer side.
+- EVCC / Hybrid mode users see no change at all (the loadpoints path runs unmodified).
+
+### What does not change
+
+- No dashboard YAML changes. Dashboard is at v0.39.9 state.
+- `deploy.py` unchanged.
+- All other v0.39.9 fixes (15-min Strømligning cache, OptionsFlow cleanup, tariff filter, dashboard path) remain in place.
+
+---
+
 ## [0.39.9] — 2026-05-26
 
 ### Fixed — `deploy.py` read from a stale legacy YAML and could destroy the live dashboard
