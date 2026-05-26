@@ -100,7 +100,11 @@ HASS_TOKEN = _read_token()
 
 REPO_ROOT       = Path(__file__).parent
 INTEGRATION_SRC = REPO_ROOT / "custom_components" / "battery_arbitrage"
-DASHBOARD_YAML  = REPO_ROOT / "dashboard" / "battery_arbitrage_dashboard.yaml"
+DASHBOARD_YAML  = REPO_ROOT / "dashboard" / "dashboard_da.yaml"
+# v0.39.9 — switched from the legacy `battery_arbitrage_dashboard.yaml`
+# (a backward-compat mirror that drifted silently from `dashboard_da.yaml`)
+# to the file the README documents as canonical. The legacy mirror has
+# been deleted; do not reintroduce it.
 
 DOMAIN              = "battery_arbitrage"
 DASHBOARD_URL_PATH  = "battery-arbitrage"
