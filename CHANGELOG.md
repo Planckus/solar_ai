@@ -9,6 +9,61 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.12] — 2026-05-26
+
+### Fixed — curtailment probe and EV start-window raced at T=60 s; EV never started under export-stop + PV-limited
+
+When `binary_sensor.solar_ai_eksport_stop_aktiv` is `on` (Solar AI's price-floor block is open) AND the FoxESS inverter reports PV throttling (holding register 49251 = 1), the EV controller is supposed to fire a 60-second curtailment probe (introduced v0.36.2, gated to floor-block-active in v0.38.2). The probe synthesises EV-demand-shaped solar to lift MPPT — the EV starts drawing, the inverter sees the new sink, MPPT releases the throttle, real PV catches up.
+
+But the EV never actually started. Reason: `EV_CURTAILMENT_PROBE_SECONDS = 60` and `DEFAULT_EV_START_WINDOW_SECONDS = 60` were **equal**, and the probe-expiration check ran in `_run_ev_controller` **before** `_apply_ev_time_window` evaluated the start-window. At T=60+δ s (any non-zero tick jitter), `elapsed > 60` flipped True first → probe ended → synthesised solar was cleared → `target_amps` became 0 → `_apply_ev_time_window` returned 0 → the EV never received an OCPP `SetChargingProfile(6 A)` / `RemoteStartTransaction`. The controller then logged "probe window expired with flag still set — MPPT didn't respond" and entered a 15-minute cool-down before retrying. From the outside, the symptom looked like the probe feature was missing or broken.
+
+### Root cause
+
+The probe logic (v0.36.2) and the anti-flap start_window (v0.26.0) were written and tested in isolation. The coupling — start_window requires sustained synthesised surplus that lasts longer than the probe window — was never traced. The misleading log message hid the bug.
+
+### Fix
+
+`_apply_ev_time_window` accepts a new `probing` keyword. When `probing=True` and the EV is idle, the start_window is bypassed and `target_amps` is returned directly. The probe is itself a confidence signal — it only fires under two strict, simultaneous conditions (inverter PV-limited flag set + Solar AI price-floor block open), so the anti-flap protection is unnecessary in this path.
+
+```python
+if self._ev_last_amps == 0:
+    if probing:
+        # Bypass start_window — probe is the confidence signal.
+        return target_amps
+    # ... existing start_window logic unchanged
+```
+
+The single call site in `_run_ev_controller` now passes `probing=probing` (the existing local variable already set by the probe-state machine at lines 2769-2810).
+
+### Behaviour change
+
+| Scenario | Before | After |
+|---|---|---|
+| Probe fires, EV idle, PV mode | After 60 s race: probe expires → synthesised solar disappears → EV stays IDLE → 15-min cool-down armed. Repeats. | Probe-fire tick: `SetChargingProfile(6 A)` + `RemoteStartTransaction` sent. EV starts drawing within seconds. MPPT has the full 60 s probe window to respond. |
+| Probe fires, EV already charging | No change | No change |
+| Normal PV start (no probe) | start_window protection unchanged | start_window protection unchanged |
+| Probe ends with MPPT having lifted | n/a (EV never started) | Real PV continues driving target; controller stays charging. |
+| Probe ends without MPPT lifting | n/a | v0.39.11 entry debounce (10 s) → v0.38.3 stop_window (180 s) → confirmed stop. Worst-case grid import per failed probe attempt ≈ 250 s × ev_min_charge_kw ≈ 0.29 kWh (matches the magnitude estimated by the existing comment at coordinator.py:2735). Cooled down for 15 min before retry. |
+
+### Sites changed
+
+`coordinator.py`:
+- `_apply_ev_time_window` signature: new `probing: bool = False` kwarg + docstring section.
+- Idle-start branch: bypass block at top of the `ev_last_amps == 0` path.
+- Call site at line 2859: passes `probing=probing` (probe state already tracked at lines 2769-2810).
+
+No new constants. No config changes. No dashboard YAML changes.
+
+### What does not change
+
+- `EV_CURTAILMENT_PROBE_SECONDS = 60` and the probe state machine — unchanged.
+- `start_window` / `stop_window` user-configurable values — unchanged.
+- v0.39.11 cooling-entry debounce — unchanged.
+- v0.38.3 stop-recovery guard — unchanged.
+- v0.39.10 FoxESS backfill for `ev_charging_now` / `ev_charging_solar` — unchanged.
+
+---
+
 ## [0.39.11] — 2026-05-26
 
 ### Fixed — EV controller state flapped CHARGING ↔ COOLING on borderline surplus
