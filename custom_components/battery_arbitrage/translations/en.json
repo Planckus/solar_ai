@@ -186,21 +186,6 @@
           "ocpp_remote_start_cooldown_s": "RemoteStartTransaction cooldown (seconds, 5–300) — minimum gap between consecutive restart attempts on the same charger"
         }
       },
-      "ev_schedules": {
-        "title": "EV charge schedules (v0.36.0)",
-        "description": "Link up to {max_links} HA schedule helper entities to EV charge modes. Create the schedule entities yourself in Settings → Helpers → Schedule — HA's native schedule helper lets you set per-weekday time ranges. Links are walked in order; the first whose schedule is currently `on` wins. When no schedule is active, the fallback mode applies. This step only takes effect when the EV mode select is set to `Scheduled`.",
-        "data": {
-          "schedule_1_entity": "Schedule 1 — schedule entity",
-          "schedule_1_mode":   "Schedule 1 — EV mode when active",
-          "schedule_2_entity": "Schedule 2 — schedule entity",
-          "schedule_2_mode":   "Schedule 2 — EV mode when active",
-          "schedule_3_entity": "Schedule 3 — schedule entity",
-          "schedule_3_mode":   "Schedule 3 — EV mode when active",
-          "schedule_4_entity": "Schedule 4 — schedule entity",
-          "schedule_4_mode":   "Schedule 4 — EV mode when active",
-          "ev_scheduled_fallback_mode": "Fallback EV mode when no schedule is active"
-        }
-      },
       "entities": {
         "title": "Solar AI — Entity Mapping",
         "description": "Step 3 of 3 — map Solar AI to your inverter and battery sensors. Change these if your entity IDs differ from the FoxESS Modbus defaults.",

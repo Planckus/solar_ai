@@ -9,6 +9,104 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.8] — 2026-05-26
+
+### Fixed — manual-stack network tariffs were both over-included (DSO) and under-included (Energinet)
+
+The `_tariff_schedule[h]` value that feeds the manual price stack (used by `sensor.solar_ai_nettarif_denne_time`, the 24h price chart, and as the fallback when Strømligning data is unavailable) was being assembled incorrectly in two ways that partially masked each other.
+
+#### Bug 1A — DSO over-inclusion: all tier bands summed instead of just the residential one
+
+Danish DSOs publish multiple parallel tariff records on the same day for different customer tiers — Dinel publishes 7 today: tier-A high/low (large industrial), tier-B spreed/high/low (small industrial), tier-C <100 / >100 (residential). Solar AI's existing filters (`require_all_prices=True` + `require_varying_prices=True`) kept all 7 because each tier has a complete 24-hour profile with varying prices. The "identical-profile" dedupe only collapsed C<100 and C>100 (which have the same prices), leaving 6 distinct profiles summed into a single schedule. A residential customer ended up paying for all four bands they don't actually pay for.
+
+Verified against the live Datahub API for Dinel today: old code returned **DSO sum 0.293 DKK/kWh at hour 10** (six bands summed); the correct value is **0.0923 DKK/kWh** (Nettarif C time only).
+
+#### Bug 1B — Energinet system tariff omitted
+
+`ENERGINET_TARIFF_CODES` only included code `40000` (Transmissions nettarif, ~0.043 DKK/kWh). It missed code `41000` (Systemtarif, ~0.072 DKK/kWh), which is a separate flat hourly rate every Danish residential consumer pays. The Energinet contribution to the manual stack was roughly half what it should have been. Strømligning's breakdown lists them as two separate components (`transmission.netTariff` + `transmission.systemTariff`).
+
+#### Net effect
+
+Combined tariff at hour 10 today, before and after:
+
+| Source | DSO | Energinet | Combined |
+|---|---|---|---|
+| OLD code | 0.293 (6 bands) | 0.043 (40000 only) | 0.336 |
+| **v0.39.8 fix** | **0.0923** (Nettarif C only) | **0.115** (40000 + 41000) | **0.2073** |
+| Strømligning truth | 0.0923 | 0.115 | 0.2073 |
+
+The two bugs partially cancelled — overstated DSO + missing Energinet system tariff. The dashboard markdown card on Priser & Plan still showed an inflated all-in price (0.468 vs the true 0.325 for the current 15-min slot).
+
+### Sites fixed
+
+1. `tariffs.py` `fetch_tariff_schedule` — added optional `note_substring` parameter. When provided, only records whose `Note` field contains the substring (case-insensitive) are included.
+2. `coordinator.py` — DSO query now passes `note_substring="Nettarif C"` (the standard Danish term for the residential time-of-use band, used consistently across the 7 supported DSOs).
+3. `const.py` — `ENERGINET_TARIFF_CODES` widened from `{"40000"}` to `{"40000", "41000"}`. Comment updated to enumerate the codes deliberately excluded.
+
+### Customer-tier assumption
+
+The "Nettarif C" filter assumes the user is on the residential C-time band — the standard for ~98% of Danish households and the only DSO tariff residential customers can be on. Tier-A or tier-B users (small/large industrial connections, very rare for HACS installs) would need a future tier-picker in OptionsFlow; not addressed in this patch.
+
+### What does not change
+
+- Strømligning mode is unaffected — the breakdown sensor and the optimizer's `_compute_buy_price` already read from the Strømligning API directly when in `stromligning` mode (since v0.39.5 + v0.39.6).
+- Octopus mode (UK) is unaffected.
+- The `sensor.solar_ai_24h_priskort` chart still uses the manual stack regardless of buy-price mode. Now that the manual stack is correct, the chart's numbers will match Strømligning for users on either mode. Routing the chart through `_compute_buy_price` for a single source of truth is a separate cleanup.
+
+---
+
+## [0.39.7] — 2026-05-26
+
+### Fixed — leftover OptionsFlow step still asked users to create `schedule.*` helpers
+
+v0.38.0 moved EV charge schedules into the dashboard (native `skema_1..4` entities — `select`/`switch`/`time`/`sensor` per slot, edited directly on the EV / OCPP tab). The OptionsFlow step that asked users to create HA schedule helpers in Settings → Helpers → Schedule and link them per EV mode was supposed to be removed at the same time, but the cleanup was never done. Users opening Configure → OCPP Settings landed on the obsolete "EV-opladningsplaner (v0.36.0)" step before they could reach the entity-mapping step.
+
+### Sites fixed
+
+1. `config_flow.py` — `async_step_ev_schedules` method removed. `async_step_ocpp_settings` now routes directly to `async_step_entities`.
+2. `config_flow.py` — unused imports for `CONF_EV_SCHEDULE_LINKS`, `CONF_EV_SCHEDULED_FALLBACK_MODE`, `DEFAULT_EV_SCHEDULED_FALLBACK_MODE`, `EV_SCHEDULE_LINKS_MAX` dropped.
+3. `translations/en.json`, `translations/da.json`, `strings.json` — `ev_schedules` step entry removed.
+
+### What does not change
+
+- The legacy `CONF_EV_SCHEDULE_LINKS` data in entry.data is **preserved**. `coordinator.py` still reads it once at setup for one-time migration of pre-v0.38.0 installs (see lines 604–662). New installs and already-migrated installs are unaffected; the migration is idempotent (gated on `"ev_schedules" not in self._stored`).
+- Native dashboard schedule entities (`select.solar_ai_skema_N_tilstand`, `switch.solar_ai_skema_N_aktiveret`, `time.solar_ai_skema_N_starttid`, `time.solar_ai_skema_N_sluttid`, `sensor.solar_ai_skema_N`) are unchanged.
+
+---
+
+## [0.39.6] — 2026-05-26
+
+### Fixed — Strømligning cache collapsed 15-min slots to a single hourly value
+
+The cache key in `stromligning.fetch_prices` aligned every entry to the hour boundary instead of the 15-min boundary. Strømligning publishes prices at 15-min resolution (each entry carries `resolution: "15m"`), so for any given hour the four quarter-hour entries all hashed to the same key — last-write-wins, leaving only the `:45` quarter in the cache.
+
+Two downstream effects:
+
+1. **Optimizer plan was priced wrong on every intra-hour slot.** The DP loop iterates at 15-min resolution and calls `_compute_buy_price(slot_start_dt=...)` for each quarter. With the cache collapsed, all four quarters in a given hour received the same price — the `:45` quarter's value — even when the actual `:00`/`:15`/`:30` prices were several times higher. Charge/export decisions were made against this flattened view.
+2. **Buy-price-breakdown sensor showed the `:45` quarter's price as the "current hour" value.** This is what surfaced the bug — the sensor reported ~0.43 DKK/kWh for the 09:00 local hour on 2026-05-26 while the user's retailer page showed ~1.13 DKK/kWh (the early quarters of that hour).
+
+### Sites fixed
+
+1. `stromligning.py` `fetch_prices` — canonical cache key now uses `(minute // 15) * 15` instead of `minute=0`. Up to 4 entries per hour are stored under distinct keys.
+2. `coordinator.py` `_compute_buy_price` (Strømligning branch) — lookup key built at 15-min resolution. Falls back to an hour-aligned key when the 15-min lookup misses, which handles products/dates where Strømligning returns hourly entries.
+3. `sensor.py` `BatteryArbitrageBuyPriceBreakdownSensor._current_stromligning_entry` — same 15-min lookup + hour-aligned fallback. The breakdown sensor now updates four times per hour with the active quarter's components.
+
+### Root cause
+
+The minute collapse was introduced in v0.39.1 as a side-effect of the cache-key format-normalisation patch (which corrected a real bug — `+00:00` vs `.000Z` mismatch causing every lookup to miss). The format normalisation did not require dropping the minute resolution; that was a fingertips error. Doc-comments in all three sites now state the 15-min resolution contract explicitly so the next refactor doesn't strip it again.
+
+### What does not change
+
+- Strømligning cache TTL (24 h) is unchanged.
+- Manual-stack and Octopus buy-price paths are unchanged.
+- The 24-hour price chart (`sensor.solar_ai_24h_priskort`) uses a different code path (EDS spot + manual stack); not affected by this fix.
+
+### Upgrade behaviour
+
+Cache is in-memory and cleared on HA restart. After deploying v0.39.6, the first coordinator update repopulates the cache under the new (15-min) keys. No migration needed.
+
+---
+
 ## [0.39.5] — 2026-05-25
 
 ### Fixed — Strømligning buy-price components were always read at the wrong nesting level

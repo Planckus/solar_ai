@@ -80,6 +80,7 @@ async def fetch_tariff_schedule(
     require_all_prices: bool = False,
     require_varying_prices: bool = False,
     allowed_codes: frozenset[str] | None = None,
+    note_substring: str | None = None,
 ) -> list[float]:
     """Return a 24-entry hourly tariff schedule (DKK/kWh) for *gln*.
 
@@ -114,6 +115,18 @@ async def fetch_tariff_schedule(
             are included.  Use for the Energinet GLN to select only the
             Transmissions nettarif (code ``"40000"``) and exclude the
             Indfødningstarif produktion (``"40010"``), HV tariffs, etc.
+        note_substring:
+            When provided, only records whose ``Note`` field contains this
+            substring (case-insensitive) are included.  v0.39.8 — use this
+            for DSO queries to restrict to a single customer tier (e.g.
+            ``"Nettarif C"`` for residential customers on the C-time band).
+            Without this filter, DSOs that publish multiple parallel tier
+            tariffs (Dinel publishes 7: A_high/low, B_spreed/high/low, C
+            <100/>100) all pass the all-prices+varying-prices filters and
+            get summed into a single schedule, overstating the per-kWh
+            tariff several-fold.  ``Nettarif C`` is the standard Danish
+            term for the residential time-of-use band and is used
+            consistently across the 7 supported DSOs.
 
     Flat-rate records (only Price1 populated) are treated as a constant
     applied to all 24 hours — this handles the Energinet transmission tariff
@@ -172,10 +185,20 @@ async def fetch_tariff_schedule(
     # the tariff.  Deduplication by profile prevents this.
     seen_profiles: set[tuple[float, ...]] = set()
 
+    note_substring_lc = note_substring.lower() if note_substring else None
+
     for record in all_records:
         # ── Charge-type code allow-list ──────────────────────────────────────
         if allowed_codes is not None and record.get("ChargeTypeCode") not in allowed_codes:
             continue
+
+        # ── Note substring filter (v0.39.8) ──────────────────────────────────
+        # Restrict to records matching a customer-tier description. See
+        # docstring for rationale.
+        if note_substring_lc is not None:
+            note_text = (record.get("Note") or "").lower()
+            if note_substring_lc not in note_text:
+                continue
 
         # ── Validity window ──────────────────────────────────────────────────
         valid_from_str: str = record.get("ValidFrom") or ""
