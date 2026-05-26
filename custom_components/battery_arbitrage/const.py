@@ -202,6 +202,18 @@ EV_STOP_RECOVERY_SECONDS = 10
 # start timer.
 EV_START_DROP_TIMEOUT_SECONDS = 10
 
+# v0.39.11 — Entry debounce for the COOLING state. Mirror image of
+# EV_STOP_RECOVERY_SECONDS in the opposite direction: when CHARGING, a
+# single tick of surplus dipping below min should NOT immediately flip
+# the state name to COOLING. On variable cloud cover near min_kw (e.g.
+# 3-phase 6 A = 4.14 kW) the surplus can oscillate by 50-100 W with
+# 10-20 s cycles, and without this debounce the dashboard flaps
+# CHARGING ↔ COOLING dozens of times per hour while the EV actually
+# charges continuously. Require sustained below-min for this many
+# seconds before setting `_ev_surplus_below_min_since_ts` (which is
+# what drives the COOLING state name in _ev_telemetry).
+EV_COOL_ENTRY_SECONDS = 10
+
 # v0.39.0 — Auto-promote EV master mode to Full when the live buy price
 # goes negative, then auto-revert to the pre-promotion mode when the
 # price-floor block closes (export price rises back above the user's

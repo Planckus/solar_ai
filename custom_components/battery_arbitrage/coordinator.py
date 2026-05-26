@@ -167,6 +167,7 @@ from .const import (
     EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS,
     EV_STOP_RECOVERY_SECONDS,
     EV_START_DROP_TIMEOUT_SECONDS,
+    EV_COOL_ENTRY_SECONDS,
     CONF_AUTO_FULL_ON_NEGATIVE_PRICE,
     DEFAULT_AUTO_FULL_ON_NEGATIVE_PRICE,
     AUTO_FULL_DEBOUNCE_SECONDS,
@@ -308,6 +309,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # start timer is cleared (genuine drop). Brief blips don't reset
         # it — mirror image of the v0.38.3 stop-recovery logic.
         self._ev_arm_drop_since_ts: datetime | None = None
+        # v0.39.11 — Entry-debounce timestamp. When charging and surplus first
+        # drops below min, this records the first below-min tick. Only when
+        # the drop has been sustained for EV_COOL_ENTRY_SECONDS do we set
+        # `_ev_surplus_below_min_since_ts` (which drives the COOLING state
+        # name). Cleared on any above-min recovery while still in CHARGING
+        # (before the formal stop timer arms). Mirror of the v0.38.3
+        # stop-recovery guard in the opposite direction.
+        self._ev_cool_entry_ts: datetime | None = None
         # v0.39.0 — Auto-promote-to-Full on negative buy price state.
         # When `auto_full_on_negative_price` is enabled and the buy price
         # has been ≤ 0 for AUTO_FULL_DEBOUNCE_SECONDS, the coordinator
@@ -2675,6 +2684,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_surplus_above_min_since_ts = None
             self._ev_surplus_below_min_since_ts = None
             self._ev_arm_drop_since_ts = None              # v0.38.5
+            self._ev_cool_entry_ts = None                  # v0.39.11
             _LOGGER.info("EV plugged in (%s) — resetting mode to %s", charger_id, default_mode)
         self._ev_prev_connected = ev_connected
 
@@ -3401,6 +3411,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_surplus_above_min_since_ts = None
             self._ev_surplus_below_min_since_ts = None
             self._ev_arm_drop_since_ts = None              # v0.38.5
+            self._ev_cool_entry_ts = None                  # v0.39.11
             return target_amps
         now = datetime.now()
         start_window = int(self.config.get(
@@ -3413,8 +3424,26 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if target_amps == 0:
             # Want to stop ── arm the stop timer when currently charging
             if self._ev_last_amps > 0:
+                # v0.39.11 — entry debounce. Before setting
+                # `_ev_surplus_below_min_since_ts` (which flips the
+                # state name to COOLING), require EV_COOL_ENTRY_SECONDS
+                # of sustained below-min. This dampens the cosmetic
+                # flap when surplus oscillates by 50-100 W around the
+                # min threshold under variable cloud cover. The EV
+                # keeps drawing during the debounce — only the state
+                # name (and the stop timer) is delayed.
                 if self._ev_surplus_below_min_since_ts is None:
+                    if self._ev_cool_entry_ts is None:
+                        self._ev_cool_entry_ts = now
+                    elapsed_entry = (now - self._ev_cool_entry_ts).total_seconds()
+                    if elapsed_entry < EV_COOL_ENTRY_SECONDS:
+                        # Still in entry debounce — stay CHARGING.
+                        self._ev_surplus_above_min_since_ts = None
+                        self._ev_arm_drop_since_ts = None
+                        return self._ev_last_amps
+                    # Sustained below-min — formally enter COOLING.
                     self._ev_surplus_below_min_since_ts = now
+                    self._ev_cool_entry_ts = None
                 self._ev_surplus_above_min_since_ts = None  # reset start timer
                 self._ev_arm_drop_since_ts = None          # not in ARMING path
                 elapsed = (now - self._ev_surplus_below_min_since_ts).total_seconds()
@@ -3452,6 +3481,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 self._ev_surplus_above_min_since_ts = now
             self._ev_surplus_below_min_since_ts = None     # reset stop timer
             self._ev_arm_drop_since_ts = None              # v0.38.5: recovered from any blip-below
+            self._ev_cool_entry_ts = None                  # v0.39.11
             elapsed = (now - self._ev_surplus_above_min_since_ts).total_seconds()
             if elapsed >= start_window:
                 self._ev_surplus_above_min_since_ts = None
@@ -3474,11 +3504,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # Sustained recovery — surplus has held above min long enough.
             self._ev_surplus_above_min_since_ts = None
             self._ev_surplus_below_min_since_ts = None
+            self._ev_cool_entry_ts = None                  # v0.39.11
             return target_amps
 
         # Already charging, no pending stop — normal live ramp.
         self._ev_surplus_above_min_since_ts = None
         self._ev_surplus_below_min_since_ts = None
+        self._ev_cool_entry_ts = None                      # v0.39.11
         return target_amps
 
     async def _set_ocpp_charge_rate(self, charger_id: str, amps: int) -> None:

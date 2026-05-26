@@ -9,6 +9,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.11] — 2026-05-26
+
+### Fixed — EV controller state flapped CHARGING ↔ COOLING on borderline surplus
+
+When solar surplus was hovering near the minimum charge threshold (`ev_min_charge_kw`, e.g. 4.14 kW for 3-phase 6 A) with typical variable-cloud noise of 50-100 W, the dashboard reported the EV state oscillating between `CHARGING` and `COOLING` every 20-30 seconds. Verified from `sensor.solar_ai_ev_status` history on 2026-05-26: 50+ state transitions over 30 minutes while `target_amps` and `last_commanded_amps` were both stuck at 6 the entire time — i.e. the charger never actually stopped, the state name was the only thing flipping.
+
+### Root cause — asymmetric debouncing
+
+`_apply_ev_time_window` had a debounce in only one direction:
+
+| Direction | Behaviour |
+|---|---|
+| CHARGING → COOLING | **Immediate.** First single tick of `target_amps == 0` set `_ev_surplus_below_min_since_ts = now`, which `_ev_telemetry` reads to flip the state name. |
+| COOLING → CHARGING | **10 s sustained recovery required.** v0.38.3 added `EV_STOP_RECOVERY_SECONDS = 10` to prevent the inverse flap (single tick above min during COOLING). |
+
+So a single below-min tick during normal charging dropped the state into COOLING; 10 s of sustained recovery dropped it back. With surplus crossing the threshold every 10-20 s, the state name flapped at exactly that cadence while the charger drew 6 A continuously.
+
+### Fix — symmetric entry debounce
+
+Added `EV_COOL_ENTRY_SECONDS = 10` (mirror of `EV_STOP_RECOVERY_SECONDS`). When `target_amps == 0` and the EV is charging (`ev_last_amps > 0`) and the stop timer hasn't already armed, we now require the surplus to remain below min for `EV_COOL_ENTRY_SECONDS` of sustained ticks before setting `_ev_surplus_below_min_since_ts`. During the debounce window, state stays `CHARGING` and the EV continues drawing at `ev_last_amps`.
+
+New instance attribute `_ev_cool_entry_ts` tracks the first below-min tick. Cleared on any above-min recovery while the EV is still in the pre-COOLING phase, on plug-in, on mode change, and on confirmed COOLING entry. Mirrors the lifetime of the v0.38.5 `_ev_arm_drop_since_ts` field but in the opposite direction.
+
+### Behaviour change
+
+| Scenario | Before | After |
+|---|---|---|
+| Surplus oscillates ±50 W around min, total time above ≥ 50 % | CHARGING ↔ COOLING flap every 10-20 s; EV draws at 6 A throughout | State stays `CHARGING`; EV draws at 6 A throughout |
+| Genuine cloud passes (surplus < min for 30 s) | COOLING from T=0, stops at T=180 s | COOLING from T=10 s (after entry debounce), stops at T=190 s |
+| Brief surplus drop during charging (< 10 s) | Single COOLING tick visible in state history | No state change |
+
+Net effect: cosmetic flap eliminated. Actual stop behaviour delayed by `EV_COOL_ENTRY_SECONDS` = 10 s in the worst case (1.06 % of the 180 s stop window — not significant). No change to start_window, stop_window, or recovery logic.
+
+### Sites changed
+
+1. `const.py` — new `EV_COOL_ENTRY_SECONDS = 10` constant with doc-comment explaining the rationale.
+2. `coordinator.py` — new `_ev_cool_entry_ts` instance attribute; entry-debounce block in `_apply_ev_time_window`; reset of the new field on plug-in, mode change, and the three exit paths.
+
+### What does not change
+
+- `EV_STOP_RECOVERY_SECONDS = 10` (the v0.38.3 recovery guard) — unchanged.
+- `start_window` / `stop_window` (user-configurable in OptionsFlow) — unchanged.
+- Actual OCPP commands sent to the charger — same as before.
+- All other v0.39.10 / v0.39.9 / v0.39.8 fixes — unchanged.
+
+---
+
 ## [0.39.10] — 2026-05-26
 
 ### Fixed — `ev_charging_now` and `ev_charging_solar` were hardwired False in FoxESS-only mode
