@@ -2856,7 +2856,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         target_amps = self._kw_to_amps(target_kw)
 
         # ── Anti-flap window (time-based, v0.26.0) ────────────────────────
-        final_amps = self._apply_ev_time_window(target_amps)
+        # v0.39.12 — pass `probing` so a curtailment probe can bypass
+        # start_window when starting from IDLE. Without the bypass the
+        # probe (60 s) and start_window (60 s default) race at T=60 s
+        # and the EV almost always fails to start.
+        final_amps = self._apply_ev_time_window(target_amps, probing=probing)
 
         # ── Rate-of-change limit (smooth ramp) ────────────────────────────
         if final_amps > 0 and self._ev_last_amps > 0:
@@ -3390,7 +3394,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "charger_last_protocol_error": cp.last_protocol_error,
         }
 
-    def _apply_ev_time_window(self, target_amps: int) -> int:
+    def _apply_ev_time_window(self, target_amps: int, *, probing: bool = False) -> int:
         """Time-based anti-flap (v0.26.0, narrowed in v0.27.4 to PV-only).
 
         Anti-flap windows are ONLY needed for `pv` mode — they exist to absorb
@@ -3401,6 +3405,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         For PV mode: surplus must hold ≥ min for `start_window` seconds
         before charging starts, and < min for `stop_window` seconds before
         charging stops.
+
+        v0.39.12 — `probing` kwarg. When the curtailment probe is in flight
+        (`_run_ev_controller` sets it from `self._ev_probe_started_at`), the
+        probe IS the confidence signal: it only fires when the inverter
+        explicitly reports PV throttling (reg 49251) AND a Solar AI
+        price-floor block is open. Forcing the EV to wait the full
+        start_window (default 60 s) before starting creates a race with
+        EV_CURTAILMENT_PROBE_SECONDS (also 60 s): the probe almost always
+        expires before the start_window completes and the EV never starts,
+        and the controller then enters its 15-minute probe cool-down. To
+        break the race, `probing=True` bypasses start_window from IDLE.
+        Stop-window and v0.39.11 entry-debounce are still applied (probe
+        ends, surplus drops, normal stop sequence runs).
         """
         # v0.27.4: non-PV modes bypass time-windows entirely. Clear any
         # half-armed timers so they don't carry stale state if the user
@@ -3477,6 +3494,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # Want to charge ── arm the start timer when currently idle
         if self._ev_last_amps == 0:
+            # v0.39.12 — curtailment probe bypass. See docstring.
+            if probing:
+                self._ev_surplus_above_min_since_ts = None
+                self._ev_surplus_below_min_since_ts = None
+                self._ev_arm_drop_since_ts = None
+                self._ev_cool_entry_ts = None
+                return target_amps
             if self._ev_surplus_above_min_since_ts is None:
                 self._ev_surplus_above_min_since_ts = now
             self._ev_surplus_below_min_since_ts = None     # reset stop timer
