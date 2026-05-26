@@ -870,15 +870,27 @@ class BatteryArbitrageBuyPriceBreakdownSensor(
         return "manual"
 
     def _current_stromligning_entry(self) -> dict | None:
-        """Look up the cached Strømligning slot for the current hour."""
+        """Look up the cached Strømligning slot for the current 15-min slot.
+
+        v0.39.6 — lookup at 15-min resolution, matching the cache key built
+        by `stromligning.fetch_prices`. Falls back to an hour-aligned key
+        when the 15-min lookup misses (for products/dates where Strømligning
+        returns hourly slots).
+        """
         from datetime import datetime, timezone   # noqa: PLC0415
         cache = getattr(self.coordinator, "_cached_stromligning_prices", {}) or {}
         if not cache:
             return None
-        key = (datetime.now(timezone.utc)
-               .replace(minute=0, second=0, microsecond=0)
+        now_utc = datetime.now(timezone.utc)
+        slot_minute = (now_utc.minute // 15) * 15
+        key = (now_utc.replace(minute=slot_minute, second=0, microsecond=0)
                .strftime("%Y-%m-%dT%H:%M:%S.000Z"))
-        return cache.get(key)
+        entry = cache.get(key)
+        if entry is None and slot_minute != 0:
+            key_h = (now_utc.replace(minute=0, second=0, microsecond=0)
+                     .strftime("%Y-%m-%dT%H:%M:%S.000Z"))
+            entry = cache.get(key_h)
+        return entry
 
     def _current_octopus_entry(self) -> dict | None:
         """Look up the cached Octopus rate for the current 30-min slot."""

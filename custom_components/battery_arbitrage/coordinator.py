@@ -788,15 +788,25 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             dso_gln = self.config.get(CONF_DSO_GLN, DEFAULT_DSO_GLN)
             try:
                 dso_sched, energinet_sched, (dso_feed_in, en_feed_in) = await asyncio.gather(
-                    # DSO: 24 hourly prices + genuinely varying hours → nettarif C time only
-                    # (excludes Effektbetaling capacity charges and flat samplaceret band tariffs)
+                    # DSO: 24 hourly prices + genuinely varying hours, restricted
+                    # to the residential C-time band via Note substring.
+                    # v0.39.8 — added `note_substring="Nettarif C"` because the
+                    # require-all-prices + require-varying filters alone still
+                    # let through tier-A and tier-B records (Dinel publishes
+                    # 7 parallel bands; previously all 6 distinct profiles
+                    # were summed, overstating the per-kWh tariff ~3x).
                     fetch_tariff_schedule(
                         session, dso_gln, now,
                         require_all_prices=True,
                         require_varying_prices=True,
+                        note_substring="Nettarif C",
                     ),
-                    # Energinet: only code 40000 (Transmissions nettarif, residential consumers)
-                    # excludes 40010 (Indfødningstarif produktion) and 40020 (HV 132/150 kV)
+                    # Energinet: codes 40000 (Transmissions nettarif) + 41000
+                    # (Systemtarif) — both apply to residential consumers.
+                    # v0.39.8 — 41000 added; was missing before, halving the
+                    # Energinet contribution. Excludes 40010 (Indfødningstarif
+                    # produktion), 40020 (HV 132/150 kV), capacity / industrial
+                    # tariffs.
                     fetch_tariff_schedule(
                         session, ENERGINET_GLN, now,
                         allowed_codes=ENERGINET_TARIFF_CODES,
@@ -4171,11 +4181,27 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if mode != BUY_PRICE_MODE_STROMLIGNING or slot_start_dt is None:
             return (spot + spot_markup + tariff_this_hour_dso + elafgift) * vat_factor
 
-        # Strømligning mode — lookup by hour-aligned ISO timestamp
-        slot_key = slot_start_dt.astimezone(timezone.utc).replace(
-            minute=0, second=0, microsecond=0,
+        # Strømligning mode — lookup by 15-min aligned ISO timestamp.
+        # Strømligning publishes 15-min slots; the cache key built in
+        # `stromligning.fetch_prices` uses `(minute // 15) * 15`. v0.39.6
+        # fixed an earlier bug where this lookup used hour-aligned keys
+        # and silently received only the :45 quarter's price for every
+        # intra-hour slot the optimizer queried. Hour-aligned fallback
+        # covers products/dates where Strømligning returns hourly slots
+        # (entries with `resolution: "1h"` land at minute=0 in the cache).
+        slot_utc = slot_start_dt.astimezone(timezone.utc)
+        slot_minute = (slot_utc.minute // 15) * 15
+        slot_key = slot_utc.replace(
+            minute=slot_minute, second=0, microsecond=0,
         ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         entry = self._cached_stromligning_prices.get(slot_key)
+        if entry is None and slot_minute != 0:
+            # 15-min miss — try the hour-aligned key (handles hourly-resolution
+            # entries from Strømligning).
+            slot_key_h = slot_utc.replace(
+                minute=0, second=0, microsecond=0,
+            ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            entry = self._cached_stromligning_prices.get(slot_key_h)
         if entry is None:
             # No matching slot — fall back to manual stack
             return (spot + spot_markup + tariff_this_hour_dso + elafgift) * vat_factor
