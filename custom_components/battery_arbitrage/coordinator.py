@@ -823,19 +823,46 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     # Feed-in tariffs: DSO indfødning C + Energinet indfødning produktion (40010)
                     fetch_feed_in_tariff(session, dso_gln, ENERGINET_GLN, now),
                 )
-                self._tariff_schedule = [
-                    round(d + e, 4) for d, e in zip(dso_sched, energinet_sched)
-                ]
-                self._feed_in_tariff_dso = dso_feed_in
-                self._feed_in_tariff_energinet = en_feed_in
-                self._last_tariff_schedule_refresh = now
-                _LOGGER.debug(
-                    "Tariff schedule refreshed (GLN %s + Energinet). "
-                    "Hour 0: %.4f, Hour 12: %.4f DKK/kWh",
-                    dso_gln,
-                    self._tariff_schedule[0],
-                    self._tariff_schedule[12],
-                )
+                # v0.39.13 — only commit if BOTH fetches returned non-empty
+                # data. Before this guard, a partial fetch (e.g. Energinet
+                # returning [0]*24 due to a Datahub rate-limit or transient
+                # network issue) would silently overwrite the cache with
+                # bad data and lock that 24-hour-stale state for a full
+                # day. Observed live on 2026-05-26: nettarif_denne_time
+                # dropped from 0.217 (DSO+Energinet, correct) to 0.1023
+                # (DSO only) after one of several restarts re-fetched
+                # while Datahub was flaky. Now: keep the previous good
+                # cache and retry on the next coordinator tick.
+                dso_ok = any(dso_sched)
+                energinet_ok = any(energinet_sched)
+                if dso_ok and energinet_ok:
+                    self._tariff_schedule = [
+                        round(d + e, 4) for d, e in zip(dso_sched, energinet_sched)
+                    ]
+                    self._feed_in_tariff_dso = dso_feed_in
+                    self._feed_in_tariff_energinet = en_feed_in
+                    self._last_tariff_schedule_refresh = now
+                    _LOGGER.debug(
+                        "Tariff schedule refreshed (GLN %s + Energinet). "
+                        "Hour 0: %.4f, Hour 12: %.4f DKK/kWh",
+                        dso_gln,
+                        self._tariff_schedule[0],
+                        self._tariff_schedule[12],
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Tariff schedule fetch partial — DSO ok=%s (sum=%.4f), "
+                        "Energinet ok=%s (sum=%.4f). Keeping previous cache; "
+                        "will retry in ~10 minutes.",
+                        dso_ok, sum(dso_sched),
+                        energinet_ok, sum(energinet_sched),
+                    )
+                    # Bump the refresh timestamp forward so the next retry
+                    # fires after ~10 minutes instead of 24 hours, but not
+                    # every coordinator tick (which would hammer Datahub).
+                    self._last_tariff_schedule_refresh = (
+                        now - timedelta(seconds=TARIFF_SCHEDULE_REFRESH_SECONDS - 600)
+                    )
             except Exception as err:
                 _LOGGER.warning("Tariff schedule refresh failed, keeping existing: %s", err)
 

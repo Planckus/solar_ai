@@ -9,6 +9,59 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.13] — 2026-05-26
+
+### Fixed — partial tariff-schedule fetch could lock the cache onto bad data for 24 hours
+
+The daily tariff-schedule refresh in `coordinator.py` runs two parallel `fetch_tariff_schedule` calls (one for the user's DSO, one for Energinet) plus a feed-in fetch. The result was committed to `self._tariff_schedule` and `self._last_tariff_schedule_refresh = now` regardless of whether either fetch actually returned data. If one side returned an empty `[0]*24` schedule — Datahub rate-limit, transient network blip, anything — the cache silently overwrote the previous good data with the partial result and locked that 24-hour-stale state for a full day.
+
+Observed live on 2026-05-26: after the v0.39.8 deploy this morning, `sensor.solar_ai_nettarif_denne_time` correctly showed 0.217 DKK/kWh (DSO 0.092 + Energinet 0.115 + elafgift 0.01) at hour 10. Several subsequent restarts (v0.39.9 / .10 / .11 / .12) each triggered a fresh tariff fetch. During one of them, the Energinet side returned empty (rate-limited or similar). The cache was overwritten to DSO-only, and `nettarif_denne_time` dropped to 0.1023 (DSO 0.092 + elafgift 0.01). All downstream sensors that use the manual stack — `sensor.solar_ai_24h_priskort`, the Prissammensætning markdown card on the Priser & Plan tab, the optimizer's manual-stack fallback path — were now reading inflated-by-0.115-DKK-per-kWh wrong totals (or in the priskort's case, deflated).
+
+The breakdown sensor `sensor.solar_ai_indkobspris_opdeling` is unaffected: it reads directly from Strømligning's API, not from `_tariff_schedule`.
+
+### Fix
+
+`coordinator.py` around the tariff-schedule commit: check that BOTH the DSO and Energinet fetches returned non-empty data before overwriting the cache.
+
+```python
+dso_ok = any(dso_sched)
+energinet_ok = any(energinet_sched)
+if dso_ok and energinet_ok:
+    self._tariff_schedule = [round(d + e, 4) for d, e in zip(dso_sched, energinet_sched)]
+    self._feed_in_tariff_dso = dso_feed_in
+    self._feed_in_tariff_energinet = en_feed_in
+    self._last_tariff_schedule_refresh = now
+else:
+    _LOGGER.warning("Tariff schedule fetch partial — keeping previous cache; will retry in ~10 minutes.")
+    # Advance refresh timestamp by less than the full TTL so the next
+    # retry fires after ~10 min, not 24 h.
+    self._last_tariff_schedule_refresh = now - timedelta(
+        seconds=TARIFF_SCHEDULE_REFRESH_SECONDS - 600,
+    )
+```
+
+### Behaviour
+
+| Scenario | Before | After |
+|---|---|---|
+| Both fetches succeed | Cache committed, fresh for 24 h | Same |
+| Either fetch returns zeros | Cache overwritten with partial data, locked 24 h | Previous good cache preserved; retry in ~10 min |
+| First-ever startup, one side fails | Cache populated with partial garbage | `_tariff_schedule` stays `[0]*24`; retry in ~10 min. Until first full success, manual-stack readers show zero tariff. Strømligning breakdown sensor is unaffected. |
+| Permanent failure (e.g. wrong GLN) | Bad data persists 24 h | Retries every 10 min; manual stack stays at last good cache (or zeros on cold start) |
+
+### What does not change
+
+- `TARIFF_REFRESH_INTERVAL_SECONDS = 3600` (hourly price refresh) — unchanged.
+- `TARIFF_SCHEDULE_REFRESH_SECONDS = 86400` (daily schedule refresh) — unchanged for the success path.
+- Strømligning breakdown sensor — already reads the API directly, unaffected.
+- v0.39.8 DSO Note filter + Energinet `{40000, 41000}` codes — unchanged. This patch is a guard against partial fetch failures, not a re-design of the fetch itself.
+
+### Deploying this also fixes today's bad cache
+
+The deploy includes the HA restart, which clears the in-memory cache and forces a fresh fetch. Datahub is responsive right now (verified live), so the fresh fetch should populate both DSO and Energinet correctly. Expected after restart: `sensor.solar_ai_nettarif_denne_time` returns to ~0.207–0.217 (depending on current local hour and DSO time-of-day rate); priskort buy at the current hour returns to ~0.26–0.28; Prissammensætning markdown card matches.
+
+---
+
 ## [0.39.12] — 2026-05-26
 
 ### Fixed — curtailment probe and EV start-window raced at T=60 s; EV never started under export-stop + PV-limited
