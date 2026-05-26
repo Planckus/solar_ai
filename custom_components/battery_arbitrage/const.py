@@ -540,7 +540,16 @@ SELL_SIDE_COMPANY_OPTIONS: list[dict] = [
 ]
 
 ENERGINET_GLN = "5790000432752"          # Energinet — transmission/system tariffs
-ENERGINET_TARIFF_CODES = frozenset({"40000"})  # Transmissions nettarif only (residential; excludes indfødningstarif)
+ENERGINET_TARIFF_CODES = frozenset({"40000", "41000"})
+# v0.39.8 — `41000` (Systemtarif) added. Was missing prior to v0.39.8, which
+# halved the Energinet contribution to `_tariff_schedule[h]`. Per the
+# Strømligning breakdown for a residential DK1 customer the two components
+# are transmission (40000, ~0.043 DKK/kWh) and system (41000, ~0.072
+# DKK/kWh). Both are flat hourly rates updated annually.
+# Excluded: 40010 (Indfødningstarif produktion, sell-side), 40020 (HV 132/150 kV),
+# 40021/40023 (DK1/DK2 Nettabstarif — TSO-connected industrial), 40022 (Effekt-
+# abonnement capacity charges), 40024 (begrænset netadgang), 41003 (storforbruger),
+# 41004 (TSO system abonnement), 45012 (Balancetarif production).
 DEFAULT_ELAFGIFT_DKK_KWH = 0.01         # Danish electricity duty (elafgift) — user-adjustable
 TARIFF_SCHEDULE_REFRESH_SECONDS = 86400  # Refresh tariff schedule daily (tariffs are stable within a day)
 EDS_ELSPOT_URL = "https://api.energidataservice.dk/dataset/DayAheadPrices"

@@ -140,22 +140,34 @@ async def fetch_prices(
         ts_raw = entry.get("date")
         if not ts_raw:
             continue
-        # v0.39.1 — Normalise the slot key. Strømligning's `date` field
-        # can come back in either of two ISO formats depending on the
-        # API revision: "2026-05-20T07:00:00+00:00" or
-        # "2026-05-20T07:00:00.000Z". The lookups in
-        # `_compute_buy_price` (coordinator) and `_current_stromligning_entry`
-        # (breakdown sensor) both use the `.000Z` variant. Without
-        # normalisation, lookups silently miss every slot — the
-        # buy-price breakdown attributes all read 0.0 and the
-        # coordinator falls back to the manual stack despite the
-        # cache being populated. Normalise to UTC hour-aligned
-        # `.000Z` format here so the storage key always matches the
-        # lookup key regardless of which API variant we got.
+        # Canonical slot key — must match the format and resolution used by
+        # every lookup site (coordinator `_compute_buy_price`, sensor
+        # `_current_stromligning_entry`). Two invariants:
+        #
+        #   1. Trailing format is `.000Z`. Strømligning's `date` field comes
+        #      back in either "...+00:00" or "....000Z" depending on API
+        #      revision; v0.39.1 unified that — without normalisation,
+        #      lookups silently missed every slot and the breakdown sensor
+        #      read all-zero attributes.
+        #
+        #   2. Minute resolution is 15-min aligned, NOT hour aligned.
+        #      Strømligning publishes 15-min slots (the entry carries
+        #      `resolution: "15m"`); the optimizer iterates at 15-min
+        #      native resolution since v0.36.0. v0.39.1 mistakenly used
+        #      `minute=0` which collapsed all 4 quarters into the same
+        #      hour key — last-write-wins meant only the :45 quarter
+        #      survived, and every intra-hour lookup got that single
+        #      value. Fixed in v0.39.6 by aligning to the 15-min
+        #      boundary. If the API ever returns hourly slots
+        #      (resolution `"1h"`), the entry will already sit at
+        #      minute=0 here and the lookup sites fall back to an
+        #      hour-aligned key on miss.
         try:
             dt = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
-            canonical = dt.astimezone(timezone.utc).replace(
-                minute=0, second=0, microsecond=0,
+            dt_utc = dt.astimezone(timezone.utc)
+            slot_minute = (dt_utc.minute // 15) * 15
+            canonical = dt_utc.replace(
+                minute=slot_minute, second=0, microsecond=0,
             ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         except (ValueError, AttributeError) as err:
             _LOGGER.debug(
