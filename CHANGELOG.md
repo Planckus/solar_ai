@@ -9,6 +9,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.16] — 2026-05-27
+
+### Documentation — README "Recent releases" v0.39.x section updated for v0.39.15
+
+Three small edits to keep the README accurate after v0.39.15:
+
+- Date range corrected from "Released in a single day (2026-05-26)" to "Released over 2026-05-26 → 2026-05-27".
+- EV-controller fix count bumped from "three" to "four" to include v0.39.15.
+- New bullet describing v0.39.15: the probe trigger gate broadened to `pv_curtailed AND (floor_active OR battery_near_full)`, and the solar learner's `curtailed=` signal broadened to `floor_active OR mppt_curtailed`. Cross-references the v0.38.2 design and explains why grid-side faults remain excluded.
+
+No code changes. Manifest bumped per the project's per-push version rule. All integration code identical to v0.39.15.
+
+---
+
 ## [0.39.15] — 2026-05-27
 
 ### Fixed — battery-full MPPT curtailment was not captured by the EV or the solar learner
