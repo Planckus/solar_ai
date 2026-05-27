@@ -9,6 +9,196 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.19] — 2026-05-27
+
+### Changed — battery-priority gate now releases when grid is actively exporting
+
+Adds the export-active edge case to PV-mode behaviour. Before this fix, the EV would stay IDLE while `battery_soc < priority_soc` (default 80 %), **even when the inverter was actively exporting surplus to the grid**. With a typical 12 kWh battery filling from 30 % at ~3 kW, the priority hold lasted ~2 hours of cloudless morning. During that window, PV peaks above battery max-charge + house load got exported at sell price while the EV sat idle — a ~0.5-1.0 DKK/kWh net loss per diverted kWh.
+
+### Fix
+
+`_compute_ev_target_kw` accepts a new `grid_export_kw` kwarg. The battery-priority gate now releases when `grid_export_kw > min_kw` — i.e., when the grid is absorbing more than the EV would draw at minimum (6 A / 4.14 kW). The gate's original purpose (don't let the EV raid the battery's morning fill) is moot in that case because PV is already exceeding battery + house combined.
+
+```python
+# Before:
+if mode == EV_MODE_PV and battery_soc < priority_soc:
+    return 0, "Batteri prioriteret: …"
+
+# After:
+if (mode == EV_MODE_PV
+        and battery_soc < priority_soc
+        and grid_export_kw <= min_kw):
+    return 0, "Batteri prioriteret: …"
+```
+
+Caller in `_run_ev_controller` reads `grid_power_w = evcc_state.get("gridPower", 0)` (positive = import, negative = export) and computes `grid_export_kw = max(0, -grid_power_w / 1000)` before passing it down.
+
+### Behaviour change
+
+| Scenario | v0.39.18 | v0.39.19 |
+|---|---|---|
+| Battery 60 %, PV exporting 5 kW to grid, EV plugged in PV mode | EV IDLE ("Batteri prioriteret"); 5 kW continues exporting at sell price | EV target = surplus → ramps up to absorb the export. Inverter starts diverting from grid to EV. |
+| Battery 60 %, PV all consumed by battery + house (no export) | EV IDLE (gate active, as before) | EV IDLE (gate still active, as before) — no change |
+| Battery 90 %, any PV state | EV at surplus tracking (gate already inactive) | EV at surplus tracking — no change |
+| Export-stop active (no export by definition) | v0.39.17/18 override path | v0.39.17/18 override path — no change |
+| Pure cloud day, no surplus | EV IDLE (no surplus, no export) | EV IDLE (no surplus, no export) — no change |
+
+The fix is **additive** — when the new condition `grid_export_kw > min_kw` doesn't hold, behaviour is identical to v0.39.18.
+
+### Why `min_kw` as the threshold
+
+The threshold is "the EV could fit". If only 0.3 kW is exporting (e.g., 3-phase imbalance noise), starting the EV at 4.14 kW would draw 3.84 kW from somewhere else — battery or grid import. The `> min_kw` threshold ensures the EV's draw is fully covered by the export, no net new grid import.
+
+Alternative thresholds considered but not used:
+- `> 0` (any export) — too aggressive, would draw from battery to cover the EV-vs-export gap
+- `> 2 * min_kw` — too conservative, misses many real cases
+- A user-configurable slider — added complexity for marginal benefit
+
+### Sites changed (coordinator.py only)
+
+- `_run_ev_controller`, evcc_state unpack (~line 2756): added `grid_power_w` read + `grid_export_kw` derivation.
+- Call site for `_compute_ev_target_kw` (~line 2865): passes `grid_export_kw=grid_export_kw`.
+- `_compute_ev_target_kw` signature: new `grid_export_kw: float = 0.0` kwarg (default 0 preserves backwards compat if any other caller appears later).
+- `_compute_ev_target_kw` priority gate: AND-ed with `grid_export_kw <= min_kw`.
+- Docstring updated to explain the new bypass condition.
+
+### What does not change
+
+- v0.39.17 battery-full override (for floor-active + battery-full case) — unchanged. Layers on top.
+- v0.39.18 floor-not-cap + soft cool-down — unchanged.
+- PV+battery mode — unchanged (gate didn't apply there to begin with).
+- FULL mode — unchanged (no gate at all).
+- LOCKED mode — unchanged.
+- `priority_soc` slider — unchanged. User still controls "above this SoC, EV always competes". The new bypass adds "below this SoC, EV competes when there's export to absorb".
+
+### Risks
+
+- HA restart required. EV currently CHARGING via v0.39.18 override; restart will cut briefly (~16 s).
+- Behaviour change: PV-mode EV will start earlier on cloudless mornings (when export starts before battery hits 80 %). Intended, but worth knowing.
+- No config flow changes, no new constants, no new sliders.
+
+---
+
+## [0.39.18] — 2026-05-27
+
+### Changed — battery-full override is now a floor (not a cap), with a 10-minute soft cool-down between sessions
+
+Two related refinements to the v0.39.17 override.
+
+#### Floor, not cap
+
+Before (v0.39.17): when the override fired, `target_kw` was **unconditionally** forced to `min_kw` (4.14 kW). If real surplus tracking would have returned a higher target (e.g., 6 A wouldn't have been enough — surplus calls for 10 A), the override clamped it down. Net effect: during overcast-but-not-curtailed periods where battery happened to be near full, the EV ran below what the surplus could actually feed.
+
+After (v0.39.18): the override is a **floor**. It only raises `target_kw` to `min_kw` if `_compute_ev_target_kw` returned a value below min. When real surplus tracking returns `≥ min_kw`, the natural value is kept and the EV runs at the higher rate. The override now only kicks in when surplus tracking would otherwise refuse to charge — its proper role.
+
+#### Soft cool-down on override-induced session end
+
+Before: a 15-minute cool-down (`EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS`) was set only when `battery_full_override` was True at the exact moment the EV stopped via stop_window. In practice this rarely fired — by the time the stop confirmed (180 s after surplus first dipped below min), the battery had usually drained enough for `battery_near_full` to flip False, so `battery_full_override` was already False. No cool-down was set. Override fired again as soon as battery refilled (~90 s with a small battery). Cycle every 5-10 minutes.
+
+After: a **session marker** tracks whether the current charging session was ever override-induced. Set on any tick where the override forces the target. Cleared when the EV is idle (`ev_last_amps == 0` at start of next tick) and on disconnect. When the EV stops while the marker is set, a **10-minute soft cool-down** (`EV_OVERRIDE_SOFT_COOLDOWN_SECONDS`) blocks the override from firing again. Long enough to prevent thrashing, short enough that the EV recovers within a reasonable window when sun stabilises.
+
+### Why 10 minutes (not 15)
+
+The v0.36.2 15-min cool-down was for "probe expired with reg 49251 still set — MPPT really won't respond". That's a hard failure mode. The v0.39.18 soft cool-down is for "the override-induced session ended for any reason" — usually transient cloud cover, not a hard failure. Shorter cool-down balances avoiding thrashing against recovering quickly when conditions improve.
+
+### Behaviour change
+
+| Scenario | v0.39.17 | v0.39.18 |
+|---|---|---|
+| Battery full, export-stop active, real surplus 7 A | Override clamps to 6 A. 1 A of surplus wasted. | Surplus tracking returns 7 A; override doesn't kick in. EV runs at 7 A. |
+| Battery full, export-stop active, real surplus 0 (PV curtailed to ~house load) | Override forces 6 A. EV starts. | Override forces 6 A. EV starts. Same. |
+| EV charging via override, cloud passes, battery drains to 97 % over 150 s | Override stops firing. EV continues at 6 A via inertia. After 180 s stop_window, EV stops. **No** cool-down set. Battery refills in ~90 s. Override fires again. Cycle every 5-10 min. | Override stops firing. Session marker stays True. EV continues, then stops via stop_window. **Soft cool-down (10 min) fires** because marker was True. Override is blocked for 10 min after the stop. Battery refills in 90 s but override doesn't fire. After 10 min, override can fire again. |
+| EV charging via override, MPPT lifts to feed real surplus 10 A | Override clamps EV to 6 A even though 10 A is available. Underutilises sun. | Surplus tracking returns 10 A; override doesn't kick in (real target ≥ min). EV runs at 10 A on real PV. |
+
+### Sites changed
+
+- `const.py` — new `EV_OVERRIDE_SOFT_COOLDOWN_SECONDS = 600` constant.
+- `coordinator.py`:
+  - Import the new constant.
+  - New instance attribute `_ev_session_was_override_induced: bool = False`. Doc-comment explains lifetime.
+  - Disconnect handler clears the new marker.
+  - Override logic: `override_forcing = battery_full_override and target_kw < min_kw`. Only force target when below min.
+  - Session marker reset at start of new session (when `ev_last_amps == 0`).
+  - Failure detection rewritten: now triggers on `_ev_session_was_override_induced AND ev_last_amps > 0 AND final_amps == 0`. Uses the new 10-min constant.
+
+### What does not change
+
+- `EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS` (15 min) still defined but no longer set anywhere in `coordinator.py`. Left in `const.py` for backwards compatibility with any external references.
+- Override trigger conditions (floor_active + battery_near_full + solar_kw > 0.1) — unchanged.
+- start_window bypass — unchanged (passed via `probing=override_forcing`).
+- stop_window, entry debounce, recovery guard — unchanged.
+
+---
+
+## [0.39.17] — 2026-05-27
+
+### Changed — curtailment probe replaced with a battery-full override
+
+The v0.36.2 → v0.39.15 curtailment probe is **removed**. In its place is a much simpler battery-full override that doesn't depend on the FoxESS `reg 49251` PV-limited flag.
+
+### Why
+
+Live observation on 2026-05-27, mid-afternoon: battery at 100 % SoC, export-stop block active (price floor crossed), PV throttled from a forecast ~5 kW down to **0.36 kW** actual, EV plugged in and in PV mode, EV IDLE. The probe trigger gate that v0.39.15 broadened — `pv_curtailed AND (floor_active OR battery_near_full)` — still didn't fire, because **`self._pv_power_limited_flag` (reg 49251) reads False on this inverter even when MPPT is plainly throttling**. The probe strategy across four releases (v0.36.2, v0.38.1, v0.38.2, v0.39.12, v0.39.15) was built on a signal that turns out not to fire in the exact case it was designed for.
+
+Trying to keep polishing the probe is a dead end: it's pinned to a quirky Modbus register whose behaviour on real installs doesn't match what the design assumed. Need a different strategy.
+
+### New strategy
+
+When the user-controllable conditions for "definitely want EV to absorb otherwise-wasted PV" all hold, just command the EV to draw min. No state machine, no synthesised solar, no `reg 49251`. The inverter responds to a new sink on the AC bus by lifting MPPT — that's the inverter's job, not Solar AI's to anticipate.
+
+Conditions (ALL required):
+
+1. `effective_mode == EV_MODE_PV` (or scheduled-resolving-to-PV)
+2. `battery_soc >= max_soc - 2` (house battery has no headroom)
+3. `floor_active` (Solar AI's price-floor block is open — export is blocked)
+4. `solar_kw > 0.1` (PV is actually producing something — even if curtailed; prevents trying at night or in deep cloud cover)
+5. Cool-down not active (last attempt didn't fail recently)
+
+What stops the EV after a successful override start:
+
+- **Success path:** real surplus tracking takes over once MPPT lifts (normal v0.26.0 surplus-based target). Override remains "active" in the sense that conditions still hold, but the target follows actual surplus.
+- **Failure path:** if MPPT doesn't lift, the EV draws min (~4.14 kW for 3-phase 6 A) from the grid. `stop_window` (180 s default) catches it within ~3 minutes, then `EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS` (15 min) blocks retries. Worst-case grid import per failed cycle ≈ 0.21 kWh.
+
+### Code changes
+
+`coordinator.py` only:
+
+- **Removed:** the v0.36.2 probe trigger block, probe state evaluation (60-s window check, expiry, cool-down), synthesised solar block. ~115 lines deleted.
+- **Removed:** instance attribute `_ev_probe_started_at` (no longer needed).
+- **Added:** ~30 lines computing the override conditions, applying the target override after `_compute_ev_target_kw`, and detecting failure (override active + `ev_last_amps > 0` + `final_amps == 0` → set cool-down).
+- **Retained:** instance attribute `_ev_probe_cooldown_until` (reused for failure cool-down).
+- **Retained:** `_pv_power_limited_flag` instance attribute and reg-49251 read path — still used by `_update_solar_accuracy` to drop curtailed samples from the learner (v0.39.15 behaviour, unchanged). Just no longer drives the EV probe.
+- **Updated:** `_apply_ev_time_window` docstring to reflect that `probing=True` is now sent by the battery-full override instead of by the old probe state machine. The function signature is unchanged.
+
+Net diff: 258 lines changed, -30 net.
+
+### Behaviour change
+
+| Scenario | Before (v0.39.15) | After (v0.39.17) |
+|---|---|---|
+| Battery 100 %, export-stop active, EV plugged in PV mode, PV throttled, reg 49251 reads True | Probe fires; EV starts within 1-2 ticks (race-fixed in v0.39.12) | Override fires; EV starts within 1-2 ticks. Same outcome. |
+| Battery 100 %, export-stop active, EV plugged in PV mode, PV throttled, **reg 49251 reads False** (the observed case) | Probe never fires; EV stays IDLE; PV wasted | Override fires immediately; EV starts within 1-2 ticks |
+| Battery 100 %, no export-stop, PV throttled | Probe gate fired (v0.39.15) — EV started absorbing the curtailed PV even without a price-floor block | Override does NOT fire (requires `floor_active`). Behaviour reverts to the v0.38.2 design: without a price-floor block, leave the system alone. |
+| Battery not full + price-floor active | Probe fired if `pv_curtailed` (which is rare). EV would start. | Override does NOT fire (requires `battery_near_full`). Behaviour reverts to a stricter design: only fire when the case is unambiguous. |
+| Pure grid-side fault | Probe didn't fire (correct). Override doesn't fire (correct). | Same — no change. |
+
+The net narrowing (vs v0.39.15) is intentional. The probe was being broadened in successive releases to cover more cases, but it kept depending on an unreliable signal. The override is narrower but **actually works** for the exact case the user described.
+
+### What does not change
+
+- v0.39.12 start_window bypass when `probing=True` — preserved; the override uses the same flag.
+- v0.39.11 symmetric COOLING entry debounce — preserved.
+- v0.38.3 stop-recovery guard — preserved.
+- v0.39.15 solar-accuracy learner curtailment signal (`floor_active OR mppt_curtailed`) — preserved; that fix was independent of the EV probe and is still useful.
+- `EV_CURTAILMENT_PROBE_SECONDS` constant — still imported but no longer referenced in `coordinator.py`. Left in place for now (cleanup possible later).
+- No config changes, no dashboard changes, no new constants.
+
+### How to verify after deploy
+
+Plug the EV in while battery is near full and an export-stop is active. Within ~10-20 s of the controller's first tick under these conditions, the EV should start drawing 6 A. Watch `sensor.solar_ai_ev_status` — the `reason` text will read "Override: batteri fuld (XX% / max YY%) + eksport-stop aktiv — EV trækker overskuds-PV". If the override fires but the EV then stops via `stop_window`, the cool-down log line "battery-full override failed — EV stopped via stop_window" will fire, and the next attempt is blocked for 15 minutes.
+
+---
+
 ## [0.39.16] — 2026-05-27
 
 ### Documentation — README "Recent releases" v0.39.x section updated for v0.39.15
