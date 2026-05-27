@@ -183,6 +183,19 @@ EV_CURTAILMENT_PROBE_SECONDS = 60
 # previous session's failed probe.
 EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS = 900   # 15 minutes
 
+# v0.39.18 — Soft cool-down for the battery-full override (v0.39.17).
+# When an override-induced charging session ends for any reason (override
+# conditions changed, stop-window confirmed a stop, etc.), block the
+# override from firing again for this many seconds. Prevents rapid
+# on/off cycling when surplus oscillates around min during partly-cloudy
+# periods with a small house battery — without this, the override would
+# fire → battery drains briefly → conditions fail → EV stops → battery
+# refills → override fires again, with cycle times of 5-10 minutes.
+# 10 minutes is short enough that the EV recovers reasonably fast when
+# sun stabilises, but long enough that one passing cloud doesn't cause
+# multiple restart cycles.
+EV_OVERRIDE_SOFT_COOLDOWN_SECONDS = 600       # 10 minutes
+
 # v0.38.3 — Once the EV stop-window is armed (surplus dipped below min
 # and we're counting down to actually stop), require this many seconds
 # of sustained ABOVE-min surplus before clearing the stop timer. Without
