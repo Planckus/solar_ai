@@ -9,6 +9,76 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.15] — 2026-05-27
+
+### Fixed — battery-full MPPT curtailment was not captured by the EV or the solar learner
+
+Two coupled bugs flowing from the same misalignment: `pv_curtailed` (the FoxESS inverter's `reg 49251` "PV power limited" flag) was treated as a first-class signal for the EV curtailment-probe **only when combined with `floor_active`** (Solar AI's own price-floor block), and the solar-accuracy learner watched `floor_active` alone and ignored `pv_curtailed` entirely. Result: when the house battery filled up on a bright day and MPPT throttled PV to prevent export (no price-floor block — spot price was perfectly normal), the EV did not start charging and the solar learner saw artificially low actuals and biased its per-hour Solcast factor down.
+
+#### Symptom 1 — EV did not start on battery-full curtailment
+
+User scenario: full midday sun, house battery at 96 % SoC, no price-floor block. The FoxESS inverter throttles PV because the battery has no headroom to absorb more and grid-export would clip against any user-set export limit or the inverter's own internal logic. User plugs in the car. EV controller sees surplus ≈ 0 (because PV is throttled) and stays IDLE.
+
+The v0.36.2 curtailment probe was specifically designed to handle this — synthesise enough demand to lift MPPT, EV draws the freed-up power, real PV catches up. But v0.38.2 had narrowed the trigger gate to `pv_curtailed AND floor_active`, on the rationale that non-price-floor curtailment is "rare 'curtailed for other reasons' cases (grid-operator hard limit, faults) that the EV can't reliably help with anyway". That rationale missed the most common non-floor case: battery-full curtailment, which the EV absolutely can help with — it's the exact mirror of the price-floor case.
+
+#### Symptom 2 — solar learner skewed by curtailed-low actuals
+
+`coordinator.py:992` called `_update_solar_accuracy(..., curtailed=floor_active)` — passing `True` only during price-floor blocks. When MPPT throttled PV for any other reason (battery full, user export limit, transient grid-side issue), the curtailed-low actual reading was fed into the per-hour Solcast factor learner. Over multiple cloudless-but-battery-full days, the learner concluded "Solcast over-estimates" and biased future forecasts downward. Optimiser then planned against under-predicted PV.
+
+### Fix — single change, both sides
+
+`_pv_power_limited_flag` (the inverter's own signal, already read every coordinator tick) is now used as a curtailment indicator in both places.
+
+**EV probe trigger (`_run_ev_controller`, coordinator.py:2780-2820)**:
+
+```python
+floor_active = self._current_floor_block is not None
+max_soc = int(self._stored.get(
+    "battery_max_soc",
+    self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC),
+))
+battery_near_full = battery_soc >= (max_soc - 2)
+if (pv_curtailed
+        and (floor_active or battery_near_full)
+        and self._ev_probe_started_at is None
+        and not probe_cooldown_active):
+    self._ev_probe_started_at = now_ts
+```
+
+The gate now fires the probe when **either** Solar AI's own price-floor block is open **or** the house battery is at/near `max_soc` (within 2 percentage points). Grid-side faults (where the AC bus would also reject the EV) are still excluded because they typically don't coincide with a full house battery.
+
+**Solar learner curtailed signal (`_async_update_data`, coordinator.py:987-1008)**:
+
+```python
+floor_active = self._current_floor_block is not None
+mppt_curtailed = self._pv_power_limited_flag
+self._update_solar_accuracy(
+    current_forecast_w, pv_power_w,
+    curtailed=(floor_active or mppt_curtailed),
+)
+```
+
+Samples are now dropped from learning whenever the inverter reports throttling, regardless of whether a price-floor block is open. Tick-ordering note: `_pv_power_limited_flag` is read once per coordinator update at line ~1468 (after this learning call), so this branch reads the *previous* tick's value — roughly 30 s of latency. Acceptable because MPPT throttling is stable across multiple ticks; the learner only triggers every `LEARNING_TICK_INTERVAL_SECONDS` anyway.
+
+### Behaviour change
+
+| Scenario | Before | After |
+|---|---|---|
+| Battery full + sunny day + EV plugged in (no price floor) | Probe never fires; EV stays IDLE; curtailed PV wasted | Probe fires; EV starts at min charge within 1-2 ticks (combined with the v0.39.12 race fix); MPPT lifts |
+| Price-floor block + EV plugged in (battery any SoC) | Probe fires (unchanged) | Probe fires (unchanged) |
+| Pure grid-side fault (battery not full, no floor block) | Probe doesn't fire (unchanged) | Probe doesn't fire (unchanged) |
+| Solar learner during battery-full midday | Sample kept → factor biased down → forecast under-predicts | Sample dropped → factor preserved → forecast accurate |
+
+### What does not change
+
+- `EV_CURTAILMENT_PROBE_SECONDS` and the probe state machine — unchanged.
+- `EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS` (15-min cool-down after failed probe) — unchanged. Worst-case grid import per failed cycle ≈ 0.29 kWh.
+- v0.39.12 race fix (probe bypasses start_window from IDLE) — unchanged; this fix layers on top.
+- v0.38.1 drop of strict `battery_near_full` requirement — preserved. v0.38.1 dropped it as a *required* condition; v0.39.15 adds it back as an *alternative* trigger (alongside `floor_active`). The two design rationales coexist cleanly.
+- No new constants, no config flow changes, no dashboard YAML changes.
+
+---
+
 ## [0.39.14] — 2026-05-26
 
 ### Documentation — README "Recent releases" section updated for v0.39.x

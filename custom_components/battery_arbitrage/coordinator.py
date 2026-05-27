@@ -987,9 +987,22 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 # throttled-down production.
                 # v0.36.0: attribute renamed to `_current_floor_block` (was
                 # `_open_floor_block` — clashed with the method of that name).
+                # v0.39.15: also drop samples when the inverter itself
+                # reports PV throttling (`_pv_power_limited_flag`, reg
+                # 49251 = 1). Without this, battery-full MPPT throttling
+                # (no price-floor block) was feeding artificially low
+                # actuals into the per-hour Solcast factor — model
+                # learned "Solcast over-estimates" and biased future
+                # forecasts down. Note: the flag is read once per
+                # coordinator tick at line ~1468, AFTER this learning
+                # call. So this reads the PREVIOUS tick's value (~30 s
+                # latency), which is fine because MPPT throttling is
+                # stable across multiple ticks.
                 floor_active = self._current_floor_block is not None
+                mppt_curtailed = self._pv_power_limited_flag
                 self._update_solar_accuracy(
-                    current_forecast_w, pv_power_w, curtailed=floor_active,
+                    current_forecast_w, pv_power_w,
+                    curtailed=(floor_active or mppt_curtailed),
                 )
             self._update_load_history(base_load_kw)
             self._update_house_load_hourly(base_load_kw)
@@ -2767,28 +2780,51 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_probe_cooldown_until is not None
             and now_ts < self._ev_probe_cooldown_until
         )
-        # v0.38.2 — Restrict the probe to fire only while Solar AI's own
-        # price-floor block is open (`_current_floor_block is not None`).
-        # That couples the probe 1:1 to the user-controlled price floor:
-        # the EV starts on a kick-in only when the user's configured min
-        # export price has been crossed and Solar AI has dropped the
-        # export limit. Catches the bread-and-butter case (battery-full
-        # during a price-floor period) and ignores the rare "curtailed
-        # for other reasons" cases (grid-operator hard limit, faults)
-        # that the EV can't reliably help with anyway. In-flight probes
-        # are still allowed to run out their 60 s window if the floor
-        # closes mid-probe — that avoids stuttering when the price
-        # hovers near the floor.
+        # Probe trigger gate. The probe fires when the inverter reports
+        # active PV throttling (`pv_curtailed`, reg 49251 = 1) AND at
+        # least one of two conditions hold:
+        #
+        #   • floor_active — Solar AI's own price-floor block is open
+        #     (added in v0.38.2). Bread-and-butter case: spot price has
+        #     crossed the user's min-export floor and Solar AI dropped
+        #     the export limit, so the inverter throttles PV. EV
+        #     absorbs it.
+        #
+        #   • battery_near_full — house battery is at or near max_soc
+        #     (v0.39.15, expansion of v0.38.2). Common case: bright sun
+        #     + house battery already full. No price-floor block needed
+        #     (the spot price may be perfectly normal); the inverter
+        #     throttles PV because there's nowhere to put it. Same
+        #     remedy — EV absorbs the curtailed power.
+        #
+        # The original v0.38.2 gate excluded this case to avoid firing
+        # during "rare 'curtailed for other reasons' cases (grid-operator
+        # hard limit, faults) that the EV can't reliably help with
+        # anyway". But the EV CAN help with battery-full curtailment —
+        # it's the exact mirror of the price-floor case. By gating on
+        # `battery_near_full` instead of `pv_curtailed` alone, grid-side
+        # faults (where the AC bus can't accept the EV either) are still
+        # excluded.
+        #
+        # In-flight probes are still allowed to run out their 60 s window
+        # if the floor closes mid-probe — that avoids stuttering when
+        # the price hovers near the floor.
         floor_active = self._current_floor_block is not None
+        max_soc = int(self._stored.get(
+            "battery_max_soc",
+            self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC),
+        ))
+        battery_near_full = battery_soc >= (max_soc - 2)
         if (pv_curtailed
-                and floor_active
+                and (floor_active or battery_near_full)
                 and self._ev_probe_started_at is None
                 and not probe_cooldown_active):
             self._ev_probe_started_at = now_ts
             _LOGGER.info(
                 "EV controller: PV-limited flag active (reg 49251=1) "
-                "AND price-floor block open — starting %d s curtailment "
-                "probe at min charge to lift MPPT.",
+                "AND (floor_active=%s OR battery_near_full=%s, soc=%.0f/%d) — "
+                "starting %d s curtailment probe at min charge to lift MPPT.",
+                floor_active, battery_near_full, battery_soc, max_soc,
                 EV_CURTAILMENT_PROBE_SECONDS,
             )
 
