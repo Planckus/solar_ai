@@ -9,6 +9,147 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.40.0] — 2026-05-29
+
+Minor release. Bundles the v0.39.20 and v0.39.21 work (not previously released on GitHub) plus a full dashboard redesign.
+
+### Added — redesigned Danish dashboard (EVCC-style single screen)
+
+The dashboard (`dashboard/dashboard_da.yaml`) was rebuilt from a six-tab layout into a single cohesive screen modelled on the EVCC UI:
+
+- **Home** is now one centered panel-mode column (max-width 1000 px on desktop, full width on mobile) instead of scattered tabs. Top to bottom: status + master on/off, current buy/sell price, EV charge status, a centered **Charge mode** selector (Fra · Sol · Sol+Bat · Hurtig · Planlagt), an animated energy-flow diagram, the 24 h price/SoC chart, and a bottom navigation row.
+- **Energy flow** uses `power-flow-card-plus` — a single animated PV · battery · grid · house · car diagram — replacing the old markdown flow tables. The car is shown as its own branch and subtracted from house load.
+- The five detail pages (EV/OCPP, Priser & Plan, Historik, Indstillinger, Logs) are now **subviews** reached from the bottom navigation, each rendered in the same centered panel style with a back button — they no longer clutter a tab bar.
+- **EV mode selector** gains a **Planlagt** (Scheduled) option so the schedules can be activated from the dashboard.
+
+**New dashboard prerequisites (HACS frontend):** `power-flow-card-plus`, `button-card`, `card-mod`, in addition to the existing `mushroom` and `apexcharts-card`.
+
+### Added — schedule safeguard
+
+The EV subview shows a banner ("Skemaer er inaktive lige nu") whenever the master mode is not `Planlagt`, making clear that editing a schedule's mode does not affect live charging unless Scheduled mode is selected. (Investigation confirmed the schedule resolver already ignores disabled slots and inactive modes; the banner removes the ambiguity.)
+
+### Changed
+
+- Removed install-specific per-device notification switches from the distributed dashboard template; two generic examples (Telefon, Tablet) remain.
+
+### Included from v0.39.21
+
+- **Battery capacity auto-detected from the BMS** — `Σ bms_kwh_remaining / (SoC/100)` sampled in the 15–85 % mid-range, fed into the rolling-median capacity learner. Warms up from normal cycling without needing a grid-charge cycle.
+- **Active ramp during the battery-full override** — the EV steps up 1 A / 30 s while grid import stays ≤ 0.3 kW, backing off and freezing 120 s when it doesn't, so the charger finds the real PV ceiling instead of staying pinned at minimum.
+
+### Included from v0.39.20
+
+- Priority-SOC gate now only blocks the EV from *starting* (`ev_last_amps == 0`), fixing the export-consumption thrashing where an already-charging EV cycled on/off every ~4 minutes.
+
+### Tooling
+
+- `deploy.py --files-only` — deploy integration files + restart without touching the dashboard.
+
+---
+
+## [0.39.21] — 2026-05-29
+
+### Added — battery capacity auto-detected from the BMS
+
+The integration now learns usable pack capacity directly from the FoxESS BMS `kWh remaining` registers instead of relying on the configured value or a grid-charge cycle:
+
+```
+capacity = Σ kwh_remaining / (SoC / 100)
+```
+
+One sample is taken per learning tick (5 min) whenever SoC sits in the safe mid-range (15–85 %), summed across all installed battery modules (`_bms_kwh_remaining_1`, `_bms_kwh_remaining_2`, …). The mid-range gate excludes the near-full region, where the BMS holds SoC flat while balancing and `kwh_remaining` lags, and the near-empty region, where a hidden reserve skews the ratio. Samples feed the same rolling-median window as the existing Force Charge learner, so `get_learned_capacity()` stays the single source of truth.
+
+Why it matters: the previous learner only sampled during `Force Charge` cycles, which rarely fire for a PV/arbitrage user — so capacity stayed pinned at the configured default. The BMS method warms up from normal daily cycling, with no grid charging required, and self-updates as the pack ages (tracks SoH).
+
+- `discovery.py`: `discover_bms_kwh_remaining()` — finds all per-module `_bms_kwh_remaining_N` sensors via unique_id suffix match.
+- `const.py`: `FOXESS_BMS_KWH_REMAINING` well-known fallback IDs.
+- `coordinator.py`: `_resolve_bms_kwh_entities()` (discovery-first, cached), `_get_bms_total_kwh_remaining()` (sums installed modules), `_learn_capacity_from_bms()` (called alongside the Force Charge learner on each learning tick).
+
+### Added — active ramp during the battery-full override
+
+When the house battery is full and export is blocked by the price floor, the FoxESS MPPT self-throttles to match whatever the AC bus draws. The measured solar surplus therefore always equals the EV's own draw, so surplus tracking alone can never discover spare PV — the EV stayed pinned at the minimum (6 A) even when the panels could deliver more.
+
+The override now actively probes for the real ceiling:
+
+- Steps up 1 A at most once per 30 s while grid import stays at or below 0.3 kW (MPPT is keeping up).
+- When grid import exceeds 0.3 kW (MPPT can't cover the last step), steps down 1 A and freezes up-steps for 120 s to let things settle.
+- Floors at the configured min amps, caps at the configured max amps.
+- Resets to min on session end, EV disconnect, or when the override deactivates (export resumes / battery drops below near-full).
+
+This replaces the v0.39.18 "floor, not cap" behaviour inside the override regime: in that regime there is no higher real-surplus reading to preserve, so commanding the ramp ceiling is strictly better. Outside the regime, normal surplus tracking is unchanged. Cost of tracking a moving ceiling: roughly one 10 s tick of ~0.69 kW grid import every couple of minutes (~0.002 kWh) — negligible.
+
+- `const.py`: `EV_OVERRIDE_RAMP_INTERVAL_SECONDS` (30), `EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW` (0.3), `EV_OVERRIDE_RAMP_FREEZE_SECONDS` (120).
+- `coordinator.py`: `_amps_to_kw()`, `_update_override_ramp()`, `_reset_override_ramp()`; override apply site reworked to command the ramp value; ramp reset wired into the idle/disconnect paths.
+
+---
+
+## [0.39.20] — 2026-05-27
+
+### Fixed — v0.39.19 priority-gate bypass thrashed when EV's own draw consumed the export
+
+v0.39.19 released the priority_soc gate when `grid_export_kw > min_kw`. Sound in intent (capture exported PV with the EV) but had a steady-state oscillation problem:
+
+1. Gate releases because grid is exporting 4.5 kW
+2. EV starts, ramps to 10 A (6.9 kW)
+3. EV's own draw consumes what was being exported → `grid_export_kw` falls to ~0
+4. Gate re-activates → `_compute_ev_target_kw` returns 0 with "Batteri prioriteret"
+5. EV enters stop_window, stops after ~3 minutes
+6. EV stops → exports resume → gate releases → cycle repeats every ~4 minutes
+
+Until battery climbed to priority_soc (default 80 %), the system would cycle the EV on and off every ~4 min, achieving roughly 60-70 % capture rate of available solar instead of the ~95+ % a continuous run would deliver. Plus the dashboard would flap visibly.
+
+### Fix
+
+`_compute_ev_target_kw` accepts a new `ev_last_amps` parameter. The priority gate now requires **`ev_last_amps == 0`** in addition to the existing conditions. Once the EV is already charging, the gate is bypassed — surplus tracking alone decides when to stop.
+
+```python
+if (mode == EV_MODE_PV
+        and battery_soc < priority_soc
+        and grid_export_kw <= min_kw
+        and ev_last_amps == 0):           # ← new
+    return 0, "Batteri prioriteret: …"
+```
+
+Rationale: the priority_soc gate's purpose is "don't **start** the EV mid-battery-fill". Re-applying it to an already-charging EV inverts that intent — by the time the gate sees `grid_export_kw == 0`, the EV has already started precisely because the gate let it. The right thing once the EV is running is to let the natural `if solar_surplus < min_kw: return 0` branch handle the stop decision.
+
+### Behaviour change
+
+| Scenario | v0.39.19 | v0.39.20 |
+|---|---|---|
+| EV IDLE, battery < priority_soc, grid exporting > min_kw | Gate releases, EV starts | Same — no change |
+| EV charging, grid_export drops to 0 because EV is consuming it | Gate re-activates, target = 0, stop_window engages, EV stops after ~3 min, cycle | Gate stays released (ev_last_amps > 0), surplus tracking continues, EV keeps running on real surplus |
+| EV charging, PV genuinely drops to 0 (heavy cloud) | Same as above (target = 0 from gate) | Surplus < min branch catches it, target = 0 with "PV: overskud … < min" — EV stops via the right code path with the right reason text |
+| EV IDLE, battery ≥ priority_soc | Gate already inactive — no change | No change |
+| EV charging, battery climbs to priority_soc | Gate would have already released — no change | No change |
+
+The fix is **additive only when EV is charging** — IDLE behaviour is identical to v0.39.19.
+
+### Sites changed
+
+`coordinator.py` only:
+- `_compute_ev_target_kw` signature: new `ev_last_amps: int = 0` kwarg
+- `_compute_ev_target_kw` gate: AND-ed with `ev_last_amps == 0`
+- Docstring updated with v0.39.20 rationale
+- Call site in `_run_ev_controller`: passes `ev_last_amps=self._ev_last_amps`
+
+3 lines changed in the function, 1 line changed in the caller, plus docstring.
+
+### What does not change
+
+- v0.39.17 battery-full override path — unchanged.
+- v0.39.18 soft cool-down — unchanged.
+- v0.39.19 export-gate logic — augmented, not removed.
+- `priority_soc` slider semantics — still gates IDLE→start; just no longer interrupts a running session.
+- Stop_window, entry debounce — unchanged.
+
+### Risks
+
+- HA restart required.
+- Edge case: rapid mode change (user toggles from PV to Locked and back) might leave `_ev_last_amps > 0` briefly while target is being recomputed. The mode check (`mode == EV_MODE_PV`) is evaluated first in the gate condition, so non-PV modes correctly bypass the gate entirely. No new risk.
+- No config changes, no new constants, no new sliders.
+
+---
+
 ## [0.39.19] — 2026-05-27
 
 ### Changed — battery-priority gate now releases when grid is actively exporting

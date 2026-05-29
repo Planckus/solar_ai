@@ -29,6 +29,12 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ## Recent releases
 
+### v0.40.0 — dashboard redesign + capacity/ramp learning
+
+The Danish dashboard was rebuilt into a single cohesive EVCC-style screen: one centered column with the master controls, current prices, a `power-flow-card-plus` energy-flow diagram, a Charge-mode selector, and the 24 h chart, with the five detail pages moved to subviews reached from a bottom navigation row. New dashboard prerequisites: `power-flow-card-plus`, `card-mod`, `button-card` (see Dashboard dependencies below).
+
+This release also bundles two integration features first added in v0.39.21: **battery capacity is auto-detected from the BMS** (`Σ bms_kwh_remaining / SoC`, sampled in the 15–85 % mid-range) so it no longer depends on a grid-charge cycle; and an **active ramp during the battery-full override** steps the EV up 1 A at a time while grid import stays low, so the charger finds the real PV ceiling instead of staying at minimum. The v0.39.20 priority-gate fix (only block the EV from *starting*, not while already charging) is included as well.
+
 ### v0.39.x — pricing accuracy, FoxESS-mode parity, and EV-controller hardening
 
 Released over 2026-05-26 → 2026-05-27 as a chain of small fixes. The latest release in the chain is the version HACS will install. Earlier v0.39.x tags exist in the release history for traceability but are superseded.
@@ -321,14 +327,17 @@ If the tomorrow field is left blank, the optimiser plans against a 24-h horizon 
 
 ### Dashboard dependencies (HACS)
 
-The bundled dashboard uses two custom Lovelace cards. Install both via HACS → Frontend before importing the dashboard:
+The bundled dashboard uses several custom Lovelace cards. Install all of them via HACS → Frontend before importing the dashboard:
 
 | Card | Used by | Link |
 |---|---|---|
-| Mushroom Cards | Køb/Salg chips and tiles on Oversigt, section titles in Indstillinger, the Bil-tilsluttet status card on the EV / OCPP tab | [GitHub](https://github.com/piitaya/lovelace-mushroom) |
-| ApexCharts Card | 24-h price overlay on Priser & Plan, 48-h Solcelleprognose chart on EV / OCPP (required since v0.28.2) | [GitHub](https://github.com/RomRider/apexcharts-card) |
+| Mushroom Cards | Status tiles, charge-mode selector, Bil-tilsluttet card, section titles | [GitHub](https://github.com/piitaya/lovelace-mushroom) |
+| ApexCharts Card | 24-h price/SoC chart, 48-h Solcelleprognose chart | [GitHub](https://github.com/RomRider/apexcharts-card) |
+| Power Flow Card Plus | Animated energy-flow diagram on the home screen (required since v0.40.0) | [GitHub](https://github.com/flixlix/power-flow-card-plus) |
+| card-mod | Layout/width styling of the home screen and subviews (required since v0.40.0) | [GitHub](https://github.com/thomasloven/lovelace-card-mod) |
+| button-card | Styling helper for cohesive cards (required since v0.40.0) | [GitHub](https://github.com/custom-cards/button-card) |
 
-After installing both, hard-refresh the browser (⌘+Shift+R on macOS, Ctrl+Shift+R elsewhere) before importing the dashboard YAML.
+After installing them all, hard-refresh the browser (⌘+Shift+R on macOS, Ctrl+Shift+R elsewhere) before importing the dashboard YAML.
 
 ### FoxESS Modbus entity IDs
 
