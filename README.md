@@ -31,7 +31,7 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ### v0.40.0 — dashboard redesign + capacity/ramp learning
 
-The Danish dashboard was rebuilt into a single cohesive EVCC-style screen: one centered column with the master controls, current prices, a `power-flow-card-plus` energy-flow diagram, a Charge-mode selector, and the 24 h chart, with the five detail pages moved to subviews reached from a bottom navigation row. New dashboard prerequisites: `power-flow-card-plus`, `card-mod`, `button-card` (see Dashboard dependencies below).
+The Danish dashboard was rebuilt into a single cohesive-style screen: one centered column with the master controls, current prices, a `power-flow-card-plus` energy-flow diagram, a Charge-mode selector, and the 24 h chart, with the five detail pages moved to subviews reached from a bottom navigation row. New dashboard prerequisites: `power-flow-card-plus`, `card-mod`, `button-card` (see Dashboard dependencies below).
 
 This release also bundles two integration features first added in v0.39.21: **battery capacity is auto-detected from the BMS** (`Σ bms_kwh_remaining / SoC`, sampled in the 15–85 % mid-range) so it no longer depends on a grid-charge cycle; and an **active ramp during the battery-full override** steps the EV up 1 A at a time while grid import stays low, so the charger finds the real PV ceiling instead of staying at minimum. The v0.39.20 priority-gate fix (only block the EV from *starting*, not while already charging) is included as well.
 
