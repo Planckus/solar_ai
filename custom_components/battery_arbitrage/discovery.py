@@ -74,6 +74,27 @@ def discover_battery_soc(hass: HomeAssistant) -> Optional[str]:
     return _by_uid_suffix(hass, "_battery_soc_1", "_battery_soc")
 
 
+def discover_bms_kwh_remaining(hass: HomeAssistant) -> list[str]:
+    """All per-module BMS 'kWh remaining' sensors, in module order.
+
+    FoxESS exposes one per installed battery module
+    (`..._bms_kwh_remaining_1`, `..._bms_kwh_remaining_2`, …). Used to
+    auto-detect usable pack capacity. Returns an empty list if none found
+    (caller falls back to the well-known IDs in const.FOXESS_BMS_KWH_REMAINING).
+    """
+    found: list[tuple[int, str]] = []
+    for e in _foxess_entities(hass):
+        uid = e.unique_id or ""
+        marker = "_bms_kwh_remaining_"
+        idx = uid.rfind(marker)
+        if idx == -1:
+            continue
+        suffix = uid[idx + len(marker):]
+        if suffix.isdigit():
+            found.append((int(suffix), e.entity_id))
+    return [entity_id for _, entity_id in sorted(found)]
+
+
 def discover_cell_temp_low(hass: HomeAssistant) -> Optional[str]:
     """Lowest BMS cell temperature sensor (for temperature-adaptive charging)."""
     return _by_uid_suffix(

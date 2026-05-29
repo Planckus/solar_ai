@@ -102,6 +102,7 @@ from .const import (
     EV_MODE_MIN_PV,
     FOXESS_BATTERY_CHARGE_TOTAL,
     FOXESS_BATTERY_DISCHARGE_TOTAL,
+    FOXESS_BMS_KWH_REMAINING,
     CAPACITY_MIN_SOC,
     CAPACITY_MAX_SOC,
     CAPACITY_MIN_DELTA_SOC,
@@ -166,6 +167,9 @@ from .const import (
     EV_CURTAILMENT_PROBE_SECONDS,
     EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS,
     EV_OVERRIDE_SOFT_COOLDOWN_SECONDS,
+    EV_OVERRIDE_RAMP_INTERVAL_SECONDS,
+    EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW,
+    EV_OVERRIDE_RAMP_FREEZE_SECONDS,
     EV_STOP_RECOVERY_SECONDS,
     EV_START_DROP_TIMEOUT_SECONDS,
     EV_COOL_ENTRY_SECONDS,
@@ -248,6 +252,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._enabled = False        # OFF by default — user enables after learning period
         self._we_set_evcc_mode = False  # True while WE have EVCC battery mode set non-normal
         self._prev_soc: float | None = None  # Previous tick SoC for capacity learning
+        # Resolved BMS kWh-remaining module entities (lazy, discovery-first).
+        # None = not resolved yet; [] = resolved, none present on this install.
+        self._bms_kwh_entities: list[str] | None = None
         # Split-poll cache: tariff data refreshed hourly, live state refreshed every tick
         self._cached_solar_rates: dict[str, Any] = {}
         self._cached_grid_rates: dict[str, Any] = {}
@@ -401,6 +408,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # decide whether to engage the soft cool-down when the session
         # ends.
         self._ev_session_was_override_induced: bool = False
+        # v0.39.21 — Active-ramp state for the battery-full override.
+        # `_ev_override_ramp_amps` is the current commanded ceiling in amps
+        # (0 = inactive/uninitialised; initialises to min on the first
+        # override tick of a session). The controller nudges it up 1 A at a
+        # time while grid import stays low, and backs off when it doesn't.
+        self._ev_override_ramp_amps: int = 0
+        self._ev_override_ramp_last_step_ts: datetime | None = None
+        self._ev_override_ramp_freeze_until: datetime | None = None
         # Decoupled EV control loop: runs at CONF_EV_CONTROL_INTERVAL_SECONDS
         # cadence (independent of the main coordinator fast-poll). Inputs are
         # cached by the main update; the loop consumes the cache.
@@ -1180,7 +1195,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         floor_soc = int(self._stored.get("battery_floor_soc", self.config.get("battery_floor_soc", DEFAULT_BATTERY_FLOOR_SOC)))
         max_soc = int(self._stored.get("battery_max_soc", self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)))
 
-        # Capacity: use learned value once enough Force Charge samples exist
+        # Capacity: use the learned value once enough samples exist. Samples
+        # come primarily from the BMS kWh-remaining registers (available every
+        # tick the battery is in its mid-range), with Force Charge cycles as a
+        # secondary source.
         learned_capacity = self.get_learned_capacity()
         capacity_kwh = learned_capacity if learned_capacity is not None \
             else self.config.get("battery_capacity", DEFAULT_BATTERY_CAPACITY)
@@ -1192,6 +1210,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # Capacity learning: gate to 5-min ticks (energy calculation needs correct interval_h)
         if is_learning_tick:
+            self._learn_capacity_from_bms(battery_soc)
             self._learn_capacity(battery_soc, battery_charge_kw)
 
         exportable_kwh = max(0.0, (battery_soc - floor_soc) / 100 * capacity_kwh * efficiency)
@@ -2203,6 +2222,65 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 bucket, learned, len(samples)
             )
 
+    def _resolve_bms_kwh_entities(self) -> list[str]:
+        """Resolve the BMS kWh-remaining module entities once, then cache.
+
+        Discovery (unique_id suffix match) is preferred because it survives
+        entity renames and non-English HA language packs. Falls back to the
+        well-known FoxESS IDs when discovery finds nothing (e.g. the entity
+        registry isn't populated yet at first run).
+        """
+        if self._bms_kwh_entities is not None:
+            return self._bms_kwh_entities
+        try:
+            from .discovery import discover_bms_kwh_remaining
+            discovered = discover_bms_kwh_remaining(self.hass)
+        except Exception:  # noqa: BLE001 — discovery must never crash the loop
+            discovered = []
+        self._bms_kwh_entities = discovered or list(FOXESS_BMS_KWH_REMAINING)
+        return self._bms_kwh_entities
+
+    def _get_bms_total_kwh_remaining(self) -> float | None:
+        """Sum BMS kWh-remaining across all installed modules.
+
+        Modules that aren't installed report "unknown"/"unavailable" and are
+        skipped. Returns None when no module reports a usable value.
+        """
+        total = 0.0
+        have_any = False
+        for entity_id in self._resolve_bms_kwh_entities():
+            value = self._get_float_state(entity_id)
+            if value is not None and value >= 0:
+                total += value
+                have_any = True
+        return total if have_any else None
+
+    def _learn_capacity_from_bms(self, battery_soc: float) -> None:
+        """Sample usable capacity directly from the BMS kWh-remaining registers.
+
+        capacity = Σ kwh_remaining / (SoC / 100)
+
+        Unlike the Force Charge learner this needs no grid-charge cycle, so it
+        warms up for PV-only / arbitrage users too. Sampling is restricted to
+        the safe mid-range (CAPACITY_MIN_SOC..CAPACITY_MAX_SOC): below it the
+        BMS holds a hidden reserve, above it the BMS pins SoC while balancing
+        and kwh_remaining lags, both of which would skew the ratio. Samples
+        feed the same rolling-median window as the Force Charge learner, so
+        get_learned_capacity() is the single source of truth.
+        """
+        if not (CAPACITY_MIN_SOC <= battery_soc <= CAPACITY_MAX_SOC):
+            return
+        total_remaining = self._get_bms_total_kwh_remaining()
+        if total_remaining is None or total_remaining <= 0:
+            return
+        capacity_sample = round(total_remaining / (battery_soc / 100), 2)
+        # Sanity-check: plausible battery size 3–30 kWh
+        if 3.0 <= capacity_sample <= 30.0:
+            samples: list[float] = self._stored.setdefault("capacity_samples", [])
+            samples.append(capacity_sample)
+            if len(samples) > CAPACITY_MAX_SAMPLES:
+                del samples[: len(samples) - CAPACITY_MAX_SAMPLES]
+
     def _learn_capacity(self, battery_soc: float, battery_charge_kw: float) -> None:
         """Sample usable battery capacity from Force Charge ticks.
 
@@ -2750,6 +2828,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             if self._ev_probe_cooldown_until is not None:
                 self._ev_probe_cooldown_until = None
             self._ev_session_was_override_induced = False
+            self._reset_override_ramp()  # v0.39.21
             return self._ev_telemetry(0.0, 0, 0.0, ocpp_status)
 
         # ── Compute target ────────────────────────────────────────────────
@@ -2864,6 +2943,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             effective_mode, solar_surplus_kw, battery_soc, floor_soc,
             min_kw, max_kw, priority_soc,
             grid_export_kw=grid_export_kw,
+            ev_last_amps=self._ev_last_amps,
         )
 
         # v0.39.17 — Battery-full override.
@@ -2888,15 +2968,36 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         battery_full_override = (
             override_preconditions_ok and effective_mode == EV_MODE_PV
         )
-        override_forcing = battery_full_override and target_kw < min_kw
-        if override_forcing:
-            target_kw = min_kw
-            reason = (
-                f"Override floor: batteri fuld ({battery_soc:.0f}% / max {max_soc}%) "
-                f"+ eksport-stop aktiv — EV trækker overskuds-PV "
-                f"(rå PV: {solar_kw:.2f} kW, husforbrug: {house_load_kw:.2f} kW)"
+        # v0.39.21 — Active ramp. In the override regime (battery full +
+        # export blocked) MPPT self-throttles to match whatever the AC bus
+        # draws, so the measured surplus never exceeds the EV's own draw —
+        # surplus tracking alone stays pinned at min and never finds spare
+        # PV. The ramp actively commands progressively more current and
+        # watches the grid meter: while grid import stays low MPPT is
+        # keeping up, so keep climbing; when it can't, back off. The ramp
+        # value is the floor; if surplus tracking ever returns higher
+        # (genuine surplus), the higher value wins and the override yields.
+        if battery_full_override:
+            grid_import_kw = max(0.0, grid_power_w / 1000.0)
+            min_amps = self._kw_to_amps(min_kw)
+            max_amps = self._kw_to_amps(max_kw)
+            ramp_amps = self._update_override_ramp(
+                now_ts, grid_import_kw, min_amps, max_amps,
             )
-            self._ev_session_was_override_induced = True
+            ramp_kw = self._amps_to_kw(ramp_amps)
+            override_forcing = target_kw <= ramp_kw
+            if override_forcing:
+                target_kw = ramp_kw
+                reason = (
+                    f"Override ramp: batteri fuld ({battery_soc:.0f}% / max {max_soc}%) "
+                    f"+ eksport-stop aktiv — EV trækker {ramp_amps} A "
+                    f"({ramp_kw:.2f} kW), net-import {grid_import_kw:.2f} kW "
+                    f"(rå PV: {solar_kw:.2f} kW, husforbrug: {house_load_kw:.2f} kW)"
+                )
+                self._ev_session_was_override_induced = True
+        else:
+            override_forcing = False
+            self._reset_override_ramp()
 
         target_amps = self._kw_to_amps(target_kw)
 
@@ -2956,6 +3057,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if send:
             await self._set_ocpp_charge_rate(charger_id, final_amps)
             self._ev_last_amps = final_amps
+
+        # v0.39.21 — when the EV is idle (no session), the override ramp has
+        # nothing to track; reset it so the next override session starts at
+        # min and re-probes from scratch.
+        if final_amps == 0:
+            self._reset_override_ramp()
 
         # ── Initiate / terminate OCPP transaction (v0.27.1) ────────────────
         # SetChargingProfile sets the LIMIT but doesn't start a session.
@@ -3078,6 +3185,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         floor_soc: float, min_kw: float, max_kw: float,
         priority_soc: float = 80.0,
         grid_export_kw: float = 0.0,
+        ev_last_amps: int = 0,
     ) -> tuple[float, str]:
         """Pure mode→target translation. Returns (target_kw, human-readable reason).
 
@@ -3095,6 +3203,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         given away to the grid at sell price. Releasing the gate lets
         the EV consume the export at buy-price savings (typically a
         0.5-1.0 DKK/kWh net win per diverted kWh).
+
+        v0.39.20 — `ev_last_amps` further narrows the gate to apply only
+        when the EV is IDLE (`ev_last_amps == 0`). Once the EV is
+        already charging, the gate's purpose ("don't start the EV mid-
+        battery-fill") is moot — the start has already happened. Re-
+        applying the gate during charging caused thrashing in v0.39.19:
+        the EV's own draw would consume the export → grid_export drops
+        to 0 → gate re-activates → target = 0 → stop_window → EV stops
+        → export resumes → gate releases → cycle every ~4 min. Letting
+        surplus tracking alone govern the running EV (it returns 0 when
+        surplus < min, triggering the natural stop_window) eliminates
+        the oscillation.
         """
         if mode == EV_MODE_LOCKED:
             return 0.0, "Mode: Låst — ingen opladning"
@@ -3103,12 +3223,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return max_kw, f"Mode: Fuld kraft — {max_kw:.1f} kW"
 
         # Battery-priority gate (applies to PV mode only — v0.27.2 fix).
-        # v0.39.19 — bypass the gate when grid_export_kw > min_kw: the
-        # excess PV would otherwise be exported at sell price; the EV
-        # captures it at buy-price savings instead. See docstring.
+        # v0.39.19 — bypass when grid_export_kw > min_kw.
+        # v0.39.20 — bypass when EV is already charging (the gate is
+        # an IDLE→start gate, not a stop-the-running-EV gate).
         if (mode == EV_MODE_PV
                 and battery_soc < priority_soc
-                and grid_export_kw <= min_kw):
+                and grid_export_kw <= min_kw
+                and ev_last_amps == 0):
             return 0.0, (
                 f"Batteri prioriteret: {battery_soc:.0f}% / {priority_soc:.0f}% "
                 f"— EV venter til batteri er fyldt"
@@ -3173,6 +3294,77 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return 0
         amps = int(round(kw * 1000.0 / (EV_VOLTAGE * EV_PHASES)))
         return max(EV_OCPP_MIN_AMPS, min(EV_OCPP_MAX_AMPS, amps))
+
+    @staticmethod
+    def _amps_to_kw(amps: int) -> float:
+        """Convert 3-phase line current (A) back to kW. Inverse of _kw_to_amps."""
+        return amps * EV_VOLTAGE * EV_PHASES / 1000.0
+
+    def _reset_override_ramp(self) -> None:
+        """Clear the active-ramp state (v0.39.21).
+
+        Called when the override deactivates, the EV goes idle, or it
+        disconnects, so the next override session re-probes from min.
+        """
+        self._ev_override_ramp_amps = 0
+        self._ev_override_ramp_last_step_ts = None
+        self._ev_override_ramp_freeze_until = None
+
+    def _update_override_ramp(
+        self,
+        now_ts: datetime,
+        grid_import_kw: float,
+        min_amps: int,
+        max_amps: int,
+    ) -> int:
+        """Advance the battery-full override ramp by at most one step (v0.39.21).
+
+        Returns the amps the override should command this tick:
+          - First override tick of a session → initialise to ``min_amps``.
+          - Grid import above the threshold → MPPT can't cover the current
+            draw, so step down 1 A and freeze further up-steps for
+            ``EV_OVERRIDE_RAMP_FREEZE_SECONDS`` to let things settle.
+          - Otherwise, once the EV is actually charging and the step
+            interval has elapsed and we're not frozen and below ``max_amps``
+            → step up 1 A.
+          - Else hold.
+        """
+        # Initialise on the first override tick of a session.
+        if self._ev_override_ramp_amps < min_amps:
+            self._ev_override_ramp_amps = min_amps
+            self._ev_override_ramp_last_step_ts = now_ts
+            self._ev_override_ramp_freeze_until = None
+            return self._ev_override_ramp_amps
+
+        # Over-commit: grid is importing → MPPT didn't cover the last step.
+        if grid_import_kw > EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW:
+            if self._ev_override_ramp_amps > min_amps:
+                self._ev_override_ramp_amps -= 1
+            self._ev_override_ramp_freeze_until = (
+                now_ts + timedelta(seconds=EV_OVERRIDE_RAMP_FREEZE_SECONDS)
+            )
+            self._ev_override_ramp_last_step_ts = now_ts
+            return self._ev_override_ramp_amps
+
+        # Headroom available: ramp up if eligible.
+        frozen = (
+            self._ev_override_ramp_freeze_until is not None
+            and now_ts < self._ev_override_ramp_freeze_until
+        )
+        interval_ok = (
+            self._ev_override_ramp_last_step_ts is None
+            or (now_ts - self._ev_override_ramp_last_step_ts).total_seconds()
+            >= EV_OVERRIDE_RAMP_INTERVAL_SECONDS
+        )
+        if (
+            not frozen
+            and interval_ok
+            and self._ev_override_ramp_amps < max_amps
+            and self._ev_last_amps > 0  # only climb once actually charging
+        ):
+            self._ev_override_ramp_amps += 1
+            self._ev_override_ramp_last_step_ts = now_ts
+        return self._ev_override_ramp_amps
 
     def _ev_charge_threshold_w(self) -> float:
         """Return the configured 'EV is truly charging' threshold in watts."""
