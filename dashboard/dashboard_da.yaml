@@ -1,58 +1,15 @@
 title: Solar AI
 views:
-- title: Oversigt
-  path: oversigt
-  icon: mdi:view-dashboard
-  type: sections
-  max_columns: 2
-  sections:
-  - type: grid
-    column_span: 2
-    cards:
-    - type: markdown
-      content: '{% set pv = states(''sensor.pv_power_foxessmodbus'') | float(0) %}{% set load = states(''sensor.foxessmodbus_load_power'')
-        | float(0) %}{% set bat_c = states(''sensor.foxessmodbus_battery_charge'') | float(0) %}{% set bat_d = states(''sensor.foxessmodbus_battery_discharge'')
-        | float(0) %}{% set imp = states(''sensor.foxessmodbus_grid_consumption'') | float(0) %}{% set exp = states(''sensor.foxessmodbus_feed_in'')
-        | float(0) %}{% set ev = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% set soc = states(''sensor.foxessmodbus_battery_soc_1'')
-        | int(0) %}{% set ev_status = states(''sensor.solar_ai_lader_status'') %}{# foxessmodbus_load_power is total house side incl. EV — subtract EV for true household load #}{%
-        set house = [load - ev, 0] | max %}{% set total_in = pv + bat_d + imp %}{% set total_out = house + ev + bat_c + exp
-        %}
+- title: Solar AI
+  path: hjem
+  icon: mdi:home
+  panel: true
+  cards:
+  - type: vertical-stack
+    card_mod:
+      style: ':host { max-width: 1000px; margin: 0 auto; display: block; }
 
-        ## ⚡ Solar AI — Energi-flow
-
-        **Batteri: {{ soc }}%** · ☀️ Sol: **{{ ''%.2f'' | format(pv) }} kW** · 🏠 Forbrug: **{{ ''%.2f'' | format(house) }}
-        kW**
-
-
-        ### ⬇️ Ind ({{ ''%.2f'' | format(total_in) }} kW)
-
-
-        | | | |
-
-        |---|---|---:|
-
-        | ☀️ | Solceller | **{{ ''%.2f'' | format(pv) }} kW** |
-
-        | 🔋 | Batteri aflader ({{ soc }}%) | **{{ ''%.2f'' | format(bat_d) }} kW** |
-
-        | ⚡ | Import fra elnet | **{{ ''%.2f'' | format(imp) }} kW** |
-
-
-        ### ⬆️ Ud ({{ ''%.2f'' | format(total_out) }} kW)
-
-
-        | | | |
-
-        |---|---|---:|
-
-        | 🏠 | Forbrug (ekskl. EV) | **{{ ''%.2f'' | format(house) }} kW** |
-
-        | 🚗 | EV-lader ({{ ev_status }}) | **{{ ''%.2f'' | format(ev) }} kW** |
-
-        | 🔋 | Batteri oplader ({{ soc }}%) | **{{ ''%.2f'' | format(bat_c) }} kW** |
-
-        | ↗️ | Eksport til elnet | **{{ ''%.2f'' | format(exp) }} kW** |'
-  - type: grid
+        '
     cards:
     - type: horizontal-stack
       cards:
@@ -62,6 +19,9 @@ views:
         icon: mdi:sine-wave
         icon_color: amber
         multiline_secondary: true
+        entity: sensor.battery_arbitrage_driftstilstand
+        tap_action:
+          action: more-info
         fill_container: true
       - type: custom:mushroom-entity-card
         entity: switch.battery_arbitrage_arbitrage_aktiv
@@ -71,37 +31,142 @@ views:
         tap_action:
           action: toggle
         fill_container: true
-    - type: custom:mushroom-chips-card
-      alignment: justify
-      chips:
-      - type: template
-        entity: sensor.foxessmodbus_battery_soc_1
-        icon: mdi:battery
-        icon_color: '{% set s = states(''sensor.foxessmodbus_battery_soc_1'') | float(0) %}{% if s > 70 %}green{% elif s >
-          30 %}amber{% else %}red{% endif %}'
-        content: '{{ states(''sensor.foxessmodbus_battery_soc_1'') }}%'
-      - type: template
-        entity: sensor.solar_ai_faktisk_besparelse_i_dag
-        icon: mdi:cash-plus
-        icon_color: green
-        content: '{{ states(''sensor.solar_ai_faktisk_besparelse_i_dag'') }} DKK i dag'
-      - type: template
-        entity: sensor.solar_ai_24h_priskort
+    - type: horizontal-stack
+      cards:
+      - type: custom:mushroom-template-card
+        primary: '{% set h = now().hour %}{% set s = state_attr(''sensor.solar_ai_24h_priskort'',''slots'') or [] %}{% set m = s | selectattr(''h'',''equalto'',h) | list %}{% if m %}{{ ''%.2f'' | format(m[0][''buy'']) }} kr{% else %}– {% endif %}'
+        secondary: Køb nu · DKK/kWh
         icon: mdi:flash
         icon_color: red
-        content: '{% set h = now().hour %}{% set slots = state_attr(''sensor.solar_ai_24h_priskort'',''slots'') or [] %}{%
-          set match = slots | selectattr(''h'',''equalto'',h) | list %}{% if match %}Køb {{ ''%.2f'' | format(match[0][''buy''])
-          }}{% else %}Køb –{% endif %}'
-      - type: template
         entity: sensor.solar_ai_24h_priskort
+        tap_action:
+          action: navigate
+          navigation_path: /battery-arbitrage/priser
+        fill_container: true
+      - type: custom:mushroom-template-card
+        primary: '{% set h = now().hour %}{% set s = state_attr(''sensor.solar_ai_24h_priskort'',''slots'') or [] %}{% set m = s | selectattr(''h'',''equalto'',h) | list %}{% if m %}{{ ''%.2f'' | format(m[0][''sell'']) }} kr{% else %}– {% endif %}'
+        secondary: Salg nu · DKK/kWh
         icon: mdi:cash-fast
-        icon_color: blue
-        content: '{% set h = now().hour %}{% set slots = state_attr(''sensor.solar_ai_24h_priskort'',''slots'') or [] %}{%
-          set match = slots | selectattr(''h'',''equalto'',h) | list %}{% if match %}Salg {{ ''%.2f'' | format(match[0][''sell''])
-          }}{% else %}Salg –{% endif %}'
-  - type: grid
-    column_span: 2
-    cards:
+        icon_color: green
+        entity: sensor.solar_ai_24h_priskort
+        tap_action:
+          action: navigate
+          navigation_path: /battery-arbitrage/priser
+        fill_container: true
+    - type: custom:mushroom-template-card
+      primary: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% set p = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% if s == ''Charging'' %}Oplader — {{ ''%.1f'' | format(p) }} kW{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}Bil tilsluttet{% elif s == ''Available'' %}Ingen bil{% else %}{{ s }}{% endif %}'
+      secondary: '{% set en = state_attr(''sensor.solar_ai_ev_status'',''enabled'') %}{% set r = state_attr(''sensor.solar_ai_ev_status'',''reason'') %}{% if not en %}EV-styring slået fra{% else %}{{ r }}{% endif %}'
+      icon: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}mdi:battery-charging{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}mdi:ev-plug-type2{% else %}mdi:car-electric-outline{% endif %}'
+      icon_color: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}green{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}blue{% else %}grey{% endif %}'
+      multiline_secondary: true
+      entity: sensor.solar_ai_ev_status
+      tap_action:
+        action: more-info
+      fill_container: true
+    - type: custom:mushroom-title-card
+      title: Charge mode
+      card_mod:
+        style: ':host { --title-padding: 8px 12px 0px; }
+
+          .title { text-align: center; }
+
+          '
+    - type: custom:mushroom-chips-card
+      alignment: center
+      chips:
+      - type: template
+        icon: mdi:lock
+        content: Fra
+        icon_color: '{{ ''blue'' if states(''select.solar_ai_ev_opladningstilstand'') == ''locked'' else ''grey'' }}'
+        tap_action:
+          action: call-service
+          service: select.select_option
+          data:
+            option: locked
+          target:
+            entity_id: select.solar_ai_ev_opladningstilstand
+      - type: template
+        icon: mdi:weather-sunny
+        content: Sol
+        icon_color: '{{ ''blue'' if states(''select.solar_ai_ev_opladningstilstand'') == ''pv'' else ''grey'' }}'
+        tap_action:
+          action: call-service
+          service: select.select_option
+          data:
+            option: pv
+          target:
+            entity_id: select.solar_ai_ev_opladningstilstand
+      - type: template
+        icon: mdi:weather-sunny-alert
+        content: Sol+Bat
+        icon_color: '{{ ''blue'' if states(''select.solar_ai_ev_opladningstilstand'') == ''pv_battery'' else ''grey'' }}'
+        tap_action:
+          action: call-service
+          service: select.select_option
+          data:
+            option: pv_battery
+          target:
+            entity_id: select.solar_ai_ev_opladningstilstand
+      - type: template
+        icon: mdi:rocket-launch
+        content: Hurtig
+        icon_color: '{{ ''blue'' if states(''select.solar_ai_ev_opladningstilstand'') == ''full'' else ''grey'' }}'
+        tap_action:
+          action: call-service
+          service: select.select_option
+          data:
+            option: full
+          target:
+            entity_id: select.solar_ai_ev_opladningstilstand
+      - type: template
+        icon: mdi:calendar-clock
+        content: Planlagt
+        icon_color: '{{ ''blue'' if states(''select.solar_ai_ev_opladningstilstand'') == ''scheduled'' else ''grey'' }}'
+        tap_action:
+          action: call-service
+          service: select.select_option
+          data:
+            option: scheduled
+          target:
+            entity_id: select.solar_ai_ev_opladningstilstand
+      card_mod:
+        style: 'ha-card { --chip-height: 54px; --chip-font-size: 15px; --chip-icon-size: 22px; --chip-border-radius: 14px; --chip-spacing: 6px; }
+
+          '
+    - type: custom:power-flow-card-plus
+      title: Energi-flow
+      entities:
+        grid:
+          entity:
+            consumption: sensor.foxessmodbus_grid_consumption
+            production: sensor.foxessmodbus_feed_in
+          name: Elnet
+        solar:
+          entity: sensor.pv_power_foxessmodbus
+          name: Sol
+        battery:
+          entity:
+            consumption: sensor.foxessmodbus_battery_charge
+            production: sensor.foxessmodbus_battery_discharge
+          state_of_charge: sensor.foxessmodbus_battery_soc_1
+          name: Batteri
+        home:
+          entity: sensor.foxessmodbus_load_power
+          name: Hus
+          subtract_individual: true
+        individual:
+        - entity: sensor.solar_ai_lader_effekt
+          name: Bil
+          icon: mdi:car-electric
+          color:
+          - 84
+          - 149
+          - 230
+      clickable_entities: true
+      use_new_flow_rate_model: true
+      kw_decimals: 2
+      min_flow_rate: 0.5
+      max_flow_rate: 6
     - type: custom:apexcharts-card
       header:
         title: Priser og batteri (24t)
@@ -111,7 +176,7 @@ views:
         start: day
       apex_config:
         chart:
-          height: 280
+          height: 260
         legend:
           position: bottom
         stroke:
@@ -127,9 +192,6 @@ views:
         min: 0
         max: 100
         decimals: 0
-        apex_config:
-          title:
-            text: SoC %
       series:
       - entity: sensor.solar_ai_24h_priskort
         name: Køb
@@ -137,130 +199,77 @@ views:
         type: line
         color: '#e8453c'
         stroke_width: 2
-        data_generator: "const slots = entity.attributes.slots || [];\nconst today = new Date();\ntoday.setHours(0, 0, 0,\
-          \ 0);\nreturn slots.map(s => [\n  today.getTime() + s.h * 3600 * 1000 + (s.m || 0) * 60 * 1000,\n  s.buy\n]);"
+        data_generator: 'const slots = entity.attributes.slots || [];
+
+          const today = new Date();
+
+          today.setHours(0,0,0,0);
+
+          return slots.map(s => [today.getTime() + s.h*3600*1000 + (s.m||0)*60*1000, s.buy]);'
       - entity: sensor.solar_ai_24h_priskort
         name: Salg
         yaxis_id: price
         type: line
         color: '#3e9c4d'
         stroke_width: 2
-        data_generator: "const slots = entity.attributes.slots || [];\nconst today = new Date();\ntoday.setHours(0, 0, 0,\
-          \ 0);\nreturn slots.map(s => [\n  today.getTime() + s.h * 3600 * 1000 + (s.m || 0) * 60 * 1000,\n  s.sell\n]);"
+        data_generator: 'const slots = entity.attributes.slots || [];
+
+          const today = new Date();
+
+          today.setHours(0,0,0,0);
+
+          return slots.map(s => [today.getTime() + s.h*3600*1000 + (s.m||0)*60*1000, s.sell]);'
       - entity: sensor.foxessmodbus_battery_soc_1
         name: SoC
         yaxis_id: soc
         type: area
         color: '#5995e6'
         stroke_width: 2
-        opacity: 0.15
-  - type: grid
-    column_span: 2
-    cards:
-    - type: custom:apexcharts-card
-      header:
-        title: Effekt (6t)
-        show: true
-      graph_span: 6h
-      apex_config:
-        chart:
-          height: 220
-        legend:
-          position: bottom
-      series:
-      - entity: sensor.foxessmodbus_battery_charge
-        name: Oplade
-        color: '#3e9c4d'
-        type: line
-        stroke_width: 2
-      - entity: sensor.foxessmodbus_battery_discharge
-        name: Aflade
-        color: '#e8a13a'
-        type: line
-        stroke_width: 2
-      - entity: sensor.foxessmodbus_feed_in
-        name: Eksport
-        color: '#5995e6'
-        type: line
-        stroke_width: 2
-      - entity: sensor.foxessmodbus_load_power
-        name: Husforbrug
-        color: '#a55fb8'
-        type: line
-        stroke_width: 2
-  - type: grid
-    cards:
-    - type: markdown
-      title: Dagens plan
-      content: '{% set charge_hrs = state_attr(''sensor.solar_ai_dagens_plan'', ''charge_hours'') | default([]) %}
-
-        {% set export_hrs = state_attr(''sensor.solar_ai_dagens_plan'', ''export_hours'') | default([]) %}
-
-        {% set cur_h = now().hour %}
-
-        {% if charge_hrs or export_hrs %}
-
-        | 00 | 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08 | 09 | 10 | 11 |
-
-        |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-
-        {% set ns = namespace(r='''') %}{% for h in range(12) %}{% set sym = ''⚡'' if h in charge_hrs else (''💰'' if h in
-        export_hrs else (''◀'' if h == cur_h else ''·'')) %}{% set ns.r = ns.r + ''| '' + sym + '' '' %}{% endfor %}{{ ns.r
-        }}|
-
-        | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 |
-
-        |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-
-        {% set ns = namespace(r='''') %}{% for h in range(12, 24) %}{% set sym = ''⚡'' if h in charge_hrs else (''💰'' if h
-        in export_hrs else (''◀'' if h == cur_h else ''·'')) %}{% set ns.r = ns.r + ''| '' + sym + '' '' %}{% endfor %}{{
-        ns.r }}|
-
-
-        *⚡ opladning · 💰 eksport · ◀ nu*
-
-        {% else %}
-
-        *Ingen plandata*
-
-        {% endif %}'
-    column_span: 2
-  - type: grid
-    cards:
-    - type: markdown
-      title: Seneste sessioner
-      content: '{% set sessions = state_attr(''sensor.solar_ai_sessionslog'', ''sessions'') | default([]) %}
-
-        {% if sessions %}
-
-        | Start | Slut | Type | SoC | Varighed | kWh | DKK |
-
-        |:------|:-----|:-----|:----|:---------|:----|:----|
-
-        {% for s in sessions[:5] %}{% set icon = ''💰'' if s.type == ''export'' else ''⚡'' %}{% set label = ''Eksport'' if
-        s.type == ''export'' else ''Oplade'' %}
-
-        | {{ s.start_ts[11:16] }} | {{ s.end_ts[11:16] }} | {{ icon }} {{ label }} | {{ s.soc_start | round(0) | int }}→{{
-        s.soc_end | round(0) | int }}% | {{ s.duration_min }} min | {{ s.kwh }} | {{ s.dkk }} |{% endfor %}
-
-
-        *Komplet log findes på Historik-fanen.*
-
-        {% else %}
-
-        *Ingen sessioner endnu.*
-
-        {% endif %}'
-    column_span: 2
-  dense_section_placement: false
+        opacity: 0.12
+    - type: custom:mushroom-chips-card
+      alignment: center
+      chips:
+      - type: template
+        icon: mdi:car-electric
+        content: EV
+        tap_action:
+          action: navigate
+          navigation_path: /battery-arbitrage/ev
+      - type: template
+        icon: mdi:currency-eur
+        content: Priser
+        tap_action:
+          action: navigate
+          navigation_path: /battery-arbitrage/priser
+      - type: template
+        icon: mdi:chart-timeline-variant
+        content: Historik
+        tap_action:
+          action: navigate
+          navigation_path: /battery-arbitrage/historik
+      - type: template
+        icon: mdi:cog
+        content: Indstillinger
+        tap_action:
+          action: navigate
+          navigation_path: /battery-arbitrage/indstillinger
+      - type: template
+        icon: mdi:format-list-bulleted-square
+        content: Logs
+        tap_action:
+          action: navigate
+          navigation_path: /battery-arbitrage/logs
 - title: EV / OCPP
   path: ev
   icon: mdi:car-electric
-  type: sections
-  max_columns: 2
-  sections:
-  - type: grid
-    column_span: 2
+  subview: true
+  panel: true
+  cards:
+  - type: vertical-stack
+    card_mod:
+      style: ':host { max-width: 1000px; margin: 0 auto; display: block; }
+
+        '
     cards:
     - type: conditional
       conditions:
@@ -269,12 +278,8 @@ views:
         state: 'on'
       card:
         type: custom:mushroom-template-card
-        primary: '🛑 Eksport-stop aktiv'
-        secondary: '{% set since = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''since'') %}{% set floor = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'',
-          ''floor'') %}{% set price = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''price_at_start'') | float(0)
-          %}Salgsprisen er under gulvet ({% if floor is not none %}{{ ''%.2f'' | format(floor) }}{% else %}–{% endif %} DKK/kWh).
-          Solcelle-eksport er blokeret.{% if price %} Pris ved start: {{ ''%.3f'' | format(price) }} DKK/kWh.{% endif %}{% if
-          since %} Aktiv siden {{ since[11:16] }}.{% endif %}'
+        primary: 🛑 Eksport-stop aktiv
+        secondary: '{% set since = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''since'') %}{% set floor = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''floor'') %}{% set price = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''price_at_start'') | float(0) %}Salgsprisen er under gulvet ({% if floor is not none %}{{ ''%.2f'' | format(floor) }}{% else %}–{% endif %} DKK/kWh). Solcelle-eksport er blokeret.{% if price %} Pris ved start: {{ ''%.3f'' | format(price) }} DKK/kWh.{% endif %}{% if since %} Aktiv siden {{ since[11:16] }}.{% endif %}'
         icon: mdi:transmission-tower-off
         icon_color: red
         fill_container: true
@@ -282,9 +287,6 @@ views:
         entity: binary_sensor.solar_ai_eksport_stop_aktiv
         tap_action:
           action: more-info
-  - type: grid
-    column_span: 1
-    cards:
     - type: vertical-stack
       cards:
       - type: vertical-stack
@@ -296,8 +298,7 @@ views:
           - type: custom:mushroom-template-card
             primary: Fra
             icon: mdi:lock
-            icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''locked'' %}blue{% else %}grey{% endif
-              %}'
+            icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''locked'' %}blue{% else %}grey{% endif %}'
             fill_container: true
             layout: vertical
             tap_action:
@@ -327,8 +328,7 @@ views:
           - type: custom:mushroom-template-card
             primary: Sol+Bat
             icon: mdi:weather-sunny-alert
-            icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''pv_battery'' %}blue{% else %}grey{%
-              endif %}'
+            icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''pv_battery'' %}blue{% else %}grey{% endif %}'
             fill_container: true
             layout: vertical
             tap_action:
@@ -343,8 +343,7 @@ views:
           - type: custom:mushroom-template-card
             primary: Hurtig
             icon: mdi:rocket-launch
-            icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''full'' %}blue{% else %}grey{% endif
-              %}'
+            icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''full'' %}blue{% else %}grey{% endif %}'
             fill_container: true
             layout: vertical
             tap_action:
@@ -356,39 +355,37 @@ views:
                 entity_id: select.solar_ai_ev_opladningstilstand
             hold_action:
               action: none
+          - type: custom:mushroom-template-card
+            primary: Planlagt
+            icon: mdi:calendar-clock
+            icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''scheduled'' %}blue{% else %}grey{% endif %}'
+            fill_container: true
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: select.select_option
+              service_data:
+                option: scheduled
+              target:
+                entity_id: select.solar_ai_ev_opladningstilstand
+            hold_action:
+              action: none
       - type: horizontal-stack
         cards:
         - type: custom:mushroom-template-card
           primary: Bil tilsluttet
-          secondary: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s in [''Charging''] %}🔋 Oplader nu — {{
-            states(''sensor.solar_ai_lader_effekt'') }} kW{% elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE'',
-            ''Finishing''] %}🔌 Bil tilsluttet ({{ s }}){% elif s == ''Available'' %}⚪ Ingen bil tilsluttet{% elif s in [''Disconnected'',
-            ''Unavailable'', ''Unknown'', ''unavailable'', ''unknown''] %}❌ Lader ikke forbundet{% else %}{{ s }}{% endif
-            %}'
-          icon: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}mdi:battery-charging{% elif
-            s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}mdi:ev-plug-type2{% elif s == ''Available''
-            %}mdi:car-electric-outline{% else %}mdi:lan-disconnect{% endif %}'
-          icon_color: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}green{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing'']
-            %}blue{% elif s == ''Available'' %}grey{% else %}red{% endif %}'
+          secondary: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s in [''Charging''] %}🔋 Oplader nu — {{ states(''sensor.solar_ai_lader_effekt'') }} kW{% elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE'', ''Finishing''] %}🔌 Bil tilsluttet ({{ s }}){% elif s == ''Available'' %}⚪ Ingen bil tilsluttet{% elif s in [''Disconnected'', ''Unavailable'', ''Unknown'', ''unavailable'', ''unknown''] %}❌ Lader ikke forbundet{% else %}{{ s }}{% endif %}'
+          icon: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}mdi:battery-charging{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}mdi:ev-plug-type2{% elif s == ''Available'' %}mdi:car-electric-outline{% else %}mdi:lan-disconnect{% endif %}'
+          icon_color: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}green{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}blue{% elif s == ''Available'' %}grey{% else %}red{% endif %}'
           entity: sensor.solar_ai_lader_status
           tap_action:
             action: more-info
           fill_container: true
         - type: custom:mushroom-template-card
           primary: EV-charger
-          secondary: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% set seen = state_attr(''sensor.solar_ai_lader_status'',
-            ''seconds_since_seen'') %}{% if s in [''Disconnected'', ''Unavailable''] %}❌ Afbrudt{% elif s in [''Unknown'',
-            ''unknown'', ''unavailable''] %}⏳ Venter på status{% else %}✅ {{ s }}{% if seen %} · {{ seen | int }}s siden{%
-            endif %}{% endif %}'
-          icon: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}mdi:battery-charging-high{%
-            elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE''] %}mdi:ev-plug-type2{% elif s == ''Finishing'' %}mdi:battery-charging-50{%
-            elif s == ''Available'' %}mdi:ev-station{% elif s == ''Reserved'' %}mdi:calendar-clock{% elif s == ''Faulted''
-            %}mdi:alert-circle{% elif s in [''Disconnected'', ''Unavailable''] %}mdi:lan-disconnect{% else %}mdi:ev-station{%
-            endif %}'
-          icon_color: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}green{% elif s in [''Preparing'',
-            ''SuspendedEV'', ''SuspendedEVSE''] %}amber{% elif s == ''Finishing'' %}cyan{% elif s == ''Available'' %}blue{%
-            elif s == ''Reserved'' %}purple{% elif s == ''Faulted'' %}red{% elif s in [''Disconnected'', ''Unavailable'']
-            %}grey{% else %}grey{% endif %}'
+          secondary: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% set seen = state_attr(''sensor.solar_ai_lader_status'', ''seconds_since_seen'') %}{% if s in [''Disconnected'', ''Unavailable''] %}❌ Afbrudt{% elif s in [''Unknown'', ''unknown'', ''unavailable''] %}⏳ Venter på status{% else %}✅ {{ s }}{% if seen %} · {{ seen | int }}s siden{% endif %}{% endif %}'
+          icon: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}mdi:battery-charging-high{% elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE''] %}mdi:ev-plug-type2{% elif s == ''Finishing'' %}mdi:battery-charging-50{% elif s == ''Available'' %}mdi:ev-station{% elif s == ''Reserved'' %}mdi:calendar-clock{% elif s == ''Faulted'' %}mdi:alert-circle{% elif s in [''Disconnected'', ''Unavailable''] %}mdi:lan-disconnect{% else %}mdi:ev-station{% endif %}'
+          icon_color: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}green{% elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE''] %}amber{% elif s == ''Finishing'' %}cyan{% elif s == ''Available'' %}blue{% elif s == ''Reserved'' %}purple{% elif s == ''Faulted'' %}red{% elif s in [''Disconnected'', ''Unavailable''] %}grey{% else %}grey{% endif %}'
           fill_container: true
       - type: horizontal-stack
         cards:
@@ -396,39 +393,21 @@ views:
           primary: '{{ states(''sensor.solar_ai_lader_effekt'') }} kW'
           secondary: EFFEKT
           icon: mdi:flash
-          icon_color: '{% set p = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% if p > 0.1 %}green{% else %}grey{%
-            endif %}'
+          icon_color: '{% set p = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% if p > 0.1 %}green{% else %}grey{% endif %}'
           fill_container: true
         - type: custom:mushroom-template-card
-          primary: '{% set surp = state_attr(''sensor.solar_ai_ev_status'', ''surplus_kw'') | float(0) %}{{ ''%.2f'' | format(surp)
-            }} kW'
+          primary: '{% set surp = state_attr(''sensor.solar_ai_ev_status'', ''surplus_kw'') | float(0) %}{{ ''%.2f'' | format(surp) }} kW'
           secondary: OVERSKUD TIL EV
           icon: mdi:solar-power-variant
-          icon_color: '{% set surp = state_attr(''sensor.solar_ai_ev_status'', ''surplus_kw'') | float(0) %}{% if surp > 0.1
-            %}amber{% else %}grey{% endif %}'
+          icon_color: '{% set surp = state_attr(''sensor.solar_ai_ev_status'', ''surplus_kw'') | float(0) %}{% if surp > 0.1 %}amber{% else %}grey{% endif %}'
           fill_container: true
       - type: markdown
-        content: '{% set st = states(''sensor.solar_ai_ev_status'') %}{% set en = state_attr(''sensor.solar_ai_ev_status'',
-          ''enabled'') %}{% set reason = state_attr(''sensor.solar_ai_ev_status'', ''reason'') %}{% set arm_iso = state_attr(''sensor.solar_ai_ev_status'',''arming_until'')
-          %}{% set arm_raw = ((as_timestamp(arm_iso) - as_timestamp(now())) | int(0)) if arm_iso else 0 %}{% set arm = [arm_raw,
-          0] | max %}{% set cool_iso = state_attr(''sensor.solar_ai_ev_status'',''cooling_until'') %}{% set cool_raw = ((as_timestamp(cool_iso)
-          - as_timestamp(now())) | int(0)) if cool_iso else 0 %}{% set cool = [cool_raw, 0] | max %}{% set kw = state_attr(''sensor.solar_ai_ev_status'',''target_kw'')
-          | float(0) %}{% set amps = state_attr(''sensor.solar_ai_ev_status'',''target_amps'') | int(0) %}{% set bat_locked
-          = state_attr(''sensor.solar_ai_ev_status'',''battery_locked'') %}{% if not en %}🔒 **EV-controller slået fra.**{%
-          elif st == ''CHARGING'' %}🔋 **Oplader: {{ ''%.1f'' | format(kw) }} kW · {{ amps }} A**{% if bat_locked %}  ·  🔒
-          Husbatteri låst{% endif %}{% elif st == ''ARMING'' %}⏳ **Starter om {{ arm }} sek**{% elif st == ''COOLING'' %}⏳
-          **Stopper om {{ cool }} sek**{% else %}💤 **Inaktiv**{% if reason %}
+        content: '{% set st = states(''sensor.solar_ai_ev_status'') %}{% set en = state_attr(''sensor.solar_ai_ev_status'', ''enabled'') %}{% set reason = state_attr(''sensor.solar_ai_ev_status'', ''reason'') %}{% set arm_iso = state_attr(''sensor.solar_ai_ev_status'',''arming_until'') %}{% set arm_raw = ((as_timestamp(arm_iso) - as_timestamp(now())) | int(0)) if arm_iso else 0 %}{% set arm = [arm_raw, 0] | max %}{% set cool_iso = state_attr(''sensor.solar_ai_ev_status'',''cooling_until'') %}{% set cool_raw = ((as_timestamp(cool_iso) - as_timestamp(now())) | int(0)) if cool_iso else 0 %}{% set cool = [cool_raw, 0] | max %}{% set kw = state_attr(''sensor.solar_ai_ev_status'',''target_kw'') | float(0) %}{% set amps = state_attr(''sensor.solar_ai_ev_status'',''target_amps'') | int(0) %}{% set bat_locked = state_attr(''sensor.solar_ai_ev_status'',''battery_locked'') %}{% if not en %}🔒 **EV-controller slået fra.**{% elif st == ''CHARGING'' %}🔋 **Oplader: {{ ''%.1f'' | format(kw) }} kW · {{ amps }} A**{% if bat_locked %}  ·  🔒 Husbatteri låst{% endif %}{% elif st == ''ARMING'' %}⏳ **Starter om {{ arm }} sek**{% elif st == ''COOLING'' %}⏳ **Stopper om {{ cool }} sek**{% else %}💤 **Inaktiv**{% if reason %}
 
 
           _{{ reason }}_{% endif %}{% endif %}'
     - type: markdown
-      content: '{% set pv = states(''sensor.pv_power_foxessmodbus'') | float(0) %}{% set load = states(''sensor.foxessmodbus_load_power'')
-        | float(0) %}{% set bat_c = states(''sensor.foxessmodbus_battery_charge'') | float(0) %}{% set bat_d = states(''sensor.foxessmodbus_battery_discharge'')
-        | float(0) %}{% set imp = states(''sensor.foxessmodbus_grid_consumption'') | float(0) %}{% set exp = states(''sensor.foxessmodbus_feed_in'')
-        | float(0) %}{% set ev = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% set soc = states(''sensor.foxessmodbus_battery_soc_1'')
-        | int(0) %}{% set ev_status = states(''sensor.solar_ai_lader_status'') %}{# load incl. EV — subtract EV for true household load #}{%
-        set house = [load - ev, 0] | max %}{% set total_in = pv + bat_d + imp %}{% set total_out = house + ev + bat_c + exp
-        %}
+      content: '{% set pv = states(''sensor.pv_power_foxessmodbus'') | float(0) %}{% set load = states(''sensor.foxessmodbus_load_power'') | float(0) %}{% set bat_c = states(''sensor.foxessmodbus_battery_charge'') | float(0) %}{% set bat_d = states(''sensor.foxessmodbus_battery_discharge'') | float(0) %}{% set imp = states(''sensor.foxessmodbus_grid_consumption'') | float(0) %}{% set exp = states(''sensor.foxessmodbus_feed_in'') | float(0) %}{% set ev = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% set soc = states(''sensor.foxessmodbus_battery_soc_1'') | int(0) %}{% set ev_status = states(''sensor.solar_ai_lader_status'') %}{# load incl. EV — subtract EV for true household load #}{% set house = [load - ev, 0] | max %}{% set total_in = pv + bat_d + imp %}{% set total_out = house + ev + bat_c + exp %}
 
         ## ⚡ Energi-flow  ·  🔋 {{ soc }}%  ·  ☀️ {{ ''%.2f'' | format(pv) }} kW
 
@@ -464,17 +443,12 @@ views:
         - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
           name: Standard tilstand ved tilslutning
           icon: mdi:car-connected
-  - type: grid
-    column_span: 1
-    cards:
     - type: vertical-stack
       cards:
       - type: custom:mushroom-title-card
         title: Lader-info
       - type: markdown
-        content: '{% set i = states.sensor.solar_ai_lader_info %}{% if i is none or i.state in [''unavailable'',''unknown'',''Unknown'']
-          %}*Lader ikke tilsluttet endnu*{% else %}* Producent: **{{ i.attributes.vendor }}** · Model: **{{ i.attributes.model
-          }}**
+        content: '{% set i = states.sensor.solar_ai_lader_info %}{% if i is none or i.state in [''unavailable'',''unknown'',''Unknown''] %}*Lader ikke tilsluttet endnu*{% else %}* Producent: **{{ i.attributes.vendor }}** · Model: **{{ i.attributes.model }}**
 
           * Firmware: {{ i.attributes.firmware }}
 
@@ -482,34 +456,22 @@ views:
       - type: custom:mushroom-title-card
         title: Solcelleprognose
       - type: markdown
-        content: '{% set today = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_kwh'') | float(0)
-          %}{% set today_raw = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_raw_kwh'') | float(0)
-          %}{% set tom = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_kwh'') | float(0) %}{% set tom_raw
-          = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_raw_kwh'') | float(0) %}<!-- 🌞 Solcelleprognose
-          — totals -->
+        content: '{% set today = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_kwh'') | float(0) %}{% set today_raw = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_raw_kwh'') | float(0) %}{% set tom = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_kwh'') | float(0) %}{% set tom_raw = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_raw_kwh'') | float(0) %}<!-- 🌞 Solcelleprognose — totals -->
 
           | | | |
 
           |---|---:|---:|
 
-          | ☀️ **Rest af i dag** | Adjusted forecast: **{{ ''%.1f'' | format(today) }} kWh** | _Raw forecast: {{ ''%.1f''
-          | format(today_raw) }} kWh_ |
+          | ☀️ **Rest af i dag** | Adjusted forecast: **{{ ''%.1f'' | format(today) }} kWh** | _Raw forecast: {{ ''%.1f'' | format(today_raw) }} kWh_ |
 
-          | 📅 **I morgen** | Adjusted forecast: **{{ ''%.1f'' | format(tom) }} kWh** | _Raw forecast: {{ ''%.1f'' | format(tom_raw)
-          }} kWh_ |
+          | 📅 **I morgen** | Adjusted forecast: **{{ ''%.1f'' | format(tom) }} kWh** | _Raw forecast: {{ ''%.1f'' | format(tom_raw) }} kWh_ |
 
           '
       - type: custom:mushroom-template-card
         primary: Live solar-korrektion
-        secondary: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'')
-          | int(0) %}{% if n == 0 %}Venter på første 15-min slot…{% else %}{{ ''%+.0f'' | format(p) }}%  ·  {{ n }} slot{{
-          ''s'' if n != 1 else '''' }}  ·  dæmper over 2 t{% endif %}'
-        icon: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'')
-          | int(0) %}{% if n == 0 %}mdi:timer-sand{% elif p > 10 %}mdi:weather-sunny{% elif p < -10 %}mdi:weather-cloudy{%
-          else %}mdi:chart-bell-curve{% endif %}'
-        icon_color: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'')
-          | int(0) %}{% if n == 0 %}grey{% elif p > 10 %}green{% elif p > -10 %}grey{% elif p > -25 %}amber{% else %}red{%
-          endif %}'
+        secondary: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}Venter på første 15-min slot…{% else %}{{ ''%+.0f'' | format(p) }}%  ·  {{ n }} slot{{ ''s'' if n != 1 else '''' }}  ·  dæmper over 2 t{% endif %}'
+        icon: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}mdi:timer-sand{% elif p > 10 %}mdi:weather-sunny{% elif p < -10 %}mdi:weather-cloudy{% else %}mdi:chart-bell-curve{% endif %}'
+        icon_color: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}grey{% elif p > 10 %}green{% elif p > -10 %}grey{% elif p > -25 %}amber{% else %}red{% endif %}'
         entity: sensor.solar_ai_solcelleprognose_fejl_nu
         tap_action:
           action: more-info
@@ -567,9 +529,19 @@ views:
           in_header: false
           legend_value: false
         data_generator: return (entity.attributes.slots || []).map(s => [new Date(s.start).getTime(), s.adj_kw]);
-  - type: grid
-    column_span: 2
-    cards:
+    - type: conditional
+      conditions:
+      - condition: state
+        entity: select.solar_ai_ev_opladningstilstand
+        state_not: scheduled
+      card:
+        type: custom:mushroom-template-card
+        primary: Skemaer er inaktive lige nu
+        secondary: 'Skemaerne styrer kun opladningen når EV-tilstand er "Planlagt". Aktuel tilstand: {{ states(''sensor.solar_ai_ev_aktuel_tilstand'') }}. Ændringer her påvirker ikke den aktive opladning — vælg "Planlagt" ovenfor for at bruge skemaerne.'
+        icon: mdi:calendar-alert
+        icon_color: orange
+        multiline_secondary: true
+        fill_container: true
     - type: custom:mushroom-title-card
       title: Planlagt opladning
       subtitle: 4 skemaer. Aktiver et eller flere og sæt EV-tilstand til "Planlagt" for at bruge dem.
@@ -580,14 +552,9 @@ views:
 
         |:-:|:-----:|:---------|:------|:-----|
 
-        {% for n in slots %}{% set enabled = is_state(''switch.solar_ai_skema_'' ~ n ~ ''_aktiveret'', ''on'') %}{% set mode
-        = states(''select.solar_ai_skema_'' ~ n ~ ''_tilstand'') %}{% set start = states(''time.solar_ai_skema_'' ~ n ~ ''_starttid'')
-        %}{% set end = states(''time.solar_ai_skema_'' ~ n ~ ''_sluttid'') %}{% set mark = ''✅'' if enabled else ''⛔'' %}
+        {% for n in slots %}{% set enabled = is_state(''switch.solar_ai_skema_'' ~ n ~ ''_aktiveret'', ''on'') %}{% set mode = states(''select.solar_ai_skema_'' ~ n ~ ''_tilstand'') %}{% set start = states(''time.solar_ai_skema_'' ~ n ~ ''_starttid'') %}{% set end = states(''time.solar_ai_skema_'' ~ n ~ ''_sluttid'') %}{% set mark = ''✅'' if enabled else ''⛔'' %}
 
         | {{ n }} | {{ mark }} | {{ mode }} | {{ start[:5] }} | {{ end[:5] }} |{% endfor %}'
-  - type: grid
-    column_span: 1
-    cards:
     - type: entities
       title: Skema 1
       icon: mdi:calendar-clock
@@ -614,9 +581,6 @@ views:
         name: Starttid
       - entity: time.solar_ai_skema_2_sluttid
         name: Sluttid
-  - type: grid
-    column_span: 1
-    cards:
     - type: entities
       title: Skema 3
       icon: mdi:calendar-clock
@@ -643,14 +607,17 @@ views:
         name: Starttid
       - entity: time.solar_ai_skema_4_sluttid
         name: Sluttid
-  dense_section_placement: false
 - title: Priser & Plan
   path: priser
   icon: mdi:currency-eur
-  type: sections
-  max_columns: 2
-  sections:
-  - type: grid
+  subview: true
+  panel: true
+  cards:
+  - type: vertical-stack
+    card_mod:
+      style: ':host { max-width: 1000px; margin: 0 auto; display: block; }
+
+        '
     cards:
     - type: markdown
       title: Prissammensætning
@@ -721,10 +688,7 @@ views:
 
         #### ⚖️ Arbitrage-spread
 
-        **{{ ''%.3f'' | format(spread) }} DKK/kWh** {% if spread >= min_spread %}✅ over grænse ({{ ''%.2f'' | format(min_spread)
-        }}){% else %}⛔ under grænse ({{ ''%.2f'' | format(min_spread) }}){% endif %}'
-  - type: grid
-    cards:
+        **{{ ''%.3f'' | format(spread) }} DKK/kWh** {% if spread >= min_spread %}✅ over grænse ({{ ''%.2f'' | format(min_spread) }}){% else %}⛔ under grænse ({{ ''%.2f'' | format(min_spread) }}){% endif %}'
     - type: custom:apexcharts-card
       header:
         title: 24h priskort
@@ -755,8 +719,7 @@ views:
           x:
             format: HH:mm
           y:
-            formatter: EVAL:function(value) { if (value == null || isNaN(value)) return ''; return value.toFixed(2).replace('.',
-              ',') + ' DKK/kWh'; }
+            formatter: EVAL:function(value) { if (value == null || isNaN(value)) return ''; return value.toFixed(2).replace('.', ',') + ' DKK/kWh'; }
       yaxis:
       - id: price
         decimals: 2
@@ -764,23 +727,18 @@ views:
           title:
             text: DKK/kWh
           labels:
-            formatter: EVAL:function(value) { if (value == null || isNaN(value)) return ''; return value.toFixed(2).replace('.',
-              ','); }
+            formatter: EVAL:function(value) { if (value == null || isNaN(value)) return ''; return value.toFixed(2).replace('.', ','); }
       series:
       - entity: sensor.solar_ai_24h_priskort
         name: Køb (inkl. moms + tarif)
         type: column
         color: '#e8453c'
-        data_generator: "const slots = entity.attributes.slots || [];\nconst today = new Date();\ntoday.setHours(0, 0, 0,\
-          \ 0);\nreturn slots.map(s => [\n  today.getTime() + s.h * 3600 * 1000 + (s.m || 0) * 60 * 1000,\n  s.buy\n]);"
+        data_generator: "const slots = entity.attributes.slots || [];\nconst today = new Date();\ntoday.setHours(0, 0, 0, 0);\nreturn slots.map(s => [\n  today.getTime() + s.h * 3600 * 1000 + (s.m || 0) * 60 * 1000,\n  s.buy\n]);"
       - entity: sensor.solar_ai_24h_priskort
         name: Salg (eksport)
         type: column
         color: '#3e9c4d'
-        data_generator: "const slots = entity.attributes.slots || [];\nconst today = new Date();\ntoday.setHours(0, 0, 0,\
-          \ 0);\nreturn slots.map(s => [\n  today.getTime() + s.h * 3600 * 1000 + (s.m || 0) * 60 * 1000,\n  s.sell\n]);"
-  - type: grid
-    cards:
+        data_generator: "const slots = entity.attributes.slots || [];\nconst today = new Date();\ntoday.setHours(0, 0, 0, 0);\nreturn slots.map(s => [\n  today.getTime() + s.h * 3600 * 1000 + (s.m || 0) * 60 * 1000,\n  s.sell\n]);"
     - type: entities
       title: 24h prisstatistik
       icon: mdi:chart-bar
@@ -803,8 +761,6 @@ views:
         name: Næste slots pris
       - entity: sensor.battery_arbitrage_net_arbitrage_spread
         name: Net-arbitrage spread
-  - type: grid
-    cards:
     - type: markdown
       title: Dagens plan
       content: '{% set charge_hrs = state_attr(''sensor.solar_ai_dagens_plan'', ''charge_hours'') | default([]) %}
@@ -819,9 +775,7 @@ views:
 
         | :-- | :-- |
 
-        {% set nrows = [charge_hrs | length, export_hrs | length] | max %}{% for i in range(nrows) %}{% set ch = ''**'' +
-        (''%02d:00'' | format(charge_hrs[i])) + ''**'' if i < (charge_hrs | length) else '''' %}{% set ex = ''**'' + (''%02d:00''
-        | format(export_hrs[i])) + ''**'' if i < (export_hrs | length) else '''' %}
+        {% set nrows = [charge_hrs | length, export_hrs | length] | max %}{% for i in range(nrows) %}{% set ch = ''**'' + (''%02d:00'' | format(charge_hrs[i])) + ''**'' if i < (charge_hrs | length) else '''' %}{% set ex = ''**'' + (''%02d:00'' | format(export_hrs[i])) + ''**'' if i < (export_hrs | length) else '''' %}
 
         | {{ ch }} | {{ ex }} |{% endfor %}
 
@@ -830,17 +784,13 @@ views:
 
         |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 
-        {% set ns = namespace(r='''') %}{% for h in range(12) %}{% set sym = ''⚡'' if h in charge_hrs else (''💰'' if h in
-        export_hrs else (''◀'' if h == cur_h else ''·'')) %}{% set ns.r = ns.r + ''| '' + sym + '' '' %}{% endfor %}{{ ns.r
-        }}|
+        {% set ns = namespace(r='''') %}{% for h in range(12) %}{% set sym = ''⚡'' if h in charge_hrs else (''💰'' if h in export_hrs else (''◀'' if h == cur_h else ''·'')) %}{% set ns.r = ns.r + ''| '' + sym + '' '' %}{% endfor %}{{ ns.r }}|
 
         | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 |
 
         |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 
-        {% set ns = namespace(r='''') %}{% for h in range(12, 24) %}{% set sym = ''⚡'' if h in charge_hrs else (''💰'' if h
-        in export_hrs else (''◀'' if h == cur_h else ''·'')) %}{% set ns.r = ns.r + ''| '' + sym + '' '' %}{% endfor %}{{
-        ns.r }}|
+        {% set ns = namespace(r='''') %}{% for h in range(12, 24) %}{% set sym = ''⚡'' if h in charge_hrs else (''💰'' if h in export_hrs else (''◀'' if h == cur_h else ''·'')) %}{% set ns.r = ns.r + ''| '' + sym + '' '' %}{% endfor %}{{ ns.r }}|
 
 
         *⚡ opladning · 💰 eksport · ◀ nu*
@@ -863,14 +813,17 @@ views:
         name: Sol fylder batteri
       - entity: binary_sensor.battery_arbitrage_tilstedevaerelse
         name: Tilstedeværelse
-  dense_section_placement: false
 - title: Historik
   path: historik
   icon: mdi:chart-timeline-variant
-  type: sections
-  max_columns: 2
-  sections:
-  - type: grid
+  subview: true
+  panel: true
+  cards:
+  - type: vertical-stack
+    card_mod:
+      style: ':host { max-width: 1000px; margin: 0 auto; display: block; }
+
+        '
     cards:
     - type: entities
       title: Besparelser (DKK)
@@ -891,16 +844,12 @@ views:
         name: 30 dage — faktisk
       - entity: sensor.solar_ai_forpasset_besparelse_30_dage
         name: 30 dage — forpasset
-  - type: grid
-    cards:
     - type: history-graph
       title: Batteri SoC — 24 timer
       hours_to_show: 24
       entities:
       - entity: sensor.foxessmodbus_battery_soc_1
         name: SoC
-  - type: grid
-    cards:
     - type: history-graph
       title: Effekt — 24 timer
       hours_to_show: 24
@@ -913,8 +862,6 @@ views:
         name: Eksport
       - entity: sensor.foxessmodbus_load_power
         name: Husforbrug
-  - type: grid
-    cards:
     - type: history-graph
       title: Besparelser — 7 dage
       hours_to_show: 168
@@ -923,16 +870,12 @@ views:
         name: Faktisk i dag
       - entity: sensor.solar_ai_forpasset_besparelse_i_dag
         name: Forpasset i dag
-  - type: grid
-    cards:
     - type: history-graph
       title: Solcelleprognose nøjagtighed
       hours_to_show: 168
       entities:
       - entity: sensor.battery_arbitrage_solcelle_prognose_nojagtighed
         name: Nøjagtighed %
-  - type: grid
-    cards:
     - type: markdown
       title: Komplet sessionslog
       content: '{% set sessions = state_attr(''sensor.solar_ai_sessionslog'', ''sessions'') | default([]) %}
@@ -943,25 +886,26 @@ views:
 
         |:------|:-----|:-----|:----|:---------|:----|:----|
 
-        {% for s in sessions[:15] %}{% set icon = ''💰'' if s.type == ''export'' else ''⚡'' %}{% set label = ''Eksport'' if
-        s.type == ''export'' else ''Oplade'' %}
+        {% for s in sessions[:15] %}{% set icon = ''💰'' if s.type == ''export'' else ''⚡'' %}{% set label = ''Eksport'' if s.type == ''export'' else ''Oplade'' %}
 
-        | {{ s.start_ts[11:16] }} | {{ s.end_ts[11:16] }} | {{ icon }} {{ label }} | {{ s.soc_start | round(0) | int }}→{{
-        s.soc_end | round(0) | int }}% | {{ s.duration_min }} min | {{ s.kwh }} | {{ s.dkk }} |{% endfor %}
+        | {{ s.start_ts[11:16] }} | {{ s.end_ts[11:16] }} | {{ icon }} {{ label }} | {{ s.soc_start | round(0) | int }}→{{ s.soc_end | round(0) | int }}% | {{ s.duration_min }} min | {{ s.kwh }} | {{ s.dkk }} |{% endfor %}
 
         {% else %}
 
         *Ingen sessioner endnu — aktivér Solar AI for at registrere eksport og opladning.*
 
         {% endif %}'
-  dense_section_placement: false
 - title: Indstillinger
   path: indstillinger
   icon: mdi:cog
-  type: sections
-  max_columns: 3
-  sections:
-  - type: grid
+  subview: true
+  panel: true
+  cards:
+  - type: vertical-stack
+    card_mod:
+      style: ':host { max-width: 1000px; margin: 0 auto; display: block; }
+
+        '
     cards:
     - type: entities
       title: Hovedkontakter
@@ -974,8 +918,6 @@ views:
         name: Notifikationer ved tilstandsskift
       - entity: switch.solar_ai_15_minutters_prisoplosning
         name: 15-min prisopløsning
-  - type: grid
-    cards:
     - type: entities
       title: Batteri-grænser
       icon: mdi:battery-charging-50
@@ -989,8 +931,6 @@ views:
         name: Eksporteffekt-grænse (kW)
       - entity: number.solar_ai_net_importgraense
         name: Net-importgrænse (kW)
-  - type: grid
-    cards:
     - type: entities
       title: Prisparametre
       icon: mdi:currency-eur
@@ -1006,8 +946,6 @@ views:
         name: Salgsgebyr (eksport)
       - entity: number.solar_ai_minimum_eksportpris_0_tillad_negativ
         name: Minimum eksportpris
-  - type: grid
-    cards:
     - type: entities
       title: Optimizer
       icon: mdi:chart-line
@@ -1017,8 +955,6 @@ views:
         name: Minimum gevinst pr. kWh
       - entity: number.solar_ai_batteri_slidomkostning_dkk_kwh_cyklet
         name: Batteri-slidomkostning
-  - type: grid
-    cards:
     - type: entities
       title: Notifikationer
       icon: mdi:bell-outline
@@ -1037,23 +973,13 @@ views:
       - entity: switch.solar_ai_notifikation_solareksport_genoptaget
         name: Solareksport genoptaget
       - type: divider
-      - entity: switch.solar_ai_notifikation_telefon
-        name: 📱 Telefon
-      - entity: switch.solar_ai_notifikation_telefon2
-        name: 📱 Telefon 2
-      - entity: switch.solar_ai_notifikation_tablet
-        name: 📱 Tablet
-      - entity: switch.solar_ai_notifikation_ipad_air
-        name: 📱 iPad Air
       - entity: switch.solar_ai_notifikation_iphone
-        name: 📱 iPhone
-  - type: grid
-    cards:
+        name: 📱 Telefon
+      - entity: switch.solar_ai_notifikation_ipad_air
+        name: 📱 Tablet
     - type: custom:mushroom-title-card
       title: Diagnostik & lærte modeller
       subtitle: Til fejlfinding og indsigt
-  - type: grid
-    cards:
     - type: entities
       title: Auto-detekterede batteriparametre
       icon: mdi:battery-heart-variant
@@ -1069,8 +995,6 @@ views:
         name: Importerbar energi
       - entity: sensor.battery_arbitrage_tid_til_fuld_opladning
         name: Tid til fuld
-  - type: grid
-    cards:
     - type: entities
       title: Lærte opladningshastigheder
       icon: mdi:thermometer-lines
@@ -1093,8 +1017,6 @@ views:
         name: 35–50°C
       - entity: sensor.solar_ai_laert_opladningshastighed_over_50degc
         name: Over 50°C
-  - type: grid
-    cards:
     - type: entities
       title: Forbrugsmodel
       icon: mdi:home-lightning-bolt
@@ -1108,8 +1030,6 @@ views:
         name: Forudsagt husforbrug 24h
       - entity: sensor.foxessmodbus_load_power
         name: Aktuelt husforbrug
-  - type: grid
-    cards:
     - type: entities
       title: Solcelleprognose
       icon: mdi:solar-power
@@ -1125,8 +1045,6 @@ views:
         name: Prognose 6h justeret
       - entity: sensor.battery_arbitrage_solcelle_prognose_nojagtighed
         name: Nøjagtighed
-  - type: grid
-    cards:
     - type: entities
       title: Net-status
       icon: mdi:transmission-tower
@@ -1140,8 +1058,6 @@ views:
         name: Nettarif denne time
       - entity: sensor.solar_ai_indfodningstarif_dso_energinet
         name: Indfødningstarif
-  - type: grid
-    cards:
     - type: entities
       title: EV-status
       icon: mdi:car-electric
@@ -1155,8 +1071,6 @@ views:
         name: EV-controller state
       - entity: binary_sensor.solar_ai_ev_oplader_solenergi
         name: EV på solenergi
-  - type: grid
-    cards:
     - type: entities
       title: FoxESS inverter
       icon: mdi:solar-panel
@@ -1174,15 +1088,17 @@ views:
         name: Eksporteffekt
       - entity: sensor.foxessmodbus_load_power
         name: Husforbrug
-  dense_section_placement: false
 - title: Logs
   path: logs
   icon: mdi:format-list-bulleted-square
-  type: sections
-  max_columns: 2
-  sections:
-  - type: grid
-    column_span: 2
+  subview: true
+  panel: true
+  cards:
+  - type: vertical-stack
+    card_mod:
+      style: ':host { max-width: 1000px; margin: 0 auto; display: block; }
+
+        '
     cards:
     - type: vertical-stack
       cards:
@@ -1192,8 +1108,7 @@ views:
           ## 🚗 Lader sessions-historik
 
 
-          {% set sessions = state_attr(''sensor.solar_ai_lader_sessions_log'', ''sessions'') or [] %}{% if sessions | length
-          == 0 %}_Ingen afsluttede sessioner endnu. Når en bil tilsluttes og oplader,
+          {% set sessions = state_attr(''sensor.solar_ai_lader_sessions_log'', ''sessions'') or [] %}{% if sessions | length == 0 %}_Ingen afsluttede sessioner endnu. Når en bil tilsluttes og oplader,
 
           vises start- og sluttider, samt strømkilde-fordeling her._
 
@@ -1201,25 +1116,18 @@ views:
 
           |---|---:|---:|---:|---:|
 
-          {% for s in sessions %}| {{ as_datetime(s.start_ts).astimezone() | as_timestamp | timestamp_custom(''%a %d/%m %H:%M'',
-          true) }} | {{ ''%.0f'' | format(s.duration_min) }} min | **{{ ''%.2f'' | format(s.energy_kwh) }} kWh** | {{ ''%.2f''
-          | format(s.energy_kwh_solar | default(0)) }} | {{ ''%.2f'' | format(s.energy_kwh_grid | default(0)) }} |
+          {% for s in sessions %}| {{ as_datetime(s.start_ts).astimezone() | as_timestamp | timestamp_custom(''%a %d/%m %H:%M'', true) }} | {{ ''%.0f'' | format(s.duration_min) }} min | **{{ ''%.2f'' | format(s.energy_kwh) }} kWh** | {{ ''%.2f'' | format(s.energy_kwh_solar | default(0)) }} | {{ ''%.2f'' | format(s.energy_kwh_grid | default(0)) }} |
 
           {% endfor %}
 
-          _Tider er lokal tid. Sol/net-fordelingen er integreret pr. tick fra live PV-overskud og kan afvige et par procent
-          fra laderens totale meterværdi._{% endif %}'
+          _Tider er lokal tid. Sol/net-fordelingen er integreret pr. tick fra live PV-overskud og kan afvige et par procent fra laderens totale meterværdi._{% endif %}'
       - type: markdown
         content: '## 📋 Logs
 
 
-          Komplet historik for alle aktiviteter Solar AI har registreret. Hver log gemmer op til 500 entries; her vises de
-          seneste 50.
+          Komplet historik for alle aktiviteter Solar AI har registreret. Hver log gemmer op til 500 entries; her vises de seneste 50.
 
           '
-  - type: grid
-    column_span: 2
-    cards:
     - type: markdown
       title: 🔋 Sessionslog (eksport + netopladning)
       content: '{% set sessions = state_attr(''sensor.solar_ai_sessionslog'', ''sessions'') | default([]) %}
@@ -1233,24 +1141,18 @@ views:
 
         |:------|:-----|:-----|:----|:---------|:----|:----|
 
-        {% for s in sessions[:50] %}{% set icon = ''💰'' if s.type == ''export'' else ''⚡'' %}{% set label = ''Eksport'' if
-        s.type == ''export'' else ''Oplade'' %}
+        {% for s in sessions[:50] %}{% set icon = ''💰'' if s.type == ''export'' else ''⚡'' %}{% set label = ''Eksport'' if s.type == ''export'' else ''Oplade'' %}
 
-        | {{ s.start_ts[11:16] }} | {{ s.end_ts[11:16] }} | {{ icon }} {{ label }} | {{ s.soc_start | round(0) | int }}→{{
-        s.soc_end | round(0) | int }}% | {{ s.duration_min }} min | {{ s.kwh }} | {{ s.dkk }} |{% endfor %}
+        | {{ s.start_ts[11:16] }} | {{ s.end_ts[11:16] }} | {{ icon }} {{ label }} | {{ s.soc_start | round(0) | int }}→{{ s.soc_end | round(0) | int }}% | {{ s.duration_min }} min | {{ s.kwh }} | {{ s.dkk }} |{% endfor %}
 
         {% else %}
 
         *Ingen sessioner registreret endnu.*
 
 
-        Sessioner registreres når Solar AI aktivt skifter inverteren til **Feed-in First** (eksport) eller **Force Charge**
-        (netopladning). Med hovedkontakten slået fra registreres ingen sessioner.
+        Sessioner registreres når Solar AI aktivt skifter inverteren til **Feed-in First** (eksport) eller **Force Charge** (netopladning). Med hovedkontakten slået fra registreres ingen sessioner.
 
         {% endif %}'
-  - type: grid
-    column_span: 2
-    cards:
     - type: markdown
       title: ☀️ Solgulv-blokeringer (lave priser)
       content: '{% set events = state_attr(''sensor.solar_ai_solgulv_log_blokering'', ''events'') | default([]) %}
@@ -1266,21 +1168,16 @@ views:
 
         {% for e in events[:50] %}
 
-        | {{ e.start_ts[11:16] }} | {{ e.end_ts[11:16] }} | {{ e.duration_min }} min | {{ ''%.3f'' | format(e.price_at_start)
-        }} | {{ ''%.3f'' | format(e.price_at_end) }} | {{ ''%.2f'' | format(e.floor) }} |{% endfor %}
+        | {{ e.start_ts[11:16] }} | {{ e.end_ts[11:16] }} | {{ e.duration_min }} min | {{ ''%.3f'' | format(e.price_at_start) }} | {{ ''%.3f'' | format(e.price_at_end) }} | {{ ''%.2f'' | format(e.floor) }} |{% endfor %}
 
         {% else %}
 
         *Ingen solgulv-blokeringer registreret endnu.*
 
 
-        En blokering registreres når salgsprisen falder under det konfigurerede minimum (`Minimum eksportpris` på Indstillinger),
-        og afsluttes når prisen stiger igen.
+        En blokering registreres når salgsprisen falder under det konfigurerede minimum (`Minimum eksportpris` på Indstillinger), og afsluttes når prisen stiger igen.
 
         {% endif %}'
-  - type: grid
-    column_span: 2
-    cards:
     - type: entities
       title: 💰 Besparelser
       icon: mdi:cash
@@ -1300,4 +1197,3 @@ views:
         name: 30 dage — faktisk
       - entity: sensor.solar_ai_forpasset_besparelse_30_dage
         name: 30 dage — forpasset
-  dense_section_placement: false

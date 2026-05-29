@@ -3,6 +3,7 @@
 
 Usage:
     python3 deploy.py                  # redeploy files + push dashboard
+    python3 deploy.py --files-only     # redeploy integration files + restart ONLY (never touches the dashboard)
     python3 deploy.py --dashboard-only # push dashboard config only
     python3 deploy.py --install        # full fresh install (files + config flow + dashboard)
     python3 deploy.py --uninstall      # remove integration, files and dashboard from HA
@@ -481,6 +482,7 @@ async def main() -> None:
         epilog="""
 commands:
   (no flag)          redeploy integration files + push dashboard
+  --files-only       redeploy integration files + restart ONLY (never touches the dashboard)
   --install          full fresh install: files + config flow + dashboard
   --uninstall        remove everything from HA and restore original state
   --dashboard-only   push dashboard config only (no file deploy, no restart)
@@ -489,6 +491,7 @@ commands:
     parser.add_argument("--install",        action="store_true", help="Full fresh install")
     parser.add_argument("--uninstall",      action="store_true", help="Remove everything from HA")
     parser.add_argument("--dashboard-only", action="store_true", help="Push dashboard only")
+    parser.add_argument("--files-only",     action="store_true", help="Deploy integration files + restart only; never touches the dashboard")
     args = parser.parse_args()
 
     if args.install:
@@ -498,6 +501,11 @@ commands:
     elif args.dashboard_only:
         await deploy_dashboard()
         print("\nAll done.")
+    elif args.files_only:
+        await deploy_files()
+        await restart_ha()
+        await wait_for_ha()
+        print("\nFiles deployed and HA restarted. Dashboard left untouched.")
     else:
         await deploy_files()
         await restart_ha()

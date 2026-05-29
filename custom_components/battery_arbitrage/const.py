@@ -196,6 +196,25 @@ EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS = 900   # 15 minutes
 # multiple restart cycles.
 EV_OVERRIDE_SOFT_COOLDOWN_SECONDS = 600       # 10 minutes
 
+# v0.39.21 — Active ramp during the battery-full override.
+# When battery is full and export is blocked, the FoxESS MPPT self-throttles
+# to match whatever the AC bus is drawing, so the measured solar surplus
+# always equals the EV's current draw — surplus tracking can never discover
+# spare PV headroom. The only way to find the real ceiling is to actively
+# command more current and watch the grid meter: if MPPT lifts to cover the
+# extra draw, grid import stays ~0 and we keep climbing; if it can't, the
+# extra comes from the grid and we back off.
+#   - Step up 1 A at most once per RAMP_INTERVAL while grid import stays at or
+#     below RAMP_GRID_IMPORT_THRESHOLD_KW.
+#   - If grid import exceeds the threshold, step down 1 A and freeze ramping
+#     for RAMP_FREEZE_SECONDS (lets MPPT/load settle before trying again).
+#   - Floor at the configured min amps; cap at the configured max amps.
+#   - Reset to min on session end, EV disconnect, or when the override
+#     deactivates (export resumes / battery drops below near-full).
+EV_OVERRIDE_RAMP_INTERVAL_SECONDS = 30          # min seconds between up-steps
+EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW = 0.3 # kW grid import that triggers back-off
+EV_OVERRIDE_RAMP_FREEZE_SECONDS = 120           # back-off freeze after over-commit
+
 # v0.38.3 — Once the EV stop-window is armed (surplus dipped below min
 # and we're counting down to actually stop), require this many seconds
 # of sustained ABOVE-min surplus before clearing the stop timer. Without
@@ -600,7 +619,24 @@ DEFAULT_TARIFF_FETCH_ENABLED = True   # Auto-disable when country != denmark
 FOXESS_BATTERY_CHARGE_TOTAL = "sensor.foxessmodbus_battery_charge_total"
 FOXESS_BATTERY_DISCHARGE_TOTAL = "sensor.foxessmodbus_battery_discharge_total"
 
-# Battery capacity learning (from Force Charge cycles)
+# BMS-reported remaining energy, per battery module (FoxESS Modbus). Lets the
+# integration auto-detect usable pack capacity straight from the BMS without
+# waiting for a grid-charge cycle:
+#     capacity = Σ kwh_remaining / (SoC / 100)
+# Multi-module stacks expose one entity per module (`_bms_kwh_remaining_1`,
+# `_bms_kwh_remaining_2`, …); modules that aren't installed report "unknown"
+# and are skipped. The unique_id suffix is matched via discovery first; these
+# well-known IDs are the fallback. Sampling is gated to the same safe
+# mid-range as the grid-charge learner (CAPACITY_MIN_SOC..CAPACITY_MAX_SOC),
+# which also excludes the near-full region where the BMS holds SoC flat while
+# balancing and kwh_remaining lags.
+FOXESS_BMS_KWH_REMAINING = [
+    "sensor.foxessmodbus_bms_kwh_remaining_1",
+    "sensor.foxessmodbus_bms_kwh_remaining_2",
+]
+
+# Battery capacity learning (from BMS kWh-remaining samples, with Force
+# Charge cycles as a secondary source)
 CAPACITY_MIN_SOC = 15               # % — don't sample below this (BMS edge effects near empty)
 CAPACITY_MAX_SOC = 85               # % — don't sample above this (BMS tapers near full)
 CAPACITY_MIN_DELTA_SOC = 0.3        # % — minimum SoC rise per tick to count as a sample
