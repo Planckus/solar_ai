@@ -3667,12 +3667,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_last_resync_ts = now_ts
             cp.last_recovery_action = f"resync ({status}, {int(stuck_s)}s)"
             cp.last_recovery_ts = now_ts
+            cp._log_event("watchdog", f"stage1 resync ({status}, {int(stuck_s)}s)")
             _LOGGER.warning(
                 "EV watchdog: charger %s wanted charging but not delivering (%s) "
                 "for %ds — re-syncing via TriggerMessage.",
                 cp.id, status, int(stuck_s),
             )
             await cp.request_status_refresh()
+            await cp.verify_applied_limit()  # v0.40.6 — log applied vs commanded
 
         # Stage 2 — connector availability cycle (conservative, rate-limited).
         # Only for charger-side wedged states; never a live Charging session or
@@ -3689,6 +3691,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_last_recover_ts = now_ts
             cp.last_recovery_action = f"availability-cycle ({status}, {int(stuck_s)}s)"
             cp.last_recovery_ts = now_ts
+            cp._log_event("watchdog", f"stage2 availability-cycle ({status}, {int(stuck_s)}s)")
             _LOGGER.warning(
                 "EV watchdog: charger %s stuck in %s for %ds — cycling connector "
                 "availability (Inoperative → Operative) to force a clean restart.",
@@ -3746,6 +3749,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "charger_stuck_seconds": 0.0,
                 "charger_last_recovery_action": None,
                 "charger_last_recovery_age_s": None,
+                "charger_events": [],
             }
         cp = self.ocpp_server.charge_points[charger_id]
         now = datetime.now(timezone.utc)
@@ -3799,6 +3803,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 round((now - cp.last_recovery_ts).total_seconds(), 1)
                 if cp.last_recovery_ts else None
             ),
+            "charger_events": list(cp.events),  # v0.40.6 rolling event log
         }
 
     def _apply_ev_time_window(self, target_amps: int, *, probing: bool = False) -> int:

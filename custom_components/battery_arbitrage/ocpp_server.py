@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
@@ -127,6 +128,12 @@ class ChargePoint(_Cp if _Cp is not None else object):
         # v0.40.5 — last auto-heal action taken by the desync watchdog.
         self.last_recovery_action: str | None = None
         self.last_recovery_ts: datetime | None = None
+        # v0.40.6 — rolling event log (a queryable history without a file log).
+        # Boot / status changes / commands + results / recoveries land here;
+        # the newest-last list is surfaced on the diagnostics sensor.
+        self.events: deque = deque(maxlen=50)
+        # GetCompositeSchedule support probe (None = unknown, set after first try).
+        self._composite_schedule_supported: bool | None = None
 
         # ── Outbound throttle: last commanded amps (avoid no-op writes) ───
         self.last_commanded_amps: int | None = None
@@ -136,6 +143,18 @@ class ChargePoint(_Cp if _Cp is not None else object):
         # ignoring us. Cooldown is now user-configurable (5-300 s, default 30).
         self.last_remote_start_attempt: datetime | None = None
         self.remote_start_cooldown_s: int = int(remote_start_cooldown_s)
+
+    # ────────────────────────────────────────────────────────────────────
+    # Event log (v0.40.6)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _log_event(self, kind: str, detail: str = "") -> None:
+        """Append a compact entry to the rolling event log (max 50, newest last)."""
+        self.events.append({
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "kind": kind,
+            "detail": str(detail),
+        })
 
     # ────────────────────────────────────────────────────────────────────
     # Inbound handlers (charger → us)
@@ -156,6 +175,7 @@ class ChargePoint(_Cp if _Cp is not None else object):
         # A freshly booted charger has no active transaction — clear any stale
         # session flag so the controller can RemoteStart a fresh session.
         self.session_active = False
+        self._log_event("boot", f"{self.model} fw={self.firmware}")  # v0.40.6
         _LOGGER.info(
             "OCPP charger %s booted: vendor=%s model=%s fw=%s serial=%s",
             self.id, self.vendor, self.model, self.firmware, self.serial,
@@ -192,6 +212,8 @@ class ChargePoint(_Cp if _Cp is not None else object):
         # but never sends Start.
         if new_status in ("Available", "Preparing"):
             self.session_active = False
+        if new_status != self.status:
+            self._log_event("status", new_status)  # v0.40.6
         self.status = new_status
         self.last_seen = datetime.now(timezone.utc)
         _LOGGER.debug(
@@ -313,6 +335,7 @@ class ChargePoint(_Cp if _Cp is not None else object):
         # we (re-)assert a profile. Drop the cached value so the controller's
         # next set_current is actually sent rather than skipped as a no-op.
         self.last_commanded_amps = None
+        self._log_event("tx_start", f"tx={self.session_transaction_id}")  # v0.40.6
         _LOGGER.info(
             "OCPP charger %s: transaction started (meter start %s Wh, tx=%d)",
             self.id, meter_start, self.session_transaction_id,
@@ -360,6 +383,7 @@ class ChargePoint(_Cp if _Cp is not None else object):
         }
         self.session_energy_wh = delivered_wh
         self.session_active = False
+        self._log_event("tx_stop", f"{delivered_kwh:.2f} kWh")  # v0.40.6
         # v0.28.0 fix: zero out power_w on session end so the lader_effekt
         # sensor doesn't stay stuck at the last MeterValues reading.
         self.power_w = 0.0
@@ -430,12 +454,14 @@ class ChargePoint(_Cp if _Cp is not None else object):
                 self.last_set_profile_ts = datetime.now(timezone.utc)
                 if str(status).lower() == "accepted" or status is True:
                     self.last_commanded_amps = amps
+                    self._log_event("set_profile", f"{amps} A → Accepted")  # v0.40.6
                     _LOGGER.info(
                         "OCPP charger %s: SetChargingProfile %d A → Accepted%s",
                         self.id, amps,
                         f" (attempt {attempt + 1})" if attempt else "",
                     )
                     return True
+                self._log_event("set_profile", f"{amps} A → {status} (attempt {attempt + 1})")
                 _LOGGER.warning(
                     "OCPP charger %s: SetChargingProfile %d A → %s (attempt %d/%d)",
                     self.id, amps, status, attempt + 1, retries + 1,
@@ -445,6 +471,7 @@ class ChargePoint(_Cp if _Cp is not None else object):
                 self.last_protocol_error = f"set_current({amps}A): {err}"
                 self.last_set_profile_status = f"error: {err}"
                 self.last_set_profile_ts = datetime.now(timezone.utc)
+                self._log_event("set_profile", f"{amps} A → error: {err}")  # v0.40.6
                 _LOGGER.warning(
                     "OCPP charger %s: set_current(%d A) failed (attempt %d/%d): %s",
                     self.id, amps, attempt + 1, retries + 1, err,
@@ -489,6 +516,7 @@ class ChargePoint(_Cp if _Cp is not None else object):
             accepted = (str(status).lower() == "accepted") or (status is True)
             self.last_remote_start_status = str(status)  # v0.40.4
             self.last_remote_start_ts = now
+            self._log_event("remote_start", str(status))  # v0.40.6
             _LOGGER.info(
                 "OCPP charger %s: RemoteStartTransaction(idTag=%s, connector=%d) → %s",
                 self.id, id_tag, connector_id, status,
@@ -566,6 +594,7 @@ class ChargePoint(_Cp if _Cp is not None else object):
             req = call.ChangeAvailability(connector_id=connector_id, type=typ)
             response = await self.call(req)
             status = getattr(response, "status", None)
+            self._log_event("availability", f"{typ} → {status}")  # v0.40.6
             _LOGGER.info(
                 "OCPP charger %s: ChangeAvailability(connector=%d, %s) → %s",
                 self.id, connector_id, typ, status,
@@ -579,6 +608,54 @@ class ChargePoint(_Cp if _Cp is not None else object):
                 self.id, typ, err,
             )
             return False
+
+    async def verify_applied_limit(self) -> float | None:
+        """Read back the charger's composite schedule to learn the *applied*
+        current limit in amps (v0.40.6).
+
+        Diagnostic only — logs the result (applied vs commanded) as an event so
+        a charger silently ignoring SetChargingProfile is visible. Many OCPP 1.6
+        chargers (incl. some FoxESS units) don't implement GetCompositeSchedule;
+        on the first NotSupported/error reply the probe disables itself
+        (`_composite_schedule_supported = False`) and is never retried — the
+        periodic re-assert remains the primary safety net. Returns the applied
+        amps, or None if unknown/unsupported.
+        """
+        if self._composite_schedule_supported is False:
+            return None
+        try:
+            req = call.GetCompositeSchedule(connector_id=1, duration=1)
+            response = await self.call(req)
+            status = getattr(response, "status", None)
+            if str(status).lower() != "accepted":
+                self._composite_schedule_supported = False
+                self._log_event("composite_schedule", f"unsupported ({status})")
+                return None
+            self._composite_schedule_supported = True
+            sched = getattr(response, "charging_schedule", None)
+            periods = None
+            if isinstance(sched, dict):
+                periods = (sched.get("chargingSchedulePeriod")
+                           or sched.get("charging_schedule_period"))
+            elif sched is not None:
+                periods = (getattr(sched, "charging_schedule_period", None)
+                           or getattr(sched, "chargingSchedulePeriod", None))
+            if not periods:
+                return None
+            p0 = periods[0]
+            limit = p0.get("limit") if isinstance(p0, dict) else getattr(p0, "limit", None)
+            if limit is None:
+                return None
+            applied = float(limit)
+            self._log_event(
+                "composite_schedule",
+                f"applied {applied:.0f} A (commanded {self.last_commanded_amps})",
+            )
+            return applied
+        except Exception as err:  # noqa: BLE001
+            self._composite_schedule_supported = False
+            self._log_event("composite_schedule", f"error: {err}")
+            return None
 
     async def remote_stop_transaction(self, transaction_id: int) -> bool:
         """Send RemoteStopTransaction to end an active charging session (v0.27.1).

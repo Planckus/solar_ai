@@ -169,6 +169,16 @@ views:
       kw_decimals: 2
       min_flow_rate: 2
       max_flow_rate: 10
+    - type: custom:mushroom-chips-card
+      alignment: center
+      chips:
+      - type: template
+        entity: sensor.battery_arbitrage_batteritemperatur_laveste_celle
+        icon: mdi:thermometer
+        content: Batteritemp {{ states('sensor.battery_arbitrage_batteritemperatur_laveste_celle') }} °C
+        icon_color: '{% set t = states(''sensor.battery_arbitrage_batteritemperatur_laveste_celle'') | float(0) %}{% if t < 10 %}blue{% elif t > 40 %}red{% else %}green{% endif %}'
+        tap_action:
+          action: more-info
     - type: custom:apexcharts-card
       header:
         title: Priser og batteri (24t)
