@@ -34,21 +34,21 @@ views:
     - type: horizontal-stack
       cards:
       - type: custom:mushroom-template-card
-        primary: '{% set h = now().hour %}{% set s = state_attr(''sensor.solar_ai_24h_priskort'',''slots'') or [] %}{% set m = s | selectattr(''h'',''equalto'',h) | list %}{% if m %}{{ ''%.2f'' | format(m[0][''buy'']) }} kr{% else %}– {% endif %}'
+        primary: '{{ ''%.2f'' | format(states(''sensor.solar_ai_indkobspris_opdeling'') | float(0)) }} kr'
         secondary: Køb nu · DKK/kWh
         icon: mdi:flash
         icon_color: red
-        entity: sensor.solar_ai_24h_priskort
+        entity: sensor.solar_ai_indkobspris_opdeling
         tap_action:
           action: navigate
           navigation_path: /battery-arbitrage/priser
         fill_container: true
       - type: custom:mushroom-template-card
-        primary: '{% set h = now().hour %}{% set s = state_attr(''sensor.solar_ai_24h_priskort'',''slots'') or [] %}{% set m = s | selectattr(''h'',''equalto'',h) | list %}{% if m %}{{ ''%.2f'' | format(m[0][''sell'']) }} kr{% else %}– {% endif %}'
+        primary: '{{ ''%.2f'' | format(states(''sensor.battery_arbitrage_eksportpris'') | float(0)) }} kr'
         secondary: Salg nu · DKK/kWh
         icon: mdi:cash-fast
         icon_color: green
-        entity: sensor.solar_ai_24h_priskort
+        entity: sensor.battery_arbitrage_eksportpris
         tap_action:
           action: navigate
           navigation_path: /battery-arbitrage/priser
@@ -146,8 +146,8 @@ views:
           name: Sol
         battery:
           entity:
-            consumption: sensor.foxessmodbus_battery_charge
-            production: sensor.foxessmodbus_battery_discharge
+            consumption: sensor.foxessmodbus_battery_discharge
+            production: sensor.foxessmodbus_battery_charge
           state_of_charge: sensor.foxessmodbus_battery_soc_1
           name: Batteri
         home:
@@ -158,6 +158,8 @@ views:
         - entity: sensor.solar_ai_lader_effekt
           name: Bil
           icon: mdi:car-electric
+          display_zero: true
+          display_zero_tolerance: 0.01
           color:
           - 84
           - 149
@@ -165,8 +167,8 @@ views:
       clickable_entities: true
       use_new_flow_rate_model: true
       kw_decimals: 2
-      min_flow_rate: 0.5
-      max_flow_rate: 6
+      min_flow_rate: 2
+      max_flow_rate: 10
     - type: custom:apexcharts-card
       header:
         title: Priser og batteri (24t)

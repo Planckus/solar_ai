@@ -9,6 +9,74 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.40.3] — 2026-05-30
+
+### Fixed
+
+- **Charger wedged in "Preparing" — no charging started — after a reconnect/reboot.** A stale `session_active` flag (left True when a closing `StopTransaction` was missed across a charger reconnect or reboot) blocked `RemoteStartTransaction`, which only fires when no session is active. The controller kept commanding charge while the charger sat in Preparing at 0 W. The OCPP server now clears `session_active` whenever the charger reports **Available** or **Preparing** (states that definitionally have no active transaction) and on **BootNotification**, so a fresh session can be started.
+
+---
+
+## [0.40.2] — 2026-05-30
+
+### Fixed
+
+- **EV charged at full current, ignoring the commanded rate, after a charger reconnect.** When the charger reconnected or began a new transaction it cleared its charging profile and reverted to its built-in default (full current), but the cached commanded-amps value was unchanged — so neither the controller's change-gate nor the OCPP `set_current` dedupe re-sent the limit. The EV free-ran at max, drawing from the house battery in PV / PV+battery modes (observed: controller commanded 6 A while the charger pulled ~16 A / 10.9 kW from the battery). Two fixes:
+  - The OCPP server resets its cached commanded-amps on `BootNotification` and `StartTransaction`, so the limit is always re-sent for a fresh session.
+  - The controller re-asserts the active limit at least every 60 s (`EV_RATE_REASSERT_SECONDS`, forced past both dedupe layers), pulling a charger that silently dropped its profile back to the commanded rate within ~1 minute.
+
+---
+
+## [0.40.1] — 2026-05-30
+
+Dashboard-only patch fixing the new energy-flow card.
+
+### Fixed
+
+- **Battery flow direction reversed.** `power-flow-card-plus` uses home-perspective naming (like the grid): `consumption` = energy into the home, `production` = energy out. The battery was wired `consumption: battery_charge / production: battery_discharge`, so a discharge was read as charging — producing a phantom solar→battery flow and a house reading 0 W. Corrected to `consumption: battery_discharge / production: battery_charge`.
+- **Køb nu / Salg nu tiles showed "–".** They matched the current hour against `sensor.solar_ai_24h_priskort`'s `slots`, but that sensor prunes past 15-min slots, so the current hour was usually absent. Repointed to the dedicated current-price sensors that always hold the live value: `sensor.solar_ai_indkobspris_opdeling` (buy) and `sensor.battery_arbitrage_eksportpris` (sell).
+
+### Changed
+
+- Slowed the flow-dot animation (`min_flow_rate` 0.5 → 2, `max_flow_rate` 6 → 10).
+- EV charger ("Bil") branch now always visible (`display_zero: true`), showing 0.00 kW when idle instead of disappearing.
+
+Minor release. Bundles the v0.39.20 and v0.39.21 work (not previously released on GitHub) plus a full dashboard redesign.
+
+### Added — redesigned Danish dashboard (EVCC-style single screen)
+
+The dashboard (`dashboard/dashboard_da.yaml`) was rebuilt from a six-tab layout into a single cohesive screen modelled on the EVCC UI:
+
+- **Home** is now one centered panel-mode column (max-width 1000 px on desktop, full width on mobile) instead of scattered tabs. Top to bottom: status + master on/off, current buy/sell price, EV charge status, a centered **Charge mode** selector (Fra · Sol · Sol+Bat · Hurtig · Planlagt), an animated energy-flow diagram, the 24 h price/SoC chart, and a bottom navigation row.
+- **Energy flow** uses `power-flow-card-plus` — a single animated PV · battery · grid · house · car diagram — replacing the old markdown flow tables. The car is shown as its own branch and subtracted from house load.
+- The five detail pages (EV/OCPP, Priser & Plan, Historik, Indstillinger, Logs) are now **subviews** reached from the bottom navigation, each rendered in the same centered panel style with a back button — they no longer clutter a tab bar.
+- **EV mode selector** gains a **Planlagt** (Scheduled) option so the schedules can be activated from the dashboard.
+
+**New dashboard prerequisites (HACS frontend):** `power-flow-card-plus`, `button-card`, `card-mod`, in addition to the existing `mushroom` and `apexcharts-card`.
+
+### Added — schedule safeguard
+
+The EV subview shows a banner ("Skemaer er inaktive lige nu") whenever the master mode is not `Planlagt`, making clear that editing a schedule's mode does not affect live charging unless Scheduled mode is selected. (Investigation confirmed the schedule resolver already ignores disabled slots and inactive modes; the banner removes the ambiguity.)
+
+### Changed
+
+- Removed install-specific per-device notification switches from the distributed dashboard template; two generic examples (Telefon, Tablet) remain.
+
+### Included from v0.39.21
+
+- **Battery capacity auto-detected from the BMS** — `Σ bms_kwh_remaining / (SoC/100)` sampled in the 15–85 % mid-range, fed into the rolling-median capacity learner. Warms up from normal cycling without needing a grid-charge cycle.
+- **Active ramp during the battery-full override** — the EV steps up 1 A / 30 s while grid import stays ≤ 0.3 kW, backing off and freezing 120 s when it doesn't, so the charger finds the real PV ceiling instead of staying pinned at minimum.
+
+### Included from v0.39.20
+
+- Priority-SOC gate now only blocks the EV from *starting* (`ev_last_amps == 0`), fixing the export-consumption thrashing where an already-charging EV cycled on/off every ~4 minutes.
+
+### Tooling
+
+- `deploy.py --files-only` — deploy integration files + restart without touching the dashboard.
+
+---
+
 ## [0.40.0] — 2026-05-29
 
 Minor release. Bundles the v0.39.20 and v0.39.21 work (not previously released on GitHub) plus a full dashboard redesign.
