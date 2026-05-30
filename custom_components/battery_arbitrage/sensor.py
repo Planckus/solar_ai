@@ -624,6 +624,31 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         },
     ),
     BatteryArbitrageSensorDescription(
+        key="ocpp_diagnostics",
+        translation_key="ocpp_diagnostics",
+        icon="mdi:cable-data",
+        # v0.40.4 — surfaces the OCPP server internals so command/telemetry
+        # desyncs are visible without a file log. State = charger status;
+        # attributes carry the command outcomes + freshness ages.
+        value_fn=lambda d: d.get("charger_status", "Unavailable"),
+        attrs_fn=lambda d: {
+            "session_active": d.get("charger_session_active", False),
+            "transaction_id": d.get("charger_transaction_id"),
+            "commanded_amps": d.get("charger_commanded_amps"),
+            "last_set_profile_status": d.get("charger_last_set_profile_status"),
+            "last_set_profile_age_s": d.get("charger_last_set_profile_age_s"),
+            "last_remote_start_status": d.get("charger_last_remote_start_status"),
+            "last_remote_start_age_s": d.get("charger_last_remote_start_age_s"),
+            "metervalues_age_s": d.get("charger_metervalues_age_s"),
+            "seconds_since_seen": d.get("charger_seconds_since_seen"),
+            "protocol_errors": d.get("charger_protocol_errors", 0),
+            "last_protocol_error": d.get("charger_last_protocol_error", ""),
+            "stuck_seconds": d.get("charger_stuck_seconds", 0.0),
+            "last_recovery_action": d.get("charger_last_recovery_action"),
+            "last_recovery_age_s": d.get("charger_last_recovery_age_s"),
+        },
+    ),
+    BatteryArbitrageSensorDescription(
         key="charger_power",
         translation_key="charger_power",
         icon="mdi:lightning-bolt",

@@ -115,6 +115,18 @@ class ChargePoint(_Cp if _Cp is not None else object):
         # ── Diagnostics ──────────────────────────────────────────────────
         self.protocol_errors: int = 0
         self.last_protocol_error: str = ""
+        # v0.40.4 — command/telemetry observability (surfaced via the OCPP
+        # diagnostics sensor). Outcome + timestamp of the last outbound
+        # commands and the last inbound MeterValues, so desyncs are visible
+        # without log-diving.
+        self.last_set_profile_status: str | None = None
+        self.last_set_profile_ts: datetime | None = None
+        self.last_remote_start_status: str | None = None
+        self.last_remote_start_ts: datetime | None = None
+        self.last_metervalues_ts: datetime | None = None
+        # v0.40.5 — last auto-heal action taken by the desync watchdog.
+        self.last_recovery_action: str | None = None
+        self.last_recovery_ts: datetime | None = None
 
         # ── Outbound throttle: last commanded amps (avoid no-op writes) ───
         self.last_commanded_amps: int | None = None
@@ -192,6 +204,7 @@ class ChargePoint(_Cp if _Cp is not None else object):
     async def on_meter_values(self, connector_id=None, meter_value=None,
                               transaction_id=None, **kwargs):
         self.last_seen = datetime.now(timezone.utc)
+        self.last_metervalues_ts = self.last_seen  # v0.40.4 — telemetry freshness
 
         # v0.37.0 — Transaction-id recovery.
         # OCPP 1.6 specifies `transactionId` as an OPTIONAL field on
@@ -371,53 +384,74 @@ class ChargePoint(_Cp if _Cp is not None else object):
     # Outbound (us → charger)
     # ────────────────────────────────────────────────────────────────────
 
-    async def set_current(self, amps: int, force: bool = False) -> bool:
+    async def set_current(self, amps: int, force: bool = False, retries: int = 2) -> bool:
         """Send a SetChargingProfile setting the connector's max current.
 
         OCPP 1.6 has no direct "set amps" message — we wrap the current in a
         TxDefaultProfile with a single charging period at the target amps.
-        Returns True on success, False if the call failed.
+        Returns True only when the charger replies Accepted.
 
         `force=True` bypasses the duplicate-write skip so the controller can
         periodically re-assert the active limit (recovers a charger that
         silently dropped its profile and reverted to full current).
+
+        v0.40.4 — the response status is verified and recorded
+        (`last_set_profile_status`/`_ts`). On a non-Accepted reply or an
+        exception the call is retried up to `retries` times with backoff,
+        and `last_commanded_amps` is only updated on an Accepted reply (so a
+        rejected write isn't cached as applied and the controller's re-assert
+        keeps trying).
         """
         amps = max(0, int(amps))
         # Skip duplicate writes — the EV controller already gates this,
         # but cheap defence-in-depth. `force` overrides for periodic re-assert.
         if not force and amps == self.last_commanded_amps:
             return True
-        try:
-            req = call.SetChargingProfile(
-                connector_id=1,
-                cs_charging_profiles={
-                    "chargingProfileId": 1,
-                    "stackLevel": 0,
-                    "chargingProfilePurpose": "TxDefaultProfile",
-                    "chargingProfileKind": "Absolute",
-                    "chargingSchedule": {
-                        "chargingRateUnit": "A",
-                        "chargingSchedulePeriod": [
-                            {"startPeriod": 0, "limit": float(amps)},
-                        ],
-                    },
+        req = call.SetChargingProfile(
+            connector_id=1,
+            cs_charging_profiles={
+                "chargingProfileId": 1,
+                "stackLevel": 0,
+                "chargingProfilePurpose": "TxDefaultProfile",
+                "chargingProfileKind": "Absolute",
+                "chargingSchedule": {
+                    "chargingRateUnit": "A",
+                    "chargingSchedulePeriod": [
+                        {"startPeriod": 0, "limit": float(amps)},
+                    ],
                 },
-            )
-            response = await self.call(req)
-            self.last_commanded_amps = amps
-            _LOGGER.info(
-                "OCPP charger %s: SetChargingProfile %d A → %s",
-                self.id, amps, getattr(response, "status", "ok"),
-            )
-            return True
-        except Exception as err:  # noqa: BLE001
-            self.protocol_errors += 1
-            self.last_protocol_error = f"set_current({amps}A): {err}"
-            _LOGGER.warning(
-                "OCPP charger %s: set_current(%d A) failed: %s",
-                self.id, amps, err,
-            )
-            return False
+            },
+        )
+        for attempt in range(retries + 1):
+            try:
+                response = await self.call(req)
+                status = getattr(response, "status", None)
+                self.last_set_profile_status = str(status)
+                self.last_set_profile_ts = datetime.now(timezone.utc)
+                if str(status).lower() == "accepted" or status is True:
+                    self.last_commanded_amps = amps
+                    _LOGGER.info(
+                        "OCPP charger %s: SetChargingProfile %d A → Accepted%s",
+                        self.id, amps,
+                        f" (attempt {attempt + 1})" if attempt else "",
+                    )
+                    return True
+                _LOGGER.warning(
+                    "OCPP charger %s: SetChargingProfile %d A → %s (attempt %d/%d)",
+                    self.id, amps, status, attempt + 1, retries + 1,
+                )
+            except Exception as err:  # noqa: BLE001
+                self.protocol_errors += 1
+                self.last_protocol_error = f"set_current({amps}A): {err}"
+                self.last_set_profile_status = f"error: {err}"
+                self.last_set_profile_ts = datetime.now(timezone.utc)
+                _LOGGER.warning(
+                    "OCPP charger %s: set_current(%d A) failed (attempt %d/%d): %s",
+                    self.id, amps, attempt + 1, retries + 1, err,
+                )
+            if attempt < retries:
+                await asyncio.sleep(1.5 * (attempt + 1))
+        return False
 
     async def remote_start_transaction(
         self, id_tag: str = "solar_ai", connector_id: int = 1,
@@ -453,6 +487,8 @@ class ChargePoint(_Cp if _Cp is not None else object):
             response = await self.call(req)
             status = getattr(response, "status", None)
             accepted = (str(status).lower() == "accepted") or (status is True)
+            self.last_remote_start_status = str(status)  # v0.40.4
+            self.last_remote_start_ts = now
             _LOGGER.info(
                 "OCPP charger %s: RemoteStartTransaction(idTag=%s, connector=%d) → %s",
                 self.id, id_tag, connector_id, status,
@@ -461,6 +497,8 @@ class ChargePoint(_Cp if _Cp is not None else object):
         except Exception as err:  # noqa: BLE001
             self.protocol_errors += 1
             self.last_protocol_error = f"RemoteStartTransaction: {err}"
+            self.last_remote_start_status = f"error: {err}"  # v0.40.4
+            self.last_remote_start_ts = now
             _LOGGER.warning(
                 "OCPP charger %s: RemoteStartTransaction failed: %s",
                 self.id, err,
@@ -513,6 +551,34 @@ class ChargePoint(_Cp if _Cp is not None else object):
                     self.id, msg_type, err,
                 )
         return any_accepted
+
+    async def change_availability(self, operative: bool, connector_id: int = 1) -> bool:
+        """Send ChangeAvailability to take the connector Operative/Inoperative (v0.40.5).
+
+        Used by the desync watchdog as a last-resort nudge: cycling a wedged
+        connector Inoperative → Operative forces most chargers to drop a stuck
+        Preparing/Finishing state and re-handshake the car, after which the
+        normal RemoteStartTransaction can begin a clean session. Standard OCPP
+        op — does NOT reboot the charger (unlike Reset).
+        """
+        typ = "Operative" if operative else "Inoperative"
+        try:
+            req = call.ChangeAvailability(connector_id=connector_id, type=typ)
+            response = await self.call(req)
+            status = getattr(response, "status", None)
+            _LOGGER.info(
+                "OCPP charger %s: ChangeAvailability(connector=%d, %s) → %s",
+                self.id, connector_id, typ, status,
+            )
+            return str(status).lower() in ("accepted", "scheduled")
+        except Exception as err:  # noqa: BLE001
+            self.protocol_errors += 1
+            self.last_protocol_error = f"ChangeAvailability({typ}): {err}"
+            _LOGGER.warning(
+                "OCPP charger %s: ChangeAvailability(%s) failed: %s",
+                self.id, typ, err,
+            )
+            return False
 
     async def remote_stop_transaction(self, transaction_id: int) -> bool:
         """Send RemoteStopTransaction to end an active charging session (v0.27.1).
