@@ -164,6 +164,7 @@ from .const import (
     EV_HYSTERESIS_STOP_TICKS,
     EV_MAX_AMP_STEP_PER_TICK,
     EV_MIN_AMP_CHANGE,
+    EV_RATE_REASSERT_SECONDS,
     EV_CURTAILMENT_PROBE_SECONDS,
     EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS,
     EV_OVERRIDE_SOFT_COOLDOWN_SECONDS,
@@ -301,6 +302,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._ev_effective_mode: str = EV_MODE_LOCKED
         self._ev_active_schedule_link: str | None = None     # entity_id of the schedule currently in control
         self._ev_last_amps: int = 0                          # last A we commanded
+        self._ev_last_rate_assert_ts: datetime | None = None  # v0.40.2 periodic re-assert
         # Legacy tick counters kept for set_ev_mode() back-compat reset only
         self._ev_above_start_count: int = 0
         self._ev_below_stop_count: int = 0
@@ -3054,9 +3056,28 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         elif abs(final_amps - self._ev_last_amps) >= EV_MIN_AMP_CHANGE:
             send = True  # significant change
 
-        if send:
-            await self._set_ocpp_charge_rate(charger_id, final_amps)
+        # v0.40.2 — periodic re-assert. A charger can silently drop its
+        # charging profile (reconnect, reboot, new transaction) and revert
+        # to its built-in default (full current) while our cached state still
+        # reads "already at N A", so nothing re-sends and the EV free-runs
+        # at max — pulling from the house battery in PV/PV+battery modes.
+        # Re-send the active limit at least every EV_RATE_REASSERT_SECONDS
+        # while charging, forcing past both dedupe layers, so a reset charger
+        # is pulled back to the commanded rate within ~1 minute.
+        reassert = (
+            final_amps > 0
+            and not send
+            and (
+                self._ev_last_rate_assert_ts is None
+                or (now_ts - self._ev_last_rate_assert_ts).total_seconds()
+                >= EV_RATE_REASSERT_SECONDS
+            )
+        )
+
+        if send or reassert:
+            await self._set_ocpp_charge_rate(charger_id, final_amps, force=reassert)
             self._ev_last_amps = final_amps
+            self._ev_last_rate_assert_ts = now_ts
 
         # v0.39.21 — when the EV is idle (no session), the override ramp has
         # nothing to track; reset it so the next override session starts at
@@ -3814,12 +3835,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._ev_cool_entry_ts = None                      # v0.39.11
         return target_amps
 
-    async def _set_ocpp_charge_rate(self, charger_id: str, amps: int) -> None:
+    async def _set_ocpp_charge_rate(self, charger_id: str, amps: int, force: bool = False) -> None:
         """Send the target current to the charger.
 
         Routes through Solar AI's embedded OCPP server if the embedded toggle
         is on (v0.27.0+ default), else falls back to the legacy lbbrhzn/ocpp
         HA service for users who haven't migrated.
+
+        `force=True` re-asserts the limit even if it matches the last
+        commanded value (used by the periodic re-assert below).
         """
         use_embedded = self.config.get(CONF_OCPP_EMBEDDED, True)
         if use_embedded and self.ocpp_server is not None:
@@ -3830,7 +3854,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     charger_id,
                 )
                 return
-            ok = await cp.set_current(amps)
+            ok = await cp.set_current(amps, force=force)
             if ok:
                 _LOGGER.info(
                     "EV controller: set %s to %d A (%.1f kW target)",

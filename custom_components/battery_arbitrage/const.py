@@ -274,6 +274,12 @@ DEFAULT_EV_CONTROL_INTERVAL_SECONDS = 10   # 5–60 s; how often the EV controll
 DEFAULT_EV_START_WINDOW_SECONDS     = 60   # 10–600 s; sustained surplus before starting
 DEFAULT_EV_STOP_WINDOW_SECONDS      = 180  # 30–1800 s; sustained shortage before stopping
 DEFAULT_EV_CHARGE_THRESHOLD_W       = 3000 # 500–10000 W; above this the EV is truly charging
+# v0.40.2 — how often the EV controller re-asserts the active charge-rate
+# limit to the charger while charging, even when the target hasn't changed.
+# Recovers a charger that silently dropped its charging profile (reconnect,
+# reboot, new transaction) and reverted to full current. Forced re-send
+# bypasses the value-unchanged dedupe on both the controller and OCPP layers.
+EV_RATE_REASSERT_SECONDS = 60
 
 # Battery-priority threshold (v0.26.4): in PV and PV+battery modes, EV charging
 # is held off until the house battery reaches this SoC. Solar surplus flows

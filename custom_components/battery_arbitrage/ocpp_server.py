@@ -136,6 +136,14 @@ class ChargePoint(_Cp if _Cp is not None else object):
         self.firmware = str(kwargs.get("firmware_version", ""))
         self.serial = str(kwargs.get("charge_point_serial_number", ""))
         self.last_seen = datetime.now(timezone.utc)
+        # A fresh boot clears any charging profile on the charger, so it
+        # reverts to its built-in default (full current). Drop the cached
+        # commanded value so the next set_current actually re-sends the
+        # limit instead of being skipped as a no-op.
+        self.last_commanded_amps = None
+        # A freshly booted charger has no active transaction — clear any stale
+        # session flag so the controller can RemoteStart a fresh session.
+        self.session_active = False
         _LOGGER.info(
             "OCPP charger %s booted: vendor=%s model=%s fw=%s serial=%s",
             self.id, self.vendor, self.model, self.firmware, self.serial,
@@ -163,6 +171,15 @@ class ChargePoint(_Cp if _Cp is not None else object):
         # finished charging.
         if new_status in ("Available", "Finishing", "Faulted", "Unavailable", "Reserved"):
             self.power_w = 0.0
+        # v0.40.3 — a charger reporting Available/Preparing has no active
+        # charging transaction. Clear a stale `session_active` flag (e.g. left
+        # True across a reconnect/reboot when the closing StopTransaction was
+        # missed) so the controller's RemoteStartTransaction — which only fires
+        # when `not session_active` — can start a fresh session. Without this
+        # the charger wedges in Preparing while the controller commands charge
+        # but never sends Start.
+        if new_status in ("Available", "Preparing"):
+            self.session_active = False
         self.status = new_status
         self.last_seen = datetime.now(timezone.utc)
         _LOGGER.debug(
@@ -279,6 +296,10 @@ class ChargePoint(_Cp if _Cp is not None else object):
         # Synthetic transaction ID — the L11PMC ignores the value, it just
         # needs a non-zero int. Use seconds-since-epoch to ensure uniqueness.
         self.session_transaction_id = int(datetime.now().timestamp())
+        # A new transaction starts at the charger's own default current until
+        # we (re-)assert a profile. Drop the cached value so the controller's
+        # next set_current is actually sent rather than skipped as a no-op.
+        self.last_commanded_amps = None
         _LOGGER.info(
             "OCPP charger %s: transaction started (meter start %s Wh, tx=%d)",
             self.id, meter_start, self.session_transaction_id,
@@ -350,17 +371,21 @@ class ChargePoint(_Cp if _Cp is not None else object):
     # Outbound (us → charger)
     # ────────────────────────────────────────────────────────────────────
 
-    async def set_current(self, amps: int) -> bool:
+    async def set_current(self, amps: int, force: bool = False) -> bool:
         """Send a SetChargingProfile setting the connector's max current.
 
         OCPP 1.6 has no direct "set amps" message — we wrap the current in a
         TxDefaultProfile with a single charging period at the target amps.
         Returns True on success, False if the call failed.
+
+        `force=True` bypasses the duplicate-write skip so the controller can
+        periodically re-assert the active limit (recovers a charger that
+        silently dropped its profile and reverted to full current).
         """
         amps = max(0, int(amps))
         # Skip duplicate writes — the EV controller already gates this,
-        # but cheap defence-in-depth.
-        if amps == self.last_commanded_amps:
+        # but cheap defence-in-depth. `force` overrides for periodic re-assert.
+        if not force and amps == self.last_commanded_amps:
             return True
         try:
             req = call.SetChargingProfile(
