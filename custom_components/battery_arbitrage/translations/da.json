@@ -288,6 +288,7 @@
       "solar_hourly_accuracy": { "name": "Sollæring pr. time (varme timer)" },
       "solar_floor_log": { "name": "Solgulv-log (blokering)" },
       "charger_status": { "name": "Lader-status" },
+      "ocpp_diagnostics": { "name": "OCPP-diagnostik" },
       "charger_power": { "name": "Lader-effekt" },
       "charger_session_energy": { "name": "Sessions-energi" },
       "charger_session_duration": { "name": "Sessions-varighed" },

@@ -288,6 +288,7 @@
       "solar_hourly_accuracy": { "name": "Solar hourly learning (warmed hours)" },
       "solar_floor_log": { "name": "Solar floor log (block events)" },
       "charger_status": { "name": "Charger status" },
+      "ocpp_diagnostics": { "name": "OCPP diagnostics" },
       "charger_power": { "name": "Charger power" },
       "charger_session_energy": { "name": "Charger session energy" },
       "charger_session_duration": { "name": "Charger session duration" },
