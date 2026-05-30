@@ -9,6 +9,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.40.6] — 2026-05-30
+
+### Added — OCPP reliability, part 3 (event log, read-back, tests)
+
+- **Rolling OCPP event log.** The embedded server keeps the last 50 events (boot, status changes, SetChargingProfile / RemoteStart / ChangeAvailability results, transaction start/stop, watchdog actions) and surfaces them on the `ocpp_diagnostics` sensor as `recent_events` — a queryable history without a file log.
+- **GetCompositeSchedule read-back.** `verify_applied_limit()` reads the charger's applied current limit and logs it (applied vs commanded) so a charger silently ignoring SetChargingProfile becomes visible. Self-disables after one NotSupported/error reply (many OCPP 1.6 chargers don't implement it); the periodic re-assert stays the primary safety net. Invoked during the watchdog's Stage-1 re-sync.
+- **Unit tests** (`tests/test_ocpp_server.py`) covering SetChargingProfile verify/retry + dedupe/force, `session_active` reset on boot and on Available/Preparing, and the event-log cap. `ocpp` added to `requirements_test.txt`.
+
+### Changed
+
+- **Dashboard:** battery temperature (lowest cell) is shown as a chip under the energy-flow diagram (green normally, blue below 10 °C, red above 40 °C).
+
+Note: cross-restart session-state persistence — the remaining Tier 3 item — was already provided by the shared `charger_metadata` snapshot, so no change was needed there.
+
+---
+
 ## [0.40.5] — 2026-05-30
 
 ### Added — OCPP reliability, part 2 (desync watchdog / auto-heal)

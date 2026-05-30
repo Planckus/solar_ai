@@ -646,6 +646,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "stuck_seconds": d.get("charger_stuck_seconds", 0.0),
             "last_recovery_action": d.get("charger_last_recovery_action"),
             "last_recovery_age_s": d.get("charger_last_recovery_age_s"),
+            "recent_events": d.get("charger_events", []),
         },
     ),
     BatteryArbitrageSensorDescription(

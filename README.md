@@ -29,6 +29,15 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ## Recent releases
 
+### v0.40.1–v0.40.6 — dashboard fixes + OCPP reliability
+
+A run of fixes and a hardening pass on top of the v0.40.0 redesign:
+
+- **Energy-flow card** — corrected the battery flow direction, slowed the flow-dot animation, kept the EV branch always visible, switched the buy/sell tiles to live current-price sensors, and added a battery-temperature chip. (v0.40.1, v0.40.6)
+- **EV charge-rate enforcement (v0.40.2)** — after an OCPP reconnect the charger could drop its charging profile and free-run at full current (pulling from the house battery). The controller now re-asserts the commanded limit at least every 60 s, and only caches a rate once the charger replies `Accepted`.
+- **Session recovery (v0.40.3)** — a stale `session_active` flag left by a reconnect could wedge the charger in `Preparing` with no charging starting. It's now cleared on `Available`/`Preparing` and on boot.
+- **OCPP hardening (v0.40.4–v0.40.6)** — an `ocpp_diagnostics` sensor exposing the embedded server's internals (session, transaction, last command results + ages, MeterValues age, a rolling event log); verified/retried `SetChargingProfile`; a desync watchdog that auto-heals a charger that won't deliver (TriggerMessage re-sync, then a connector-availability cycle); a `GetCompositeSchedule` read-back; and unit tests for the charge-point behaviours.
+
 ### v0.40.0 — dashboard redesign + capacity/ramp learning
 
 The Danish dashboard was rebuilt into a single cohesive-style screen: one centered column with the master controls, current prices, a `power-flow-card-plus` energy-flow diagram, a Charge-mode selector, and the 24 h chart, with the five detail pages moved to subviews reached from a bottom navigation row. New dashboard prerequisites: `power-flow-card-plus`, `card-mod`, `button-card` (see Dashboard dependencies below).
