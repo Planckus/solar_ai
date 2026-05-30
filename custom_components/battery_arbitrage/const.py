@@ -281,6 +281,22 @@ DEFAULT_EV_CHARGE_THRESHOLD_W       = 3000 # 500–10000 W; above this the EV is
 # bypasses the value-unchanged dedupe on both the controller and OCPP layers.
 EV_RATE_REASSERT_SECONDS = 60
 
+# v0.40.5 — OCPP desync watchdog / auto-heal. When the controller wants the
+# EV charging (commanded > 0) but the charger isn't actually delivering power
+# for a sustained period, escalate recovery instead of waiting for the user
+# to replug / reboot:
+#   Stage 1 (>= RESYNC s): re-sync state via TriggerMessage (StatusNotification
+#           + MeterValues) and let the normal RemoteStart retry fire. Low risk.
+#   Stage 2 (>= RECOVER s, rate-limited to once per RECOVER_COOLDOWN s): cycle
+#           connector availability (Inoperative → Operative) to force the
+#           charger out of a wedged Preparing/SuspendedEVSE/Finishing state.
+#           Never applied to a live Charging session or a car-side SuspendedEV.
+EV_STUCK_RESYNC_SECONDS = 60
+EV_STUCK_RECOVER_SECONDS = 180
+EV_STUCK_RECOVER_COOLDOWN_SECONDS = 600
+# "Delivering" threshold — charger draw above this counts as actually charging.
+EV_STUCK_DELIVERING_KW = 0.3
+
 # Battery-priority threshold (v0.26.4): in PV and PV+battery modes, EV charging
 # is held off until the house battery reaches this SoC. Solar surplus flows
 # into the battery (via the inverter's normal priority) until the threshold,

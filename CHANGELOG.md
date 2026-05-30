@@ -9,6 +9,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.40.5] — 2026-05-30
+
+### Added — OCPP reliability, part 2 (desync watchdog / auto-heal)
+
+When the controller wants the EV charging (commanded > 0) but the charger isn't actually delivering power, the controller now escalates recovery automatically instead of leaving it to a manual replug/reboot:
+
+- **Stage 1 (≥ 60 s not delivering):** re-sync charger state via `TriggerMessage` (StatusNotification + MeterValues), rate-limited to once/60 s. Low-risk; also unfreezes stale power telemetry.
+- **Stage 2 (≥ 180 s, once per 10 min):** cycle connector availability (`ChangeAvailability` Inoperative → Operative) to force a charger wedged in Preparing/SuspendedEVSE/Finishing to drop the stuck state and re-handshake, after which the normal RemoteStart begins a clean session. Standard OCPP op — does **not** reboot the charger. Deliberately never applied to a live `Charging` session or a car-side `SuspendedEV` (cycling wouldn't help there).
+
+The watchdog state is exposed on the `ocpp_diagnostics` sensor (`stuck_seconds`, `last_recovery_action`, `last_recovery_age_s`). New `ChargePoint.change_availability()` method; tunables `EV_STUCK_RESYNC_SECONDS` (60), `EV_STUCK_RECOVER_SECONDS` (180), `EV_STUCK_RECOVER_COOLDOWN_SECONDS` (600).
+
+---
+
+## [0.40.4] — 2026-05-30
+
+### Added — OCPP reliability, part 1 (observability + command verification)
+
+First of a planned hardening pass on the embedded OCPP server.
+
+- **OCPP diagnostics sensor** (`ocpp_diagnostics`) exposes the server's internal state as attributes — `session_active`, transaction id, commanded amps, last `SetChargingProfile` status + age, last `RemoteStartTransaction` status + age, MeterValues age, seconds-since-seen, protocol errors. Charge-rate / transaction desyncs (the kind that caused the 16 A free-run and the stuck-in-Preparing issues) are now visible at a glance instead of requiring a file log this HA doesn't keep.
+- **`SetChargingProfile` is verified and retried.** `set_current` checks the charger's reply and only caches `last_commanded_amps` on an **Accepted** response; on Rejected/timeout/exception it retries up to twice with backoff. A rejected write is no longer treated as applied, so the periodic re-assert keeps correcting it. RemoteStart and SetChargingProfile outcomes are recorded for the diagnostics sensor.
+
+---
+
 ## [0.40.3] — 2026-05-30
 
 ### Fixed

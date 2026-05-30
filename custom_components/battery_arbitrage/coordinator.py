@@ -165,6 +165,10 @@ from .const import (
     EV_MAX_AMP_STEP_PER_TICK,
     EV_MIN_AMP_CHANGE,
     EV_RATE_REASSERT_SECONDS,
+    EV_STUCK_RESYNC_SECONDS,
+    EV_STUCK_RECOVER_SECONDS,
+    EV_STUCK_RECOVER_COOLDOWN_SECONDS,
+    EV_STUCK_DELIVERING_KW,
     EV_CURTAILMENT_PROBE_SECONDS,
     EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS,
     EV_OVERRIDE_SOFT_COOLDOWN_SECONDS,
@@ -303,6 +307,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._ev_active_schedule_link: str | None = None     # entity_id of the schedule currently in control
         self._ev_last_amps: int = 0                          # last A we commanded
         self._ev_last_rate_assert_ts: datetime | None = None  # v0.40.2 periodic re-assert
+        # v0.40.5 — OCPP desync watchdog state
+        self._ev_stuck_since_ts: datetime | None = None       # want-charge-but-not-delivering since
+        self._ev_last_resync_ts: datetime | None = None       # last Stage-1 TriggerMessage re-sync
+        self._ev_last_recover_ts: datetime | None = None      # last Stage-2 availability cycle
         # Legacy tick counters kept for set_ev_mode() back-compat reset only
         self._ev_above_start_count: int = 0
         self._ev_below_stop_count: int = 0
@@ -3147,6 +3155,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 elif (not want_charging) and cp.session_active and cp.session_transaction_id:
                     await cp.remote_stop_transaction(cp.session_transaction_id)
 
+                # v0.40.5 — desync watchdog / auto-heal.
+                delivering = ev_current_kw > EV_STUCK_DELIVERING_KW
+                await self._ev_charge_watchdog(cp, want_charging, delivering, now_ts)
+
         # Battery-lock (v0.27.2, refined v0.30.1): in FULL mode, lock the
         # house battery only while the EV is *actually* drawing power, not
         # from the moment FULL mode was selected. This is the difference
@@ -3625,6 +3637,67 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         """Total kWh delivered by the charger over its lifetime (under our watch)."""
         return float(self._stored.get("charger_lifetime_energy_kwh", 0.0))
 
+    async def _ev_charge_watchdog(
+        self, cp, want_charging: bool, delivering: bool, now_ts: datetime,
+    ) -> None:
+        """Auto-heal a charger that won't deliver when charging is wanted (v0.40.5).
+
+        If the controller wants charging but the charger isn't actually
+        delivering power for a sustained period, escalate recovery instead of
+        waiting for a manual replug/reboot:
+          Stage 1 (>= EV_STUCK_RESYNC_SECONDS): TriggerMessage state re-sync.
+          Stage 2 (>= EV_STUCK_RECOVER_SECONDS, rate-limited): cycle connector
+                  availability — only for charger-side wedged states, never a
+                  live Charging session or a car-side SuspendedEV.
+        """
+        if not want_charging or delivering:
+            self._ev_stuck_since_ts = None
+            return
+        if self._ev_stuck_since_ts is None:
+            self._ev_stuck_since_ts = now_ts
+            return
+        stuck_s = (now_ts - self._ev_stuck_since_ts).total_seconds()
+        status = cp.status
+
+        # Stage 1 — re-sync state (low risk), rate-limited.
+        if stuck_s >= EV_STUCK_RESYNC_SECONDS and (
+            self._ev_last_resync_ts is None
+            or (now_ts - self._ev_last_resync_ts).total_seconds() >= EV_STUCK_RESYNC_SECONDS
+        ):
+            self._ev_last_resync_ts = now_ts
+            cp.last_recovery_action = f"resync ({status}, {int(stuck_s)}s)"
+            cp.last_recovery_ts = now_ts
+            _LOGGER.warning(
+                "EV watchdog: charger %s wanted charging but not delivering (%s) "
+                "for %ds — re-syncing via TriggerMessage.",
+                cp.id, status, int(stuck_s),
+            )
+            await cp.request_status_refresh()
+
+        # Stage 2 — connector availability cycle (conservative, rate-limited).
+        # Only for charger-side wedged states; never a live Charging session or
+        # a car-side SuspendedEV (cycling won't help and could be disruptive).
+        if (
+            stuck_s >= EV_STUCK_RECOVER_SECONDS
+            and status in ("Preparing", "SuspendedEVSE", "Finishing")
+            and (
+                self._ev_last_recover_ts is None
+                or (now_ts - self._ev_last_recover_ts).total_seconds()
+                >= EV_STUCK_RECOVER_COOLDOWN_SECONDS
+            )
+        ):
+            self._ev_last_recover_ts = now_ts
+            cp.last_recovery_action = f"availability-cycle ({status}, {int(stuck_s)}s)"
+            cp.last_recovery_ts = now_ts
+            _LOGGER.warning(
+                "EV watchdog: charger %s stuck in %s for %ds — cycling connector "
+                "availability (Inoperative → Operative) to force a clean restart.",
+                cp.id, status, int(stuck_s),
+            )
+            await cp.change_availability(False)
+            await asyncio.sleep(3)
+            await cp.change_availability(True)
+
     def get_charger_telemetry(self) -> dict:
         """Build a dict of OCPP charger fields for the result dict / sensors.
 
@@ -3662,8 +3735,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "charger_seconds_since_seen": None,
                 "charger_protocol_errors": 0,
                 "charger_last_protocol_error": "",
+                # v0.40.4 — command/telemetry observability
+                "charger_transaction_id": None,
+                "charger_commanded_amps": None,
+                "charger_last_set_profile_status": None,
+                "charger_last_set_profile_age_s": None,
+                "charger_last_remote_start_status": None,
+                "charger_last_remote_start_age_s": None,
+                "charger_metervalues_age_s": None,
+                "charger_stuck_seconds": 0.0,
+                "charger_last_recovery_action": None,
+                "charger_last_recovery_age_s": None,
             }
         cp = self.ocpp_server.charge_points[charger_id]
+        now = datetime.now(timezone.utc)
         return {
             "charger_status": cp.effective_status(),
             "charger_power_kw": round(cp.power_w / 1000.0, 3),
@@ -3687,6 +3772,33 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "charger_seconds_since_seen": round(cp.seconds_since_seen, 1),
             "charger_protocol_errors": cp.protocol_errors,
             "charger_last_protocol_error": cp.last_protocol_error,
+            # v0.40.4 — command/telemetry observability (OCPP diagnostics sensor)
+            "charger_transaction_id": cp.session_transaction_id,
+            "charger_commanded_amps": cp.last_commanded_amps,
+            "charger_last_set_profile_status": cp.last_set_profile_status,
+            "charger_last_set_profile_age_s": (
+                round((now - cp.last_set_profile_ts).total_seconds(), 1)
+                if cp.last_set_profile_ts else None
+            ),
+            "charger_last_remote_start_status": cp.last_remote_start_status,
+            "charger_last_remote_start_age_s": (
+                round((now - cp.last_remote_start_ts).total_seconds(), 1)
+                if cp.last_remote_start_ts else None
+            ),
+            "charger_metervalues_age_s": (
+                round((now - cp.last_metervalues_ts).total_seconds(), 1)
+                if cp.last_metervalues_ts else None
+            ),
+            # v0.40.5 — desync watchdog observability
+            "charger_stuck_seconds": (
+                round((now - self._ev_stuck_since_ts).total_seconds(), 1)
+                if self._ev_stuck_since_ts else 0.0
+            ),
+            "charger_last_recovery_action": cp.last_recovery_action,
+            "charger_last_recovery_age_s": (
+                round((now - cp.last_recovery_ts).total_seconds(), 1)
+                if cp.last_recovery_ts else None
+            ),
         }
 
     def _apply_ev_time_window(self, target_amps: int, *, probing: bool = False) -> int:
