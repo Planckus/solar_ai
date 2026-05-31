@@ -503,6 +503,27 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "sessions": d.get("action_log", []),
         },
     ),
+    # v0.42.0 — cumulative income from exported energy (DKK). TOTAL_INCREASING
+    # + MONETARY so HA records long-term statistics (use the Energy dashboard
+    # for arbitrary from/to sums); attributes give at-a-glance period totals
+    # and the daily series for the in-dashboard chart.
+    BatteryArbitrageSensorDescription(
+        key="export_income",
+        translation_key="export_income",
+        icon="mdi:cash-plus",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement="DKK",
+        value_fn=lambda d: d.get("export_income_total", 0.0),
+        attrs_fn=lambda d: {
+            "today": d.get("export_income_today", 0.0),
+            "last_7_days": d.get("export_income_7d", 0.0),
+            "last_30_days": d.get("export_income_30d", 0.0),
+            "this_month": d.get("export_income_month", 0.0),
+            "this_year": d.get("export_income_year", 0.0),
+            "daily": d.get("export_income_daily", []),
+        },
+    ),
     # ── EV charge controller (Phase B1) ──────────────────────────────────
     BatteryArbitrageSensorDescription(
         key="ev_target_kw",

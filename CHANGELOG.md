@@ -9,6 +9,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.42.0] — 2026-05-31
+
+### Added — export-income tracking
+
+- **New sensor `export_income`** (DKK, `total_increasing` + `monetary`) — accumulates income from *all* exported energy (solar excess + battery-to-grid), `feed_in × interval × net export price`, on each learning tick. Being `total_increasing` + `monetary`, Home Assistant records long-term statistics, so income can be summed over any range via the **Energy dashboard's date picker** or a statistics card. Attributes expose at-a-glance period totals (`today`, `last_7_days`, `last_30_days`, `this_month`, `this_year`) and a `daily` series for charting. Backed by a daily log (`export_income_log`, ~13 months retained).
+- **Dashboard (Prices/Priser section)** — an export-income panel with the period totals and a daily-income chart. For arbitrary from/to financial totals, add the export to HA's Energy dashboard (feed-in kWh + export-price entity) — see README.
+
+---
+
+## [0.41.0] — 2026-05-31
+
+### Added — bilingual user-facing text (English / Danish)
+
+The EV-controller status `reason` strings and the push notifications now render in English or Danish based on Home Assistant's configured language (Danish HA → Danish, anything else → English). Previously they were always Danish, so they showed Danish on the English dashboard. Display/notification text only — no behavioural change.
+
+- New `_msg(en, da)` coordinator helper keyed off `hass.config.language` (resolved once at setup).
+- ~13 EV reason strings (PV, PV+battery, priority gate, override ramp, cool-down, locked, full) and the 6 push notifications (export/charge start/stop, solar-export blocked/resumed) are now bilingual.
+- Arbitrage mode reasons were already English; sensor states and entity names localise via the existing translation files. Added a `_msg` unit test.
+
+---
+
 ## [0.40.7] — 2026-05-31
 
 ### Fixed

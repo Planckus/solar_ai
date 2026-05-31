@@ -254,6 +254,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._stored: dict[str, Any] = {}
         self._current_mode = MODE_NORMAL
         self._mode_reason = ""
+        # v0.41.0 — language for user-facing strings (reasons, notifications).
+        # Follows HA's configured language: Danish HA → Danish, anything else
+        # → English. Display/notification text only; no behavioural effect.
+        self._lang = "da" if str(getattr(hass.config, "language", "") or "").lower().startswith("da") else "en"
         self._enabled = False        # OFF by default — user enables after learning period
         self._we_set_evcc_mode = False  # True while WE have EVCC battery mode set non-normal
         self._prev_soc: float | None = None  # Previous tick SoC for capacity learning
@@ -512,6 +516,38 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 totals["savings_actual_month"] += a
                 totals["savings_missed_month"] += m
         return {k: round(v, 2) for k, v in totals.items()}
+
+    def get_export_income_summary(self) -> dict:
+        """Cumulative export income + today / 7-day / 30-day / month / year
+        totals, plus the daily series for charting (v0.42.0)."""
+        ilog: list[dict] = self._stored.get("export_income_log", [])
+        today = datetime.now().date()
+        today_str = today.isoformat()
+        week_ago = (today - timedelta(days=7)).isoformat()
+        month_ago = (today - timedelta(days=30)).isoformat()
+        month_prefix = today.strftime("%Y-%m")
+        year_prefix = str(today.year)
+        t = dict(
+            export_income_today=0.0, export_income_7d=0.0, export_income_30d=0.0,
+            export_income_month=0.0, export_income_year=0.0,
+        )
+        for e in ilog:
+            d = e.get("date", "")
+            v = e.get("dkk", 0.0)
+            if d == today_str:
+                t["export_income_today"] += v
+            if d >= week_ago:
+                t["export_income_7d"] += v
+            if d >= month_ago:
+                t["export_income_30d"] += v
+            if d.startswith(month_prefix):
+                t["export_income_month"] += v
+            if d.startswith(year_prefix):
+                t["export_income_year"] += v
+        out = {k: round(v, 2) for k, v in t.items()}
+        out["export_income_total"] = round(self._stored.get("export_income_total", 0.0), 2)
+        out["export_income_daily"] = list(ilog)
+        return out
 
     def get_solar_accuracy_factor(self) -> float:
         """Return the rolling median of actual/forecast ratio (clamped 0.3–1.5)."""
@@ -1745,6 +1781,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             solar_short_term_last_curtailed_skip=self._st_solar_last_curtailed_skip_iso,
             **ev_telemetry,
             **savings,
+            **self.get_export_income_summary(),
         )
 
     # ------------------------------------------------------------------ #
@@ -1915,16 +1952,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if prev_limit == 10000 and limit_w == 25:
             if self._stored.get("notify_solar_floor_blocked", False):
                 await self._send_mobile_notification(
-                    "☀️ Solar AI: Solareksport blokeret",
-                    f"Pris {export_price_raw:.3f} DKK/kWh er under gulv "
-                    f"{min_export_price:.2f} — solareksport stoppet",
+                    self._msg("☀️ Solar AI: Solar export blocked", "☀️ Solar AI: Solareksport blokeret"),
+                    self._msg(
+                        f"Price {export_price_raw:.3f} DKK/kWh is below floor "
+                        f"{min_export_price:.2f} — solar export stopped",
+                        f"Pris {export_price_raw:.3f} DKK/kWh er under gulv "
+                        f"{min_export_price:.2f} — solareksport stoppet",
+                    ),
                 )
         elif prev_limit == 25 and limit_w == 10000:
             if self._stored.get("notify_solar_floor_resumed", False):
                 await self._send_mobile_notification(
-                    "☀️ Solar AI: Solareksport genoptaget",
-                    f"Pris {export_price_raw:.3f} DKK/kWh er over gulv "
-                    f"{min_export_price:.2f} — eksport aktiv igen",
+                    self._msg("☀️ Solar AI: Solar export resumed", "☀️ Solar AI: Solareksport genoptaget"),
+                    self._msg(
+                        f"Price {export_price_raw:.3f} DKK/kWh is above floor "
+                        f"{min_export_price:.2f} — export active again",
+                        f"Pris {export_price_raw:.3f} DKK/kWh er over gulv "
+                        f"{min_export_price:.2f} — eksport aktiv igen",
+                    ),
                 )
 
     async def _set_work_mode(self, mode: str) -> None:
@@ -2379,6 +2424,27 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         entry = log[-1]
 
+        # v0.42.0 — cumulative income from ALL exported energy (solar excess +
+        # battery-to-grid arbitrage), independent of mode. `feed_in` is the live
+        # grid-export power; income ≈ feed_in × interval × net export price.
+        # Kept as a running total (for the TOTAL_INCREASING sensor / HA
+        # statistics / Energy dashboard) plus a daily log (for period totals).
+        from .const import CONF_FOXESS_GRID_EXPORT_ENTITY, FOXESS_FEED_IN  # noqa: PLC0415
+        feed_in_kw = self._get_float_state(
+            self.config.get(CONF_FOXESS_GRID_EXPORT_ENTITY, FOXESS_FEED_IN), 0.0,
+        ) or 0.0
+        if feed_in_kw > 0 and export_price > 0:
+            inc = feed_in_kw * interval_h * export_price
+            self._stored["export_income_total"] = round(
+                self._stored.get("export_income_total", 0.0) + inc, 4,
+            )
+            ilog: list[dict] = self._stored.setdefault("export_income_log", [])
+            if not ilog or ilog[-1]["date"] != today:
+                ilog.append({"date": today, "dkk": 0.0})
+                if len(ilog) > 400:        # ~13 months of daily history
+                    del ilog[: len(ilog) - 400]
+            ilog[-1]["dkk"] = round(ilog[-1]["dkk"] + inc, 4)
+
         if mode == MODE_EXPORTING and battery_discharge_kw > 0 and export_price > 0:
             # Actual export revenue from the battery portion
             entry["actual_dkk"] = round(
@@ -2625,14 +2691,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Mobile push notification — export start
         if action_type == "export" and self._stored.get("notify_export_start", False):
             await self._send_mobile_notification(
-                "☀️ Solar AI: Eksport startet",
-                f"Batteri eksporterer til nettet · SoC {soc:.0f}% · {price:.2f} DKK/kWh",
+                self._msg("☀️ Solar AI: Export started", "☀️ Solar AI: Eksport startet"),
+                self._msg(
+                    f"Battery exporting to grid · SoC {soc:.0f}% · {price:.2f} DKK/kWh",
+                    f"Batteri eksporterer til nettet · SoC {soc:.0f}% · {price:.2f} DKK/kWh",
+                ),
             )
         # Mobile push notification — charge start
         elif action_type == "charge" and self._stored.get("notify_charge_start", False):
             await self._send_mobile_notification(
-                "⚡ Solar AI: Opladning startet",
-                f"Batteri oplades fra nettet · SoC {soc:.0f}% · {price:.2f} DKK/kWh",
+                self._msg("⚡ Solar AI: Charging started", "⚡ Solar AI: Opladning startet"),
+                self._msg(
+                    f"Battery charging from grid · SoC {soc:.0f}% · {price:.2f} DKK/kWh",
+                    f"Batteri oplades fra nettet · SoC {soc:.0f}% · {price:.2f} DKK/kWh",
+                ),
             )
 
     async def _close_action_session(
@@ -2683,13 +2755,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Mobile push notification — export stop
         if action_type == "export" and self._stored.get("notify_export_stop", False):
             await self._send_mobile_notification(
-                "☀️ Solar AI: Eksport afsluttet",
+                self._msg("☀️ Solar AI: Export finished", "☀️ Solar AI: Eksport afsluttet"),
                 f"SoC {soc_start:.0f}%→{soc_end:.0f}% · {duration_min} min · {kwh} kWh · {dkk} DKK",
             )
         # Mobile push notification — charge stop
         elif action_type == "charge" and self._stored.get("notify_charge_stop", False):
             await self._send_mobile_notification(
-                "⚡ Solar AI: Opladning afsluttet",
+                self._msg("⚡ Solar AI: Charging finished", "⚡ Solar AI: Opladning afsluttet"),
                 f"SoC {soc_start:.0f}%→{soc_end:.0f}% · {duration_min} min · {kwh} kWh · {dkk} DKK",
             )
 
@@ -2998,11 +3070,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             override_forcing = target_kw <= ramp_kw
             if override_forcing:
                 target_kw = ramp_kw
-                reason = (
+                reason = self._msg(
+                    f"Override ramp: battery full ({battery_soc:.0f}% / max {max_soc}%) "
+                    f"+ export-stop active — EV draws {ramp_amps} A "
+                    f"({ramp_kw:.2f} kW), grid import {grid_import_kw:.2f} kW "
+                    f"(raw PV: {solar_kw:.2f} kW, house load: {house_load_kw:.2f} kW)",
                     f"Override ramp: batteri fuld ({battery_soc:.0f}% / max {max_soc}%) "
                     f"+ eksport-stop aktiv — EV trækker {ramp_amps} A "
                     f"({ramp_kw:.2f} kW), net-import {grid_import_kw:.2f} kW "
-                    f"(rå PV: {solar_kw:.2f} kW, husforbrug: {house_load_kw:.2f} kW)"
+                    f"(rå PV: {solar_kw:.2f} kW, husforbrug: {house_load_kw:.2f} kW)",
                 )
                 self._ev_session_was_override_induced = True
         else:
@@ -3195,15 +3271,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 elapsed = (datetime.now() - self._ev_surplus_below_min_since_ts).total_seconds()
                 cooling_left_s = max(0, int(stop_window - elapsed))
             if cooling_left_s is not None:
-                reason = (
+                reason = self._msg(
+                    f"PV: surplus {net_surplus_for_ev_kw:.1f} kW < min — "
+                    f"charging continues at minimum ({reported_target_kw:.1f} kW) "
+                    f"cooling down ({cooling_left_s}s)",
                     f"PV: overskud {net_surplus_for_ev_kw:.1f} kW < min — "
                     f"oplader fortsætter ved minimum ({reported_target_kw:.1f} kW) "
-                    f"i nedkøling ({cooling_left_s}s)"
+                    f"i nedkøling ({cooling_left_s}s)",
                 )
             else:
-                reason = (
+                reason = self._msg(
+                    f"PV: surplus {net_surplus_for_ev_kw:.1f} kW < min — "
+                    f"charging continues at minimum ({reported_target_kw:.1f} kW)",
                     f"PV: overskud {net_surplus_for_ev_kw:.1f} kW < min — "
-                    f"oplader fortsætter ved minimum ({reported_target_kw:.1f} kW)"
+                    f"oplader fortsætter ved minimum ({reported_target_kw:.1f} kW)",
                 )
 
         self._ev_last_reason = reason
@@ -3212,6 +3293,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # priority threshold this will show 0 because the battery is
         # consuming everything.
         return self._ev_telemetry(reported_target_kw, final_amps, net_surplus_for_ev_kw, reason)
+
+    def _msg(self, en: str, da: str) -> str:
+        """Return a user-facing string in the integration's resolved language (v0.41.0).
+
+        Both arguments are already-formatted strings; this just picks one.
+        Danish HA → `da`, anything else → `en`.
+        """
+        return da if self._lang == "da" else en
 
     def _compute_ev_target_kw(
         self, mode: str, solar_surplus: float, battery_soc: float,
@@ -3250,10 +3339,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         the oscillation.
         """
         if mode == EV_MODE_LOCKED:
-            return 0.0, "Mode: Låst — ingen opladning"
+            return 0.0, self._msg("Mode: Locked — no charging", "Mode: Låst — ingen opladning")
 
         if mode == EV_MODE_FULL:
-            return max_kw, f"Mode: Fuld kraft — {max_kw:.1f} kW"
+            return max_kw, self._msg(f"Mode: Full power — {max_kw:.1f} kW", f"Mode: Fuld kraft — {max_kw:.1f} kW")
 
         # Battery-priority gate (applies to PV mode only — v0.27.2 fix).
         # v0.39.19 — bypass when grid_export_kw > min_kw.
@@ -3263,9 +3352,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 and battery_soc < priority_soc
                 and grid_export_kw <= min_kw
                 and ev_last_amps == 0):
-            return 0.0, (
+            return 0.0, self._msg(
+                f"Battery prioritised: {battery_soc:.0f}% / {priority_soc:.0f}% "
+                f"— EV waits until the battery is full",
                 f"Batteri prioriteret: {battery_soc:.0f}% / {priority_soc:.0f}% "
-                f"— EV venter til batteri er fyldt"
+                f"— EV venter til batteri er fyldt",
             )
 
         if mode == EV_MODE_PV:
@@ -3283,34 +3374,42 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 target = amps * line_voltage_kw
                 excess = max(0.0, solar_surplus - target)
                 if excess > 0.05:  # only show "til batteri" if meaningful
-                    return target, (
+                    return target, self._msg(
+                        f"PV: {solar_surplus:.2f} kW surplus → {target:.2f} kW "
+                        f"({amps} A), {excess:.2f} kW to battery",
                         f"PV: {solar_surplus:.2f} kW overskud → {target:.2f} kW "
-                        f"({amps} A), {excess:.2f} kW til batteri"
+                        f"({amps} A), {excess:.2f} kW til batteri",
                     )
-                return target, (
-                    f"PV: {solar_surplus:.2f} kW overskud → {target:.2f} kW ({amps} A)"
+                return target, self._msg(
+                    f"PV: {solar_surplus:.2f} kW surplus → {target:.2f} kW ({amps} A)",
+                    f"PV: {solar_surplus:.2f} kW overskud → {target:.2f} kW ({amps} A)",
                 )
-            return 0.0, (
-                f"PV: overskud {solar_surplus:.1f} kW < min {min_kw:.1f} kW — stoppet"
+            return 0.0, self._msg(
+                f"PV: surplus {solar_surplus:.1f} kW < min {min_kw:.1f} kW — stopped",
+                f"PV: overskud {solar_surplus:.1f} kW < min {min_kw:.1f} kW — stoppet",
             )
 
         if mode == EV_MODE_PV_BATTERY:
             if solar_surplus >= min_kw:
                 target = min(solar_surplus, max_kw)
-                return target, (
-                    f"PV+batteri: {solar_surplus:.1f} kW overskud → {target:.1f} kW"
+                return target, self._msg(
+                    f"PV+battery: {solar_surplus:.1f} kW surplus → {target:.1f} kW",
+                    f"PV+batteri: {solar_surplus:.1f} kW overskud → {target:.1f} kW",
                 )
             # Solar can't reach min — can the battery help?
             if battery_soc > floor_soc:
-                return min_kw, (
+                return min_kw, self._msg(
+                    f"PV+battery: solar {solar_surplus:.1f} kW insufficient, "
+                    f"battery covers the gap → {min_kw:.1f} kW",
                     f"PV+batteri: sol {solar_surplus:.1f} kW utilstrækkelig, "
-                    f"batteri dækker forskel → {min_kw:.1f} kW"
+                    f"batteri dækker forskel → {min_kw:.1f} kW",
                 )
-            return 0.0, (
-                f"PV+batteri: sol {solar_surplus:.1f} kW < min og batteri ved gulv — stoppet"
+            return 0.0, self._msg(
+                f"PV+battery: solar {solar_surplus:.1f} kW < min and battery at floor — stopped",
+                f"PV+batteri: sol {solar_surplus:.1f} kW < min og batteri ved gulv — stoppet",
             )
 
-        return 0.0, f"Ukendt mode: {mode}"
+        return 0.0, self._msg(f"Unknown mode: {mode}", f"Ukendt mode: {mode}")
 
     @staticmethod
     def _kw_to_amps(kw: float) -> int:
