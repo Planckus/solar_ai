@@ -29,6 +29,22 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ## Recent releases
 
+### v0.46.0 — weekday/weekend house-load split
+
+The learned house-load profile is now split into weekday and weekend curves, each learned separately and selected per slot by the slot's date (so a 48-hour horizon spanning the weekend uses the right shape). Both seed from the previous combined curve on upgrade. Tariff handling (seasonal + time-of-day, from EDS DatahubPricelist) was reviewed and already correct, so no tariff change was needed.
+
+### v0.45.0 — session-aware EV demand
+
+The optimiser used to model EV load as an hour-of-day probability. When the car is plugged in and in a forced-draw situation (actively charging, fast/pv+battery mode, or EVCC now/minpv), it now treats the next 2 hours of EV demand as near-certain — the live charge power — and won't grid-charge the house battery against it. Beyond that window the learned hourly model resumes. Pure-PV charging is unaffected (already handled by the solar→EV dynamics). The reserved demand shows as the `dp_session_demand_kw` attribute on the `ev_target_kw` sensor.
+
+### v0.44.0 — probabilistic solar in the optimiser
+
+The DP optimiser can now plan against a configurable percentile of each hour's observed solar forecast/actual ratio instead of the fixed median. A new `Solar confidence` control (10–90 %, default 50) sets the percentile; at 50 it equals the median, so the default is identical to 0.43.0 with no behaviour change. Lowering it makes the planner assume more conservative solar — grid-charging more readily in cheap windows and avoiding over-exporting battery it will need on a cloudy day. Builds on the 0.43.0 percentile groundwork; pair it with the `prediction_accuracy` scorecard to measure the effect before and after.
+
+### v0.43.0 — prediction scorecard + solar-forecast percentiles
+
+Observability groundwork for more precise decisions; no behaviour change. The optimiser's predicted battery SoC is now logged against the realised SoC every 15 minutes, surfaced as a `prediction_accuracy` sensor (rolling 7-day SoC mean-absolute-error, plus 30-day MAE, solar-forecast MAPE, and the predicted-action mix). The per-hour solar `(forecast, actual)` buckets are also exposed as P10/P50/P90 of the actual/forecast ratio. Together these give a measured baseline so a later release can switch export/charge sizing to a conservative solar percentile and prove the improvement on real data rather than assuming it. (v0.46.1 hardened the scorecard against restart artifacts — it skips a 15-minute warm-up after each restart so the cold optimiser plan doesn't inflate the error metric.)
+
 ### v0.42.0 — export-income tracking
 
 A new `export_income` sensor (`sensor.solar_ai_eksport_indtaegt`) accumulates the running revenue from exported energy (`feed-in kWh × export price`, integrated each coordinator tick) and exposes period totals as attributes: `today`, `last_7_days`, `last_30_days`, `this_month`, `this_year`, plus a `daily` list. The Prices page gains a period-totals chip row and a daily-income bar chart. Because the sensor is `monetary` + `total_increasing`, it can be added to Home Assistant's **Energy dashboard** (Settings → Dashboards → Energy → *Individual devices* / *Grid* gas-and-cost), giving an arbitrary from/to date picker and daily/weekly/monthly breakdowns for any period. See [Export income](#export-income) below.

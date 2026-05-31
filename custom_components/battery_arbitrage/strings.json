@@ -280,6 +280,7 @@
       "todays_plan": { "name": "Today's plan" },
       "action_log": { "name": "Session log" },
       "export_income": { "name": "Export income" },
+      "prediction_accuracy": { "name": "Prediction accuracy" },
       "ev_target_kw":   { "name": "EV target charge rate" },
       "ev_target_amps": { "name": "EV target current" },
       "ev_surplus_kw":  { "name": "EV surplus available" },
@@ -409,7 +410,8 @@
       "battery_degradation_cost": { "name": "Battery wear cost (DKK/kWh cycled)" },
       "ev_min_charge_kw": { "name": "EV minimum charge rate (kW)" },
       "ev_max_charge_kw": { "name": "EV maximum charge rate (kW)" },
-      "ev_battery_priority_soc": { "name": "Battery-first threshold (%) — EV waits until house battery reaches this SoC" }
+      "ev_battery_priority_soc": { "name": "Battery-first threshold (%) — EV waits until house battery reaches this SoC" },
+      "solar_confidence_pct": { "name": "Solar confidence (%) — forecast percentile the optimiser plans against (50 = median)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage enabled" },

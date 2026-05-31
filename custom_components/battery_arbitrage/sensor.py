@@ -533,6 +533,11 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:car-electric",
         value_fn=lambda d: round(d.get("ev_target_kw", 0.0), 2),
+        # v0.45.0 — E1: the EV demand the optimiser is reserving for the near
+        # term (0 = no live forced session; the learned hourly model is used).
+        attrs_fn=lambda d: {
+            "dp_session_demand_kw": d.get("ev_dp_session_kw", 0.0),
+        },
     ),
     BatteryArbitrageSensorDescription(
         key="ev_target_amps",
@@ -625,6 +630,44 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "warmup_complete": all(
                 c >= 8 for c in d.get("solar_hourly_samples", [])
             ) if d.get("solar_hourly_samples") else False,
+            # v0.43.0 — S1 groundwork: forecast-ratio spread per hour (P10/P50/
+            # P90). Shows how reliable each hour's forecast is. None where cold.
+            "hourly_p10": {
+                str(h): v for h, v in enumerate(d.get("solar_hourly_p10", []))
+                if v is not None
+            },
+            "hourly_p50": {
+                str(h): v for h, v in enumerate(d.get("solar_hourly_p50", []))
+                if v is not None
+            },
+            "hourly_p90": {
+                str(h): v for h, v in enumerate(d.get("solar_hourly_p90", []))
+                if v is not None
+            },
+            # v0.44.0 — S1: the percentile the optimiser currently plans
+            # against (50 = median = neutral; lower = more conservative solar).
+            "confidence_pct": d.get("solar_confidence_pct", 50),
+        },
+    ),
+    # ── Prediction scorecard (v0.43.0 — M1) ───────────────────────────────
+    # State = rolling 7-day SoC mean-absolute-error (% points): how far the
+    # optimiser's predicted battery trajectory landed from reality. Lower is
+    # better. Observability only — the baseline against which any future
+    # precision change (probabilistic solar, EV session-awareness, …) is judged.
+    BatteryArbitrageSensorDescription(
+        key="prediction_accuracy",
+        translation_key="prediction_accuracy",
+        icon="mdi:target",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.get("prediction_soc_mae_7d", 0.0),
+        attrs_fn=lambda d: {
+            "soc_mae_7d": d.get("prediction_soc_mae_7d", 0.0),
+            "soc_mae_30d": d.get("prediction_soc_mae_30d", 0.0),
+            "solar_mape_pct": d.get("prediction_solar_mape", 0.0),
+            "samples": d.get("prediction_samples", 0),
+            "action_mix": d.get("prediction_action_mix", {}),
+            "recent": d.get("prediction_log", []),
         },
     ),
     # ─────────────────────────────────────────────────────────────────────
