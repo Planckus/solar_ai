@@ -172,6 +172,20 @@ views:
     - type: custom:mushroom-chips-card
       alignment: center
       chips:
+      - type: conditional
+        conditions:
+        - condition: numeric_state
+          entity: sensor.solar_ai_ev_status
+          attribute: cooling_seconds_left
+          above: 0
+        chip:
+          type: template
+          entity: sensor.solar_ai_ev_status
+          icon: mdi:timer-sand
+          icon_color: orange
+          content: EV stopper om {{ state_attr('sensor.solar_ai_ev_status','cooling_seconds_left') | int(0) }} s — lav sol
+          tap_action:
+            action: more-info
       - type: template
         entity: sensor.battery_arbitrage_batteritemperatur_laveste_celle
         icon: mdi:thermometer

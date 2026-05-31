@@ -3852,6 +3852,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         stop_window = int(self.config.get(
             CONF_EV_STOP_WINDOW_SECONDS, DEFAULT_EV_STOP_WINDOW_SECONDS,
         ))
+        # v0.40.7 — during the COOLING hold (surplus < min, waiting out the
+        # stop-window) charge at the *minimum* rate, not the last-commanded
+        # rate. In PV mode the deficit is covered by battery/grid, so holding
+        # the higher last rate (e.g. 8 A) needlessly drains the battery; drop
+        # to the floor so as little non-solar power as possible is used.
+        min_amps = self._kw_to_amps(
+            float(self._stored.get("ev_min_charge_kw", DEFAULT_EV_MIN_CHARGE_KW))
+        )
 
         if target_amps == 0:
             # Want to stop ── arm the stop timer when currently charging
@@ -3869,10 +3877,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                         self._ev_cool_entry_ts = now
                     elapsed_entry = (now - self._ev_cool_entry_ts).total_seconds()
                     if elapsed_entry < EV_COOL_ENTRY_SECONDS:
-                        # Still in entry debounce — stay CHARGING.
+                        # Still in entry debounce — stay CHARGING, but ease to min.
                         self._ev_surplus_above_min_since_ts = None
                         self._ev_arm_drop_since_ts = None
-                        return self._ev_last_amps
+                        return min(self._ev_last_amps, min_amps)
                     # Sustained below-min — formally enter COOLING.
                     self._ev_surplus_below_min_since_ts = now
                     self._ev_cool_entry_ts = None
@@ -3882,7 +3890,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 if elapsed >= stop_window:
                     self._ev_surplus_below_min_since_ts = None
                     return 0                              # confirmed stop
-                return self._ev_last_amps                  # keep going until confirmed
+                return min(self._ev_last_amps, min_amps)   # hold at minimum until confirmed
             # IDLE AND target dropped to 0.
             # v0.28.5: stale ARMING timestamps render as "Starter om -178s"
             # on the dashboard. Need to clear them.
@@ -3938,8 +3946,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 self._ev_surplus_above_min_since_ts = now
             elapsed_above = (now - self._ev_surplus_above_min_since_ts).total_seconds()
             if elapsed_above < EV_STOP_RECOVERY_SECONDS:
-                # Brief blip — keep the stop timer running, hold last amps.
-                return self._ev_last_amps
+                # Brief blip — keep the stop timer running, hold at minimum.
+                return min(self._ev_last_amps, min_amps)
             # Sustained recovery — surplus has held above min long enough.
             self._ev_surplus_above_min_since_ts = None
             self._ev_surplus_below_min_since_ts = None
