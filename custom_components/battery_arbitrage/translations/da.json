@@ -279,6 +279,7 @@
       "solar_tomorrow_kwh": { "name": "Solcelle: forventet i morgen" },
       "todays_plan": { "name": "Dagens plan" },
       "action_log": { "name": "Sessionslog" },
+      "export_income": { "name": "Eksport-indtægt" },
       "ev_target_kw":   { "name": "EV mål-opladningseffekt" },
       "ev_target_amps": { "name": "EV mål-strøm" },
       "ev_surplus_kw":  { "name": "EV tilgængeligt overskud" },

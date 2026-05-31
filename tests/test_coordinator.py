@@ -138,3 +138,25 @@ class TestPredictHouseLoad:
         # load_2h=3.0, load_28d=1.0 → max(3.0*1.1, 1.0*0.5) = 3.3
         load = _predict_house_load(3.0, 1.0, vacation_mode=False, hours=1)
         assert load == pytest.approx(3.3, abs=0.01)
+
+
+# ------------------------------------------------------------------ #
+# _msg — bilingual user-facing strings (v0.41.0)                       #
+# ------------------------------------------------------------------ #
+
+class TestMsgLanguage:
+    """The _msg helper picks Danish or English by the resolved language."""
+
+    def _call(self, lang, en, da):
+        import types
+        from custom_components.battery_arbitrage.coordinator import (
+            BatteryArbitrageCoordinator,
+        )
+        stub = types.SimpleNamespace(_lang=lang)
+        return BatteryArbitrageCoordinator._msg(stub, en, da)
+
+    def test_english(self):
+        assert self._call("en", "English", "Dansk") == "English"
+
+    def test_danish(self):
+        assert self._call("da", "English", "Dansk") == "Dansk"

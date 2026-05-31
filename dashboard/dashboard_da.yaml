@@ -839,6 +839,67 @@ views:
         name: Sol fylder batteri
       - entity: binary_sensor.battery_arbitrage_tilstedevaerelse
         name: Tilstedeværelse
+    - type: custom:mushroom-title-card
+      title: Eksport-indtægt
+      subtitle: Brug Energi-dashboardet for vilkårlige fra/til-perioder.
+    - type: custom:mushroom-chips-card
+      alignment: center
+      chips:
+      - type: template
+        icon: mdi:cash-clock
+        icon_color: green
+        entity: sensor.solar_ai_eksport_indtaegt
+        content: I dag {{ '%.0f' | format(state_attr('sensor.solar_ai_eksport_indtaegt','today') | float(0)) }} DKK
+        tap_action:
+          action: more-info
+      - type: template
+        icon: mdi:calendar-week
+        icon_color: green
+        entity: sensor.solar_ai_eksport_indtaegt
+        content: 7 d {{ '%.0f' | format(state_attr('sensor.solar_ai_eksport_indtaegt','last_7_days') | float(0)) }} DKK
+        tap_action:
+          action: more-info
+      - type: template
+        icon: mdi:calendar-month
+        icon_color: green
+        entity: sensor.solar_ai_eksport_indtaegt
+        content: Md {{ '%.0f' | format(state_attr('sensor.solar_ai_eksport_indtaegt','this_month') | float(0)) }} DKK
+        tap_action:
+          action: more-info
+      - type: template
+        icon: mdi:calendar
+        icon_color: green
+        entity: sensor.solar_ai_eksport_indtaegt
+        content: År {{ '%.0f' | format(state_attr('sensor.solar_ai_eksport_indtaegt','this_year') | float(0)) }} DKK
+        tap_action:
+          action: more-info
+    - type: custom:apexcharts-card
+      header:
+        show: true
+        title: Daglig eksport-indtægt
+        show_states: false
+      graph_span: 60d
+      span:
+        end: day
+      apex_config:
+        chart:
+          height: 250
+        legend:
+          show: false
+        xaxis:
+          labels:
+            datetimeUTC: false
+      yaxis:
+      - decimals: 0
+        apex_config:
+          title:
+            text: DKK
+      series:
+      - entity: sensor.solar_ai_eksport_indtaegt
+        name: Indtægt
+        type: column
+        color: '#3e9c4d'
+        data_generator: return (entity.attributes.daily || []).map(e => [new Date(e.date).getTime(), e.dkk]);
 - title: Historik
   path: historik
   icon: mdi:chart-timeline-variant
