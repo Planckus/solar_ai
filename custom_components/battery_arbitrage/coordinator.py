@@ -86,6 +86,12 @@ from .const import (
     SOLAR_ACCURACY_WINDOW,
     SOLAR_ACCURACY_HOUR_BUCKET_MAX,
     SOLAR_ACCURACY_HOUR_MIN_SAMPLES,
+    PREDICTION_LOG_MAX,
+    PREDICTION_MAE_WINDOW_SLOTS,
+    PREDICTION_MAE_WINDOW_SLOTS_LONG,
+    PREDICTION_WARMUP_SECONDS,
+    DEFAULT_SOLAR_CONFIDENCE_PCT,
+    EV_SESSION_DP_HORIZON_H,
     STORAGE_KEY,
     STORAGE_VERSION,
     STROMLIGNING_SPOTPRICE_EX_VAT,
@@ -291,6 +297,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._last_export_limit: int = -1
         # Day-ahead DP optimizer plan — list of {hour, action, soc, buy, sell}
         self._optimizer_plan: list[dict] = []
+        # v0.43.0 — prediction scorecard (M1): the 15-min slot currently being
+        # tracked. On rollover we log the plan's predicted SoC vs the realised
+        # SoC for the slot that just closed. Not persisted (re-derived on start).
+        self._sc_slot_start: datetime | None = None
+        # v0.46.1 — when this coordinator instance started, so the scorecard can
+        # skip the post-restart warm-up window (cold optimiser plan).
+        self._started_at: datetime = datetime.now(timezone.utc)
         # Currently open export/charge session (closed when mode exits)
         self._open_action: dict | None = None
         # Currently open solar-floor-blocked event (closed when price rises
@@ -627,6 +640,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("ev_charge_hourly", [0.0] * 24)
             self._stored.setdefault("ev_max_kw", 0.0)
             self._stored.setdefault("house_load_hourly", [0.0] * 24)
+            # v0.46.0 — L1: split the load profile into weekday vs weekend.
+            # Seed both from the legacy combined profile on first upgrade so the
+            # model isn't cold after the migration.
+            legacy_load = self._stored.get("house_load_hourly", [0.0] * 24)
+            if "house_load_weekday" not in self._stored:
+                self._stored["house_load_weekday"] = list(legacy_load)
+            if "house_load_weekend" not in self._stored:
+                self._stored["house_load_weekend"] = list(legacy_load)
+            # v0.46.1 — one-time clear of the early prediction_log: the first
+            # day's samples were dominated by cold-plan restart artifacts
+            # (today's deploy storm). Reset once for a clean scorecard baseline;
+            # the warm-up guard prevents new contamination going forward.
+            if not self._stored.get("prediction_log_reset_v0461"):
+                self._stored["prediction_log"] = []
+                self._stored["prediction_log_reset_v0461"] = True
             self._stored.setdefault("solar_daily_kwh", [])
             self._stored.setdefault("solar_today_kwh", 0.0)
             self._stored.setdefault("solar_today_date", "")
@@ -1338,6 +1366,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Refresh when prices are stale (tariff_stale) or on first run.
         # The optimizer produces a 24-h or 48-h plan (charge/export/idle per 15-min
         # slot) that replaces the reactive p25/p75 threshold logic for decisions.
+        # v0.45.0 — E1: derive the live EV session demand the DP should treat as
+        # near-certain for the next EV_SESSION_DP_HORIZON_H hours. Only forced-
+        # draw situations count (fast / pv+battery / EVCC now/minpv, or actively
+        # charging) — pure-PV charging is already captured by the solar→EV idle
+        # dynamics. Falls back to the learned hourly model when no session.
+        ev_session_kw = self._ev_session_demand_kw(
+            connected=bool(ev_connected),
+            charging_now=bool(ev_charging_now),
+            effective_mode=self._ev_effective_mode,
+            requested_mode=ev_mode,
+            live_kw=max(0.0, float(ev_charge_power_w or 0) / 1000.0),
+            max_kw=float(self._stored.get("ev_max_kw", 0.0)),
+        )
+
         if tariff_stale or not self._optimizer_plan:
             max_export_kw_setting = float(self._stored.get("max_export_kw", DEFAULT_MAX_EXPORT_KW))
             self._optimizer_plan = self._run_optimizer(
@@ -1351,7 +1393,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 max_soc=float(max_soc),
                 efficiency=efficiency,
                 charge_rate_kw=capped_charge_rate_kw if capped_charge_rate_kw > 0 else learned_charge_rate,
-                house_load_profile=self.get_house_load_profile(),
+                house_load_profile=self.get_house_load_profile(weekend=False),
+                house_load_weekend=self.get_house_load_profile(weekend=True),
                 ev_charge_hourly=list(self._stored.get("ev_charge_hourly", [0.0] * 24)),
                 ev_max_kw=float(self._stored.get("ev_max_kw", 0.0)),
                 vat_factor=vat_factor,
@@ -1363,6 +1406,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 min_export_price=float(self._stored.get("min_export_price", DEFAULT_MIN_EXPORT_PRICE)),
                 min_spread=min_spread,
                 max_export_kw=max_export_kw_setting,
+                ev_session_kw=ev_session_kw,
+                ev_session_horizon_h=EV_SESSION_DP_HORIZON_H,
             )
 
         # Translate optimizer plan into flags for the current 15-min slot.
@@ -1647,6 +1692,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
         savings = self.get_savings_summary()
 
+        # ---- prediction scorecard (v0.43.0, M1) — observability only ----
+        # Records the plan's predicted SoC vs realised SoC on 15-min rollover.
+        # Does not influence any decision; written to _stored, saved below on
+        # the learning tick.
+        self._update_prediction_scorecard(now, battery_soc)
+
         # ---- EV charge controller (v0.26.0) — runs in its own asyncio loop ----
         # Main update just caches the inputs; the decoupled control loop reads
         # the cache at its configured cadence (default 10 s, range 5–60 s).
@@ -1769,6 +1820,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             solar_floor_log_count=len(self._stored.get("solar_floor_log", [])),
             solar_hourly_factors=self.get_solar_hourly_accuracy_profile(),
             solar_hourly_samples=self.get_solar_hourly_sample_counts(),
+            # v0.43.0 — S1 groundwork: per-hour forecast-ratio percentiles
+            # (observability; not yet consumed by the optimiser).
+            solar_hourly_p10=self.get_solar_hourly_percentile_profile(10),
+            solar_hourly_p50=self.get_solar_hourly_percentile_profile(50),
+            solar_hourly_p90=self.get_solar_hourly_percentile_profile(90),
+            # v0.44.0 — S1: active confidence percentile the optimiser plans
+            # against (50 = median = neutral).
+            solar_confidence_pct=float(self._stored.get(
+                "solar_confidence_pct", DEFAULT_SOLAR_CONFIDENCE_PCT,
+            )),
+            # v0.45.0 — E1: live EV session demand the optimiser is reserving
+            # for the near-term horizon (0 = no forced session, falls back to
+            # the learned hourly EV model).
+            ev_dp_session_kw=round(ev_session_kw, 2),
             # v0.28.6: short-term solar correction visibility
             solar_short_term_factor=round(self._st_solar_factor, 3),
             solar_short_term_samples=len(self._st_solar_residuals),
@@ -1782,6 +1847,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             **ev_telemetry,
             **savings,
             **self.get_export_income_summary(),
+            **self.get_prediction_accuracy_summary(),
         )
 
     # ------------------------------------------------------------------ #
@@ -2189,8 +2255,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
            the current estimate.  A 5× factor allows genuine large spikes (sauna,
            heat pump + oven simultaneously) while blocking sensor errors.
         """
-        hour = datetime.now().hour
-        hourly: list[float] = self._stored.setdefault("house_load_hourly", [0.0] * 24)
+        now = datetime.now()
+        hour = now.hour
+        # v0.46.0 — L1: update the profile for the current day type (weekday
+        # Mon–Fri vs weekend Sat/Sun). Weekends have a different load shape
+        # (later mornings, more daytime presence) that a single blended curve
+        # smears out.
+        key = "house_load_weekend" if now.weekday() >= 5 else "house_load_weekday"
+        hourly: list[float] = self._stored.setdefault(key, [0.0] * 24)
         while len(hourly) < 24:
             hourly.append(0.0)
         current = hourly[hour]
@@ -2205,19 +2277,34 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             3,
         )
 
-    def get_house_load_profile(self) -> list[float]:
-        """Return the learned per-hour house load profile (kW, 24 values).
+    def get_house_load_profile(self, weekend: bool | None = None) -> list[float]:
+        """Return the learned per-hour house load profile (kW, 24 values) for
+        the requested day type (v0.46.0 — L1).
 
-        For hours that have not been observed yet (value == 0.0), falls back
-        to the short-term rolling average so the optimizer always has a
-        reasonable estimate from the very first run.
+        `weekend=None` selects today's type. Each hour falls back, in order, to:
+        its own learned value → the legacy combined profile → the other day
+        type → the short-term rolling average — so the optimizer always has a
+        reasonable estimate even before the split profiles have warmed up.
         """
-        profile = list(self._stored.get("house_load_hourly", [0.0] * 24))
-        while len(profile) < 24:
-            profile.append(0.0)
+        if weekend is None:
+            weekend = datetime.now().weekday() >= 5
+        key = "house_load_weekend" if weekend else "house_load_weekday"
+        other_key = "house_load_weekday" if weekend else "house_load_weekend"
+        profile = list(self._stored.get(key, [0.0] * 24))
+        legacy = list(self._stored.get("house_load_hourly", [0.0] * 24))
+        other = list(self._stored.get(other_key, [0.0] * 24))
+        for src in (profile, legacy, other):
+            while len(src) < 24:
+                src.append(0.0)
         load_history = self._stored.get("load_history", [])
         fallback = _rolling_mean(load_history, VACATION_SHORT_WINDOW) if load_history else 0.5
-        return [v if v > 0.0 else round(fallback, 3) for v in profile]
+        out: list[float] = []
+        for h in range(24):
+            v = profile[h]
+            if v <= 0.0:
+                v = legacy[h] if legacy[h] > 0.0 else (other[h] if other[h] > 0.0 else fallback)
+            out.append(round(v, 3))
+        return out
 
     def _update_daily_solar(self, pv_power_w: float) -> None:
         """Accumulate today's solar production; push to daily log when day rolls over."""
@@ -2667,6 +2754,146 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 if s.get("f", 0) >= SOLAR_ACCURACY_COMPARISON_W
             ))
         return counts
+
+    # ── Solar forecast percentiles (v0.43.0 — S1 groundwork) ──────────────
+    # The per-hour buckets already hold the raw (forecast, actual) pairs. The
+    # existing factor collapses each bucket to a median; these expose the
+    # spread (P10/P50/P90 of the actual/forecast ratio). NOT yet consumed by
+    # the optimiser — observability only, so a later release can switch the DP
+    # to a conservative percentile once the scorecard confirms the spread.
+    def get_solar_hour_percentile(self, hour: int, p: float) -> float | None:
+        """Percentile `p` (0–100) of the actual/forecast ratio for `hour`'s
+        bucket, clamped to [0.3, 1.5] like the median factor. Returns None when
+        the bucket hasn't reached the minimum sample count."""
+        by_hour: dict = self._stored.get("solar_accuracy_by_hour", {})
+        bucket: list[dict] = by_hour.get(str(hour), [])
+        ratios: list[float] = []
+        for s in bucket:
+            f = s.get("f", 0)
+            a = s.get("a", 0)
+            if f >= SOLAR_ACCURACY_COMPARISON_W:
+                ratios.append(a / f)
+        if len(ratios) < SOLAR_ACCURACY_HOUR_MIN_SAMPLES:
+            return None
+        ratios.sort()
+        # Linear-interpolation percentile (no numpy dependency).
+        k = (len(ratios) - 1) * (max(0.0, min(100.0, p)) / 100.0)
+        lo = int(k)
+        hi = min(lo + 1, len(ratios) - 1)
+        val = ratios[lo] + (ratios[hi] - ratios[lo]) * (k - lo)
+        return round(max(0.3, min(1.5, val)), 3)
+
+    def get_solar_hourly_percentile_profile(self, p: float) -> list[float | None]:
+        """24-length list of the hour-bucket percentile `p`; None where cold."""
+        return [self.get_solar_hour_percentile(h, p) for h in range(24)]
+
+    # ── Prediction scorecard (v0.43.0 — M1) ───────────────────────────────
+    def _update_prediction_scorecard(
+        self, now: datetime, battery_soc: float,
+    ) -> None:
+        """On each 15-min slot rollover, record the optimiser plan's predicted
+        SoC for the slot vs the realised SoC. Pure observability — never
+        influences a decision. Lets accuracy be measured before any logic
+        change is allowed to claim it improved precision."""
+        # v0.46.1 — skip the post-restart warm-up window. The optimiser plan is
+        # cold for the first few minutes after a restart and emits garbage
+        # predicted SoC; logging it would inflate the MAE for the next 7 days.
+        try:
+            if (now - self._started_at).total_seconds() < PREDICTION_WARMUP_SECONDS:
+                return
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            local = now.astimezone()
+            slot_start = local.replace(
+                minute=(local.minute // 15) * 15, second=0, microsecond=0,
+            )
+        except Exception:  # noqa: BLE001
+            return
+        # Same slot we already recorded → nothing to do.
+        if self._sc_slot_start is not None and slot_start <= self._sc_slot_start:
+            return
+        # Skip implausible SoC reads (0 / unavailable). Common in the first
+        # ticks after a restart before FoxESS live state populates — and the
+        # battery never legitimately sits at 0 % (floor is well above it).
+        # Recording one would poison the MAE. Don't advance the tracked slot,
+        # so a valid read later in the same slot still gets recorded.
+        if battery_soc is None or battery_soc <= 0:
+            return
+        self._sc_slot_start = slot_start
+        # Find the plan's prediction for this slot (hour + 15-min bucket).
+        h = slot_start.hour
+        mb = (slot_start.minute // 15) * 15
+        pred_soc = None
+        pred_action = None
+        for s in self._optimizer_plan:
+            if s.get("hour") == h and ((s.get("minute", 0) // 15) * 15) == mb:
+                pred_soc = s.get("soc")
+                pred_action = s.get("action")
+                break
+        if pred_soc is None:
+            return  # plan doesn't cover this slot (cold start / no day-ahead)
+        log: list[dict] = self._stored.setdefault("prediction_log", [])
+        log.append({
+            "slot": slot_start.isoformat(),
+            "hour": h,
+            "pred_soc": int(round(float(pred_soc))),
+            "act_soc": round(float(battery_soc), 1),
+            "pred_action": pred_action,
+        })
+        if len(log) > PREDICTION_LOG_MAX:
+            del log[: len(log) - PREDICTION_LOG_MAX]
+
+    def get_prediction_accuracy_summary(self) -> dict:
+        """Rolling prediction-accuracy metrics for the scorecard sensor.
+
+        - SoC MAE (mean absolute error, % points) over 7 d / 30 d windows.
+        - Solar forecast MAPE (%) from the per-hour buckets.
+        - Action mix the plan asked for over the recent window.
+        Count-based windows (96 slots/day) avoid timezone-string comparisons.
+        """
+        log: list[dict] = self._stored.get("prediction_log", [])
+
+        def _soc_mae(n_slots: int) -> float:
+            # Ignore any implausible-SoC samples (act_soc <= 0) that may have
+            # been logged before the act_soc>0 guard existed, so a single
+            # post-restart glitch can't pin the MAE.
+            recent = [
+                e for e in log[-n_slots:]
+                if "pred_soc" in e and e.get("act_soc", 0) > 0
+            ]
+            if not recent:
+                return 0.0
+            errs = [abs(e["pred_soc"] - e["act_soc"]) for e in recent]
+            return round(sum(errs) / len(errs), 2)
+
+        # Solar MAPE from the per-hour (forecast, actual) buckets.
+        by_hour: dict = self._stored.get("solar_accuracy_by_hour", {})
+        sol_errs: list[float] = []
+        for bucket in by_hour.values():
+            for s in bucket:
+                f = s.get("f", 0)
+                a = s.get("a", 0)
+                if f >= SOLAR_ACCURACY_COMPARISON_W:
+                    sol_errs.append(abs(a - f) / f)
+        solar_mape = round(100.0 * sum(sol_errs) / len(sol_errs), 1) if sol_errs else 0.0
+
+        # Predicted-action mix over the 7-day window.
+        recent = log[-PREDICTION_MAE_WINDOW_SLOTS:]
+        action_mix = {"CHARGE": 0, "EXPORT": 0, "IDLE": 0}
+        for e in recent:
+            a = e.get("pred_action")
+            if a in action_mix:
+                action_mix[a] += 1
+
+        return {
+            "prediction_soc_mae_7d": _soc_mae(PREDICTION_MAE_WINDOW_SLOTS),
+            "prediction_soc_mae_30d": _soc_mae(PREDICTION_MAE_WINDOW_SLOTS_LONG),
+            "prediction_solar_mape": solar_mape,
+            "prediction_samples": len(log),
+            "prediction_action_mix": action_mix,
+            "prediction_log": log[-96:],  # last 24 h for charting
+        }
 
     # ------------------------------------------------------------------ #
     # Action log (export / grid-charge session tracking)                  #
@@ -3301,6 +3528,32 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         Danish HA → `da`, anything else → `en`.
         """
         return da if self._lang == "da" else en
+
+    @staticmethod
+    def _ev_session_demand_kw(
+        *,
+        connected: bool,
+        charging_now: bool,
+        effective_mode: str,
+        requested_mode: str,
+        live_kw: float,
+        max_kw: float,
+    ) -> float:
+        """Live EV demand the optimiser should treat as near-certain (v0.45.0, E1).
+
+        Returns 0.0 unless the EV is plugged in AND in a forced-draw situation —
+        actively charging, the controller's effective mode is pv+battery or full
+        (fast), or the requested EVCC mode is now/minpv. Pure-PV charging returns
+        0.0 because the solar→EV idle dynamics already account for it. When a
+        session is forced, prefer the live charge power, else the learned max."""
+        forced = bool(connected) and (
+            bool(charging_now)
+            or effective_mode in (EV_MODE_PV_BATTERY, EV_MODE_FULL)
+            or requested_mode in (EV_MODE_NOW, EV_MODE_MIN_PV)
+        )
+        if not forced:
+            return 0.0
+        return live_kw if live_kw > 0.0 else max(0.0, float(max_kw))
 
     def _compute_ev_target_kw(
         self, mode: str, solar_surplus: float, battery_soc: float,
@@ -5302,6 +5555,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         min_export_price: float,
         min_spread: float,
         max_export_kw: float,
+        ev_session_kw: float = 0.0,
+        ev_session_horizon_h: float = 0.0,
+        house_load_weekend: list[float] | None = None,
     ) -> list[dict]:
         """Backward-induction dynamic programming optimizer.
 
@@ -5331,6 +5587,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 charge_rate_kw, house_load_profile, ev_charge_hourly, ev_max_kw,
                 vat_factor, tariff_sched, elafgift, spot_markup,
                 export_fee, feed_in_tariff, min_export_price, min_spread, max_export_kw,
+                ev_session_kw, ev_session_horizon_h,
+                house_load_weekend=house_load_weekend,
             )
         except Exception as err:
             _LOGGER.warning("Optimizer failed — returning empty plan: %s", err)
@@ -5360,6 +5618,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         min_export_price: float,
         min_spread: float,
         max_export_kw: float,
+        ev_session_kw: float = 0.0,
+        ev_session_horizon_h: float = 0.0,
+        house_load_weekend: list[float] | None = None,
     ) -> list[dict]:
         """Core DP computation at native 15-min resolution.
 
@@ -5387,8 +5648,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # orientation effect (east panels over-forecast in afternoon, west
         # panels in morning, etc.) without any user input about panel layout.
         global_acc = max(0.0, float(solar_accuracy_factor))
-        # Precompute hourly factors (clamped, rounded already by getter)
-        hourly_acc: list[float] = self.get_solar_hourly_accuracy_profile() if hasattr(self, "get_solar_hourly_accuracy_profile") else [global_acc] * 24
+        # v0.44.0 — S1: the per-hour solar factor is the `confidence` percentile
+        # of the observed forecast/actual ratio, not just the median. At the
+        # default confidence of 50 this IS the median (numerically identical to
+        # the prior behaviour), so the default is a no-op. Lowering it makes the
+        # planner assume more conservative solar. Cold hours fall back to the
+        # global rolling factor, exactly as before.
+        confidence = float(self._stored.get(
+            "solar_confidence_pct", DEFAULT_SOLAR_CONFIDENCE_PCT,
+        ))
+        hourly_acc: list[float] = []
+        for h in range(24):
+            pct = self.get_solar_hour_percentile(h, confidence)
+            hourly_acc.append(global_acc if pct is None else pct)
 
         def _slot_factor(slot_start_dt):
             try:
@@ -5416,6 +5688,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             house_load_profile.append(0.5)
         while len(tariff_sched) < 24:
             tariff_sched.append(0.0)
+        # v0.46.0 — L1: weekend profile (falls back to the weekday profile when
+        # not supplied / not yet warmed up). Per-slot selection happens below.
+        house_load_weekend = list(house_load_weekend) if house_load_weekend else list(house_load_profile)
+        while len(house_load_weekend) < 24:
+            house_load_weekend.append(0.5)
 
         slot_data: list[dict] = []
         for slot_start, dur_h, h, m, spot in grid_slot_data:
@@ -5433,9 +5710,25 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
             sell_h = max(0.0, spot - export_fee - feed_in_tariff)
             solar_kw = solar_kw_by_start.get(slot_start, 0.0)
-            house_kw = house_load_profile[h]
+            # v0.46.0 — L1: pick the weekday or weekend load curve by the slot's
+            # own date, so a 48 h horizon that spans into the weekend uses the
+            # right shape per slot.
+            try:
+                slot_is_weekend = slot_start.astimezone().weekday() >= 5
+            except Exception:  # noqa: BLE001
+                slot_is_weekend = False
+            house_kw = (house_load_weekend if slot_is_weekend else house_load_profile)[h]
             ev_prob = ev_charge_hourly[h]
             ev_kw = ev_prob * ev_max_kw
+            # v0.45.0 — E1: within the live-session horizon, use the certain
+            # session demand instead of the hour-of-day expectation, and block
+            # battery grid-charging so it doesn't stack against the car's draw.
+            hours_ahead = max(0.0, (slot_start - now).total_seconds() / 3600.0)
+            ev_session_active = (
+                ev_session_kw > 0.0 and hours_ahead <= ev_session_horizon_h
+            )
+            if ev_session_active:
+                ev_kw = max(ev_kw, ev_session_kw)
 
             # Idle dynamics: solar → house → EV → battery, then any deficit from battery
             solar_to_house = min(solar_kw, house_kw)
@@ -5454,7 +5747,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "buy": round(buy_h, 4),
                 "sell": round(sell_h, 4),
                 "idle_delta_pct": idle_delta_pct,
-                "ev_blocked": ev_prob >= ev_block_prob_threshold,
+                "ev_blocked": (ev_prob >= ev_block_prob_threshold) or ev_session_active,
             })
 
         N = len(slot_data)

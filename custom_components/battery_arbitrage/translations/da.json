@@ -280,6 +280,7 @@
       "todays_plan": { "name": "Dagens plan" },
       "action_log": { "name": "Sessionslog" },
       "export_income": { "name": "Eksport-indtægt" },
+      "prediction_accuracy": { "name": "Forudsigelsesnøjagtighed" },
       "ev_target_kw":   { "name": "EV mål-opladningseffekt" },
       "ev_target_amps": { "name": "EV mål-strøm" },
       "ev_surplus_kw":  { "name": "EV tilgængeligt overskud" },
@@ -409,7 +410,8 @@
       "battery_degradation_cost": { "name": "Batteri-slidomkostning (DKK/kWh cyklet)" },
       "ev_min_charge_kw": { "name": "EV minimum opladningshastighed (kW)" },
       "ev_max_charge_kw": { "name": "EV maksimum opladningshastighed (kW)" },
-      "ev_battery_priority_soc": { "name": "Batteri-først tærskel (%) — EV venter til husbatteriet når dette niveau" }
+      "ev_battery_priority_soc": { "name": "Batteri-først tærskel (%) — EV venter til husbatteriet når dette niveau" },
+      "solar_confidence_pct": { "name": "Sol-konfidens (%) — prognose-percentil optimeringen planlægger efter (50 = median)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage aktiv" },
