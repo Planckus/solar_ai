@@ -279,6 +279,7 @@
       "solar_tomorrow_kwh": { "name": "Solar: expected tomorrow" },
       "todays_plan": { "name": "Today's plan" },
       "action_log": { "name": "Session log" },
+      "export_income": { "name": "Export income" },
       "ev_target_kw":   { "name": "EV target charge rate" },
       "ev_target_amps": { "name": "EV target current" },
       "ev_surplus_kw":  { "name": "EV surplus available" },
