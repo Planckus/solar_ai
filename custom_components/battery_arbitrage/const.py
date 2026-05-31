@@ -414,6 +414,31 @@ SOLAR_ACCURACY_HOUR_BUCKET_MAX = 168  # 7 days × 24 samples max per hour bucket
 SOLAR_ACCURACY_HOUR_MIN_SAMPLES = 8   # Need ≥ 8 daylight samples per hour before trusting bucket
 # Hour buckets fall back to the global rolling median until they warm up.
 
+# v0.43.0 — prediction scorecard (M1). Pure observability: logs the optimiser's
+# predicted SoC per 15-min slot vs the realised SoC so accuracy can be measured
+# before any logic change is allowed to claim it improved precision.
+PREDICTION_LOG_MAX = 2880             # 30 days × 96 fifteen-minute slots
+PREDICTION_MAE_WINDOW_SLOTS = 672     # 7 days × 96 slots (rolling SoC-MAE window)
+PREDICTION_MAE_WINDOW_SLOTS_LONG = 2880  # 30 days
+# v0.46.1 — skip scorecard logging for this long after (re)start: the optimiser
+# plan is cold and emits garbage predicted SoC until live inputs stabilise. A
+# restart is an operational event, not a prediction to grade.
+PREDICTION_WARMUP_SECONDS = 900       # 15 min
+
+# v0.44.0 — S1: solar-forecast confidence percentile fed to the DP optimiser.
+# 50 = the per-hour median (numerically identical to the prior behaviour, so the
+# default is a no-op). Lower it to plan against more conservative solar (assume
+# less free production) → the planner is more willing to grid-charge in cheap
+# windows and less likely to over-export battery it will need on a cloudy day.
+DEFAULT_SOLAR_CONFIDENCE_PCT = 50     # percentile; range enforced 10–90 by the number entity
+
+# v0.45.0 — E1: when the EV is plugged in and in a forced-draw mode (or actively
+# charging), the optimiser treats the next EV_SESSION_DP_HORIZON_H hours of EV
+# demand as near-certain (the live session) rather than the hour-of-day
+# probability. Without the car's SoC we can't know the full session length, so
+# the certain window is capped; beyond it the learned hourly model resumes.
+EV_SESSION_DP_HORIZON_H = 2.0
+
 # Coordinator update intervals
 DEFAULT_FAST_POLL_SECONDS = 15       # v0.36.0: dropped from 30 → 15 so Lovelace cards driven by integration sensors refresh every 15 s (configurable 10–300)
 CONF_FAST_POLL_INTERVAL = "fast_poll_interval"

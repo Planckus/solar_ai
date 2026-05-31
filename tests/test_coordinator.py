@@ -160,3 +160,174 @@ class TestMsgLanguage:
 
     def test_danish(self):
         assert self._call("da", "English", "Dansk") == "Dansk"
+
+
+# ------------------------------------------------------------------ #
+# v0.43.0 — solar-forecast percentiles + prediction scorecard          #
+# ------------------------------------------------------------------ #
+
+class TestSolarPercentile:
+    """get_solar_hour_percentile returns clamped ratio percentiles, or None
+    when the bucket is below the minimum sample count."""
+
+    def _stub(self, samples):
+        import types
+        return types.SimpleNamespace(
+            _stored={"solar_accuracy_by_hour": {"12": samples}}
+        )
+
+    def _call(self, samples, p):
+        from custom_components.battery_arbitrage.coordinator import (
+            BatteryArbitrageCoordinator,
+        )
+        return BatteryArbitrageCoordinator.get_solar_hour_percentile(
+            self._stub(samples), 12, p,
+        )
+
+    def test_cold_bucket_returns_none(self):
+        # Fewer than SOLAR_ACCURACY_HOUR_MIN_SAMPLES (8) → None.
+        samples = [{"f": 1000, "a": 1000} for _ in range(5)]
+        assert self._call(samples, 50) is None
+
+    def test_median_of_perfect_forecast_is_one(self):
+        samples = [{"f": 1000, "a": 1000} for _ in range(10)]
+        assert self._call(samples, 50) == 1.0
+
+    def test_low_percentile_below_high(self):
+        # ratios 0.5 … 1.4 → P10 should be well below P90.
+        samples = [{"f": 1000, "a": 500 + i * 100} for i in range(10)]
+        p10 = self._call(samples, 10)
+        p90 = self._call(samples, 90)
+        assert p10 < p90
+        assert 0.3 <= p10 <= 1.5 and 0.3 <= p90 <= 1.5
+
+    def test_samples_below_comparison_threshold_ignored(self):
+        # f below SOLAR_ACCURACY_COMPARISON_W (100) don't count → still cold.
+        samples = [{"f": 50, "a": 50} for _ in range(20)]
+        assert self._call(samples, 50) is None
+
+    def test_p50_equals_median_neutral_default(self):
+        # S1 neutrality guarantee: confidence=50 must equal the median, so the
+        # default knob value is a no-op vs the prior median behaviour.
+        import statistics
+        for n in (9, 10, 13, 20):
+            samples = [{"f": 1000, "a": 400 + i * 60} for i in range(n)]
+            ratios = [s["a"] / s["f"] for s in samples]
+            expected = round(max(0.3, min(1.5, statistics.median(ratios))), 3)
+            assert self._call(samples, 50) == expected
+
+
+# ------------------------------------------------------------------ #
+# v0.45.0 — E1 session-aware EV demand                                 #
+# ------------------------------------------------------------------ #
+
+class TestEvSessionDemand:
+    """_ev_session_demand_kw returns live demand only for forced-draw sessions."""
+
+    def _call(self, **kw):
+        from custom_components.battery_arbitrage.coordinator import (
+            BatteryArbitrageCoordinator,
+        )
+        base = dict(
+            connected=True, charging_now=False, effective_mode="pv",
+            requested_mode="pv", live_kw=0.0, max_kw=11.0,
+        )
+        base.update(kw)
+        return BatteryArbitrageCoordinator._ev_session_demand_kw(**base)
+
+    def test_disconnected_is_zero(self):
+        assert self._call(connected=False, charging_now=True, live_kw=7.0) == 0.0
+
+    def test_pure_pv_is_zero(self):
+        # Connected, pv mode, not "charging_now" → handled by idle dynamics.
+        assert self._call(effective_mode="pv", requested_mode="pv") == 0.0
+
+    def test_fast_mode_uses_live_power(self):
+        assert self._call(effective_mode="full", live_kw=7.4) == 7.4
+
+    def test_fast_mode_falls_back_to_max_when_idle(self):
+        # Forced session but not drawing yet (just plugged) → learned max.
+        assert self._call(effective_mode="full", live_kw=0.0, max_kw=11.0) == 11.0
+
+    def test_charging_now_counts(self):
+        assert self._call(charging_now=True, live_kw=3.6) == 3.6
+
+    def test_evcc_now_mode_counts(self):
+        assert self._call(requested_mode="now", live_kw=5.0) == 5.0
+
+
+# ------------------------------------------------------------------ #
+# v0.46.0 — L1 weekday/weekend house-load split                        #
+# ------------------------------------------------------------------ #
+
+class TestHouseLoadProfileSplit:
+    """get_house_load_profile returns the requested day type with layered
+    fallback (own → legacy combined → other type → rolling mean)."""
+
+    def _call(self, stored, weekend):
+        import types
+        from custom_components.battery_arbitrage.coordinator import (
+            BatteryArbitrageCoordinator,
+        )
+        stub = types.SimpleNamespace(_stored=stored)
+        return BatteryArbitrageCoordinator.get_house_load_profile(stub, weekend=weekend)
+
+    def test_returns_requested_day_type(self):
+        stored = {
+            "house_load_weekday": [1.0] * 24,
+            "house_load_weekend": [2.0] * 24,
+        }
+        assert self._call(stored, weekend=False)[12] == 1.0
+        assert self._call(stored, weekend=True)[12] == 2.0
+
+    def test_cold_hour_falls_back_to_legacy(self):
+        stored = {
+            "house_load_weekday": [0.0] * 24,
+            "house_load_weekend": [0.0] * 24,
+            "house_load_hourly": [3.0] * 24,
+        }
+        assert self._call(stored, weekend=False)[8] == 3.0
+
+    def test_cold_falls_back_to_other_day_type(self):
+        stored = {
+            "house_load_weekday": [0.0] * 24,
+            "house_load_weekend": [2.5] * 24,
+            "house_load_hourly": [0.0] * 24,
+        }
+        # Weekday cold, no legacy → borrow the weekend curve rather than guess.
+        assert self._call(stored, weekend=False)[8] == 2.5
+
+    def test_all_cold_uses_rolling_mean_fallback(self):
+        stored = {"load_history": [0.4] * 50}
+        # No profiles at all → short-term rolling mean (0.4).
+        assert self._call(stored, weekend=False)[8] == 0.4
+
+
+class TestPredictionScorecard:
+    """get_prediction_accuracy_summary computes SoC MAE over the recent log."""
+
+    def _call(self, log):
+        import types
+        from custom_components.battery_arbitrage.coordinator import (
+            BatteryArbitrageCoordinator,
+        )
+        stub = types.SimpleNamespace(
+            _stored={"prediction_log": log, "solar_accuracy_by_hour": {}}
+        )
+        return BatteryArbitrageCoordinator.get_prediction_accuracy_summary(stub)
+
+    def test_empty_log(self):
+        out = self._call([])
+        assert out["prediction_soc_mae_7d"] == 0.0
+        assert out["prediction_samples"] == 0
+
+    def test_mae_computation(self):
+        log = [
+            {"slot": "s1", "pred_soc": 50, "act_soc": 52, "pred_action": "IDLE"},
+            {"slot": "s2", "pred_soc": 60, "act_soc": 56, "pred_action": "CHARGE"},
+        ]
+        out = self._call(log)
+        # |50-52| + |60-56| = 2 + 4 → mean 3.0
+        assert out["prediction_soc_mae_7d"] == 3.0
+        assert out["prediction_samples"] == 2
+        assert out["prediction_action_mix"]["CHARGE"] == 1

@@ -31,6 +31,7 @@ from .const import (
     DEFAULT_MAX_EXPORT_KW,
     DEFAULT_MIN_EXPORT_PRICE,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
+    DEFAULT_SOLAR_CONFIDENCE_PCT,
     DEFAULT_SPOT_MARKUP,
     DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES,
     DEFAULT_VAT_PCT,
@@ -233,6 +234,22 @@ async def async_setup_entry(
             min_val=50,
             max_val=100,
             step=1,
+            mode=NumberMode.SLIDER,
+            display_precision=0,
+        ),
+        # Solar confidence (v0.44.0 — S1). Percentile of the per-hour forecast/
+        # actual ratio the optimiser plans against. 50 = median (= prior
+        # behaviour). Lower = plan against more conservative solar.
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="solar_confidence_pct",
+            translation_key="solar_confidence_pct",
+            default=DEFAULT_SOLAR_CONFIDENCE_PCT,
+            icon="mdi:weather-partly-cloudy",
+            unit="%",
+            min_val=10,
+            max_val=90,
+            step=5,
             mode=NumberMode.SLIDER,
             display_precision=0,
         ),

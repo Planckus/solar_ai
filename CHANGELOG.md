@@ -9,6 +9,57 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.46.1] — 2026-05-31
+
+### Fixed — prediction scorecard restart artifacts
+
+- The scorecard logged garbage predicted-SoC samples in the first minutes after a restart, when the optimiser plan is still cold (e.g. `pred_soc 0 / 45` while the battery was actually ~98 %). A few of these inflated the rolling SoC-MAE for the whole 7-day window. The scorecard now skips logging for a `PREDICTION_WARMUP_SECONDS` (15 min) warm-up after each (re)start — a restart is an operational event, not a prediction to grade. A one-time reset clears the already-contaminated early log for a clean baseline; the warm-up guard prevents recurrence.
+
+---
+
+## [0.46.0] — 2026-05-31
+
+### Added — weekday/weekend house-load split (L1)
+
+- **Separate weekday and weekend load profiles.** The learned 24-hour house-load curve is now split into Mon–Fri and Sat/Sun profiles (`house_load_weekday`, `house_load_weekend`), each learned with the same EMA. The optimiser picks the right curve per slot by the slot's own date, so a 48-hour horizon spanning into the weekend uses the correct shape. On upgrade both profiles are seeded from the previous combined curve, and each hour falls back (own value → legacy combined → other day type → rolling mean) so nothing goes cold. Weekends typically have later mornings and more daytime presence — a single blended curve smeared that out, mis-estimating idle SoC drift and house-deficit costs.
+
+Tariff correctness (P1) was reviewed and is already handled: the DSO + Energinet schedule is fetched from EDS DatahubPricelist for the current date (seasonally correct) with time-of-day variation, and applied per hour-of-day across the horizon. No change needed.
+
+---
+
+## [0.45.0] — 2026-05-31
+
+### Added — session-aware EV demand in the optimiser (E1)
+
+- **Live EV session feeds the DP.** Previously the optimiser modelled EV load purely as an hour-of-day *probability* (`ev_charge_hourly[h] × ev_max_kw`). When the car is plugged in and in a forced-draw situation — actively charging, or the controller's effective mode is pv+battery / full (fast), or the requested EVCC mode is now/minpv — the optimiser now treats the next `EV_SESSION_DP_HORIZON_H` hours (default 2 h) of EV demand as near-certain (the live charge power, else the learned max) and blocks battery grid-charging across that window so the two draws don't stack against the grid-import limit. Beyond the horizon the learned hourly model resumes.
+- Pure-PV charging is unchanged — it's already captured by the solar→EV idle dynamics, so it does not trigger a forced session.
+- The reserved demand is surfaced as the `dp_session_demand_kw` attribute on the `ev_target_kw` sensor (0 = no live session, using the learned model).
+
+Without the car's state of charge the full session length is unknown, so the certain window is capped at 2 h; extending it to the exact remaining-kWh is future work (E3, car-SoC integration).
+
+---
+
+## [0.44.0] — 2026-05-31
+
+### Added — probabilistic solar in the optimiser (S1)
+
+- **Solar confidence knob.** The DP optimiser now plans against a configurable percentile of each hour's observed forecast/actual ratio instead of the fixed median. New `Solar confidence` number entity (`solar_confidence_pct`, 10–90 %, default **50**). At 50 the percentile equals the median, so the default is numerically identical to 0.43.0 — **no behaviour change until you lower it**. Lowering it makes the planner assume more conservative solar (plan against e.g. the P35 outcome), so it grid-charges more readily in cheap windows and is less likely to over-export battery it will need on a cloudy day. Cold hours still fall back to the global rolling factor exactly as before. The active percentile is surfaced on the `solar_hourly_accuracy` sensor (`confidence_pct`).
+
+This builds directly on the 0.43.0 P10/P50/P90 groundwork. Recommended workflow: leave it at 50 until the `prediction_accuracy` scorecard has a week of baseline, then lower it and watch the SoC-MAE / solar-MAPE for the effect.
+
+---
+
+## [0.43.0] — 2026-05-31
+
+### Added — prediction scorecard + solar-forecast percentiles (observability)
+
+Groundwork for measurably more precise buy/sell/charge decisions. Both additions are pure observability — no decision logic changes in this release, so behaviour is identical to 0.42.0. They establish a baseline so a later release can prove (on real data) that a logic change improved precision rather than assuming it.
+
+- **Prediction scorecard (M1).** On each 15-minute slot rollover the optimiser's predicted battery SoC for the slot is logged against the realised SoC (`prediction_log`, 30-day cap). New sensor `prediction_accuracy` reports the rolling 7-day SoC mean-absolute-error (% points) as state, with attributes for 30-day MAE, solar-forecast MAPE (from the per-hour buckets), sample count, the predicted-action mix, and the last 24 h of slot records for charting.
+- **Solar-forecast percentiles (S1 groundwork).** The per-hour `(forecast, actual)` buckets already collected are now also exposed as P10/P50/P90 of the actual/forecast ratio (`get_solar_hour_percentile`, surfaced on the `solar_hourly_accuracy` sensor). The optimiser still uses the median factor — the percentiles are visibility only, so a later release can switch export/charge sizing to a conservative percentile once the scorecard confirms the spread is real.
+
+---
+
 ## [0.42.0] — 2026-05-31
 
 ### Added — export-income tracking
