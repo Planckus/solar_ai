@@ -291,26 +291,26 @@ Control loop properties:
 
 ### Settings reference
 
-Every setting below is editable from the dashboard (**Indstillinger / Settings** page) without restarting HA — changes take effect on the next coordinator cycle. The groupings match the cards on that page.
+Every setting below is editable from the dashboard (**Indstillinger / Settings** page) without restarting HA — changes take effect on the next coordinator cycle. The groupings match the cards on that page. Home Assistant shows the labels in Danish on a Danish install and in English elsewhere — both are listed below (**English**<br>_Danish_).
 
 #### Master controls
 
 | Setting | Type | What it does |
 |---|---|---|
-| **Arbitrage enabled** | on/off | Master switch. When **off**, Solar AI still computes and reports its plan but sends **no** charge/export commands to the inverter — i.e. monitoring mode. Turn on to let it actually control the battery. |
-| **Mode-change notifications** | on/off | Master toggle for push notifications on mode changes (the per-event toggles below still apply). |
-| **15-minute price resolution** | on/off | **Display only.** On = the price chart shows every 15-min slot; off = one row per hour. Does **not** affect the calculations — the optimiser always runs at native 15-min resolution. |
+| **Arbitrage enabled**<br>_Arbitrage aktiv_ | on/off | Master switch. When **off**, Solar AI still computes and reports its plan but sends **no** charge/export commands to the inverter — i.e. monitoring mode. Turn on to let it actually control the battery. |
+| **Mode-change notifications**<br>_Notifikationer ved tilstandsskift_ | on/off | Master toggle for push notifications on mode changes (the per-event toggles below still apply). |
+| **15-minute price resolution**<br>_15-minutters prisopløsning_ | on/off | **Display only.** On = the price chart shows every 15-min slot; off = one row per hour. Does **not** affect the calculations — the optimiser always runs at native 15-min resolution. |
 
 #### Battery limits
 
 | Setting | Range | Default | What it does |
 |---|---|---|---|
-| **Minimum SoC (export)** | 10–100 % | 50 % | The static export floor — the battery is never *exported* below this SoC, reserving the rest for the house. Ignored while *Dynamic discharge floor* is on. |
-| **Maximum SoC (grid charge)** | 10–100 % | 100 % | Ceiling that grid-charging will fill the battery to. |
-| **Export power cap** | 0–10 kW | 0 (no cap) | Limits how fast the battery discharges to the grid. 0 = use the full available rate. |
-| **Grid import limit** | 5–63 kW | 17 kW | Your main breaker rating. Total grid draw is kept under this — grid-charge power is reduced to leave headroom for house + EV load. |
-| **Dynamic discharge floor** | on/off | off | When on, replaces the static *Minimum SoC* with a self-learning floor sized to run the house until the next refill (sunrise solar or a cheap grid window), on top of the hardware minimum SoC. Short bridge → lower floor (export more); long winter night → higher floor (hold more). The safety margin self-corrects daily. |
-| **Effective discharge floor** | read-only | — | Shows the floor actually in effect right now (the static value, or the computed dynamic reserve) plus the self-learned safety margin. |
+| **Minimum SoC (export)**<br>_Minimum SoC (eksport)_ | 10–100 % | 50 % | The static export floor — the battery is never *exported* below this SoC, reserving the rest for the house. Ignored while *Dynamic discharge floor* is on. |
+| **Maximum SoC (grid charge)**<br>_Maksimum SoC (netopladning)_ | 10–100 % | 100 % | Ceiling that grid-charging will fill the battery to. |
+| **Export power cap**<br>_Eksporteffekt-grænse (0 = ingen)_ | 0–10 kW | 0 (no cap) | Limits how fast the battery discharges to the grid. 0 = use the full available rate. |
+| **Grid import limit**<br>_Net-importgrænse_ | 5–63 kW | 17 kW | Your main breaker rating. Total grid draw is kept under this — grid-charge power is reduced to leave headroom for house + EV load. |
+| **Dynamic discharge floor**<br>_Dynamisk afladningsgulv (selvlærende)_ | on/off | off | When on, replaces the static *Minimum SoC* with a self-learning floor sized to run the house until the next refill (sunrise solar or a cheap grid window), on top of the hardware minimum SoC. Short bridge → lower floor (export more); long winter night → higher floor (hold more). The safety margin self-corrects daily. |
+| **Effective discharge floor**<br>_Effektivt afladningsgulv_ | read-only | — | Shows the floor actually in effect right now (the static value, or the computed dynamic reserve) plus the self-learned safety margin. |
 
 #### Price parameters
 
@@ -318,32 +318,32 @@ These build the buy- and sell-side prices the optimiser uses. (The DSO + Energin
 
 | Setting | Range | Default | What it does |
 |---|---|---|---|
-| **Buy-side VAT** | 0–50 % | 25 % | VAT applied to the buy price. |
-| **Electricity duty (elafgift)** | 0.00–3.00 DKK/kWh | 0.01 | Danish electricity tax added to the buy price. |
-| **Spot price markup** | 0.00–0.50 DKK/kWh | 0.00 | Your retailer's per-kWh add-on on top of spot (buy side). |
-| **Sell-side fee** | 0.00–0.50 DKK/kWh | 0.00 | Per-kWh cut your provider takes from export revenue (subtracted from the sell price). |
-| **Minimum export price** | 0.00–2.00 DKK/kWh | 0.00 | Blocks exporting when the net sell price is below this. 0 = allow any price, including negative. |
+| **Buy-side VAT**<br>_Moms på køb_ | 0–50 % | 25 % | VAT applied to the buy price. |
+| **Electricity duty (elafgift)**<br>_Elafgift_ | 0.00–3.00 DKK/kWh | 0.01 | Danish electricity tax added to the buy price. |
+| **Spot price markup**<br>_Spotpris-tillæg (elhandlertillæg)_ | 0.00–0.50 DKK/kWh | 0.00 | Your retailer's per-kWh add-on on top of spot (buy side). |
+| **Sell-side fee**<br>_Salgsgebyr_ | 0.00–0.50 DKK/kWh | 0.00 | Per-kWh cut your provider takes from export revenue (subtracted from the sell price). |
+| **Minimum export price**<br>_Minimum eksportpris (0 = tillad negativ)_ | 0.00–2.00 DKK/kWh | 0.00 | Blocks exporting when the net sell price is below this. 0 = allow any price, including negative. |
 
 #### Optimizer
 
 | Setting | Range | Default | What it does |
 |---|---|---|---|
-| **Minimum arbitrage spread** | 0.00–3.00 DKK/kWh | 0.30 | Required gap between selling now and buying back later (after round-trip losses) before the optimiser will export-and-rebuy. Higher = more conservative, fewer cycles. |
-| **Battery wear cost** | 0.00–1.00 DKK/kWh | 0.10 | Estimated battery degradation per kWh cycled. Subtracted from both charge and export rewards so the optimiser won't cycle the battery for tiny gains. Higher = less cycling. |
-| **Solar confidence** | 10–90 % | 50 | The percentile of each hour's solar forecast the optimiser plans against. 50 = median (neutral, = previous behaviour). Lower = assume less solar (more conservative — grid-charges more readily in cheap windows, holds back more battery). |
+| **Minimum arbitrage spread**<br>_Minimum arbitrage-spread_ | 0.00–3.00 DKK/kWh | 0.30 | Required gap between selling now and buying back later (after round-trip losses) before the optimiser will export-and-rebuy. Higher = more conservative, fewer cycles. |
+| **Battery wear cost**<br>_Batteri-slidomkostning_ | 0.00–1.00 DKK/kWh | 0.10 | Estimated battery degradation per kWh cycled. Subtracted from both charge and export rewards so the optimiser won't cycle the battery for tiny gains. Higher = less cycling. |
+| **Solar confidence**<br>_Sol-konfidens_ | 10–90 % | 50 | The percentile of each hour's solar forecast the optimiser plans against. 50 = median (neutral, = previous behaviour). Lower = assume less solar (more conservative — grid-charges more readily in cheap windows, holds back more battery). |
 
 #### EV charge controller (requires the OCPP server or EVCC live-data mode)
 
 | Setting | Range | Default | What it does |
 |---|---|---|---|
-| **EV minimum charge rate** | 1.4–11 kW | 4.14 | Lowest rate the controller will run the car at — your charger's minimum (4.14 kW ≈ 3-phase 6 A). |
-| **EV maximum charge rate** | 1.4–22 kW | 11.0 | Cap on the EV charge rate (11 kW ≈ 3-phase 16 A). |
-| **Battery-first threshold** | 50–100 % | 80 % | In solar modes, the EV waits until the house battery reaches this SoC before it starts consuming solar surplus. |
-| **Auto-Full on negative price** | on/off | off | When on, automatically promotes the EV to Full charging while the buy price is negative (paid to consume), then restores the previous mode afterwards. |
+| **EV minimum charge rate**<br>_EV minimum opladningshastighed_ | 1.4–11 kW | 4.14 | Lowest rate the controller will run the car at — your charger's minimum (4.14 kW ≈ 3-phase 6 A). |
+| **EV maximum charge rate**<br>_EV maksimum opladningshastighed_ | 1.4–22 kW | 11.0 | Cap on the EV charge rate (11 kW ≈ 3-phase 16 A). |
+| **Battery-first threshold**<br>_Batteri-først tærskel_ | 50–100 % | 80 % | In solar modes, the EV waits until the house battery reaches this SoC before it starts consuming solar surplus. |
+| **Auto-Full on negative price**<br>_Auto-Fuld ved negativ pris_ | on/off | off | When on, automatically promotes the EV to Full charging while the buy price is negative (paid to consume), then restores the previous mode afterwards. |
 
 #### Charge rates by temperature (auto-learned)
 
-Seven `Max charge rate` controls (`<0`, `0–5`, `6–15`, `16–21`, `21–35`, `35–50`, `>50 °C`) hold the battery's maximum charge rate per cell-temperature band. These are **learned automatically** from observed charging; you can override a band manually if needed.
+Seven `Max charge rate` / `Maks. opladning` controls (`<0`, `0–5`, `6–15`, `16–21`, `21–35`, `35–50`, `>50 °C`) hold the battery's maximum charge rate per cell-temperature band. These are **learned automatically** from observed charging; you can override a band manually if needed.
 
 #### Notifications
 
