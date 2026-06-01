@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.47.6] — 2026-06-01
+
+### Fixed — battery arbitrage export now actually discharges to the grid
+
+- **Export used the wrong work mode.** `MODE_EXPORTING` set FoxESS **"Feed-in First"**, which only re-routes *solar* surplus to the grid — it does **not** discharge the battery at night. So even when the optimiser decided to export (and switched the mode), no battery power flowed to the grid. It now uses **"Force Discharge"** and sets the discharge power, so the battery is actually pushed to the grid.
+- **Power setpoints wrote the wrong unit.** `_set_charge_power` and `_set_discharge_power` did `int(kw * 1000)`, writing **watts** into the FoxESS force-charge/-discharge number entities, which are in **kW** (range 0–10). The out-of-range write silently failed, leaving the power at its default maximum (10 kW) — so grid-charging ran at full power **ignoring the grid-headroom cap** (an overcurrent risk) and any export cap was never applied. Both now write kW, clamped to the entity's range. Export with no cap defaults to the entity's max (full rate).
+
+---
+
 ## [0.47.5] — 2026-06-01
 
 ### Fixed — optimiser never executed charge/export under receding-horizon (regression)
