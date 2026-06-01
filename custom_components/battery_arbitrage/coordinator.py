@@ -1620,9 +1620,41 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if self._optimizer_plan:
             charge_hours = sorted({s["hour"] for s in self._optimizer_plan if s["action"] == "CHARGE"})
             export_hours = sorted({s["hour"] for s in self._optimizer_plan if s["action"] == "EXPORT"})
-            charge_str = ", ".join(f"{h:02d}h" for h in charge_hours) if charge_hours else "none"
-            export_str = ", ".join(f"{h:02d}h" for h in export_hours) if export_hours else "none"
-            plan_text = f"Charge: {charge_str}  ·  Export: {export_str}"
+
+            # v0.47.2 — date-aware plan string: group the hours by day and tag
+            # today / tomorrow, so e.g. tomorrow's 10h is not confused with a
+            # (past) 10h today. Hours collapse to whole-hour labels for brevity.
+            today_local = now.astimezone().date()
+
+            def _fmt_plan(action: str) -> str:
+                by_day: dict = {}
+                for s in self._optimizer_plan:
+                    if s["action"] != action:
+                        continue
+                    try:
+                        d = datetime.fromisoformat(s["iso"]).astimezone().date()
+                    except Exception:  # noqa: BLE001
+                        d = today_local
+                    by_day.setdefault(d, set()).add(s["hour"])
+                if not by_day:
+                    return self._msg("none", "ingen")
+                parts = []
+                for d in sorted(by_day):
+                    hrs = ", ".join(f"{h:02d}h" for h in sorted(by_day[d]))
+                    delta = (d - today_local).days
+                    if delta <= 0:
+                        label = self._msg("today", "i dag")
+                    elif delta == 1:
+                        label = self._msg("tomorrow", "i morgen")
+                    else:
+                        label = d.strftime("%a")
+                    parts.append(f"{label} {hrs}")
+                return "  |  ".join(parts)
+
+            plan_text = (
+                f"{self._msg('Charge', 'Køb')}: {_fmt_plan('CHARGE')}"
+                f"  ·  {self._msg('Export', 'Salg')}: {_fmt_plan('EXPORT')}"
+            )
         elif price_chart_slots:
             # Fallback: simple greedy sort (used before first optimizer run)
             sorted_by_buy = sorted(price_chart_slots, key=lambda s: s["buy"])
@@ -2361,36 +2393,28 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         solar_slot_data: list, grid_slot_data: list, tariff_sched: list,
         spot_markup: float, elafgift: float, vat_factor: float,
     ) -> float | None:
-        """Discharge floor that reserves enough SoC to run the house (projected
-        load) until the next refill — sunrise solar or a cheap grid window —
-        times a learned safety margin. Returns SoC %, clamped to the health
-        band, or None when inputs are insufficient.
+        """Discharge floor that reserves enough SoC to run the house through the
+        next *dark bridge* — the upcoming stretch where neither solar covers the
+        house nor a cheap grid window is available — until the bridge's refill
+        (sunrise solar or that cheap window), times a learned safety margin.
+        Returns SoC %, clamped to the health band, or None if inputs are thin.
 
-        This makes the export reserve adapt: short bridge (sun/cheap window
-        soon) → low floor → export more; long winter night with no cheap
-        window → high floor → hold enough to avoid expensive overnight imports.
+        v0.47.1 fix: the reserve is computed for the *next bridge* (e.g.
+        tonight's sunset→sunrise), NOT "from now". Otherwise, during the day or
+        before sunset the next refill is ~now, the reserve collapses to ~0, and
+        the floor clamps to the minimum — which would let the pre-sunset export
+        over-deplete the battery before the night even starts. The reserve is
+        added on top of the hardware minimum SoC (the battery only delivers down
+        to that floor), so the returned floor = hardware_floor + reserve%.
         """
         if capacity_kwh <= 0 or not solar_slot_data:
             return None
 
         onset = float(DYNAMIC_FLOOR_SOLAR_ONSET_FACTOR)
 
-        # 1) Solar onset: first future slot where forecast solar covers the
-        #    hour's projected house load.
-        solar_dt = None
-        for s in solar_slot_data:
-            slot_start = s[0]
-            if slot_start <= now:
-                continue
-            loc = slot_start.astimezone()
-            house_kw = self.get_house_load_profile(weekend=loc.weekday() >= 5)[loc.hour]
-            if house_kw > 0 and (s[4] / 1000.0) >= onset * house_kw:
-                solar_dt = slot_start
-                break
-
-        # 2) Cheap grid window: first future slot whose buy price is within 10 %
-        #    of the cheapest buy across the horizon.
-        cheap_dt = None
+        # Cheap grid windows: slot starts whose buy price is within 10 % of the
+        # cheapest buy across the horizon (recharge opportunities).
+        cheap_starts: set = set()
         if grid_slot_data:
             buys = []
             for slot_start, dur_h, h, m, spot in grid_slot_data:
@@ -2401,38 +2425,56 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     elafgift=elafgift, vat_factor=vat_factor,
                 )
                 buys.append((slot_start, buy))
-            min_buy = min(b for _, b in buys)
-            thresh = min_buy * 1.10
-            for slot_start, buy in buys:
-                if slot_start > now and buy <= thresh:
-                    cheap_dt = slot_start
-                    break
+            if buys:
+                min_buy = min(b for _, b in buys)
+                thresh = min_buy * 1.10
+                cheap_starts = {st for st, b in buys if b <= thresh}
 
-        candidates = [d for d in (solar_dt, cheap_dt) if d is not None]
-        refill_dt = min(candidates) if candidates else now + timedelta(
-            hours=DYNAMIC_FLOOR_REFILL_MAX_H,
-        )
-        hours_to_refill = max(
-            0.25, min(DYNAMIC_FLOOR_REFILL_MAX_H,
-                      (refill_dt - now).total_seconds() / 3600.0),
-        )
+        # Build future slots: (start, house_kw, dur_h, is_refill). A slot is a
+        # "refill" when solar covers the house OR it's a cheap grid window — the
+        # battery does not need to bridge those.
+        slots: list[tuple] = []
+        for s in solar_slot_data:
+            slot_start, dur_h = s[0], s[1]
+            # include the slot currently in progress + all future ones
+            if (slot_start - now).total_seconds() < -900:
+                continue
+            loc = slot_start.astimezone()
+            house_kw = self.get_house_load_profile(weekend=loc.weekday() >= 5)[loc.hour]
+            solar_covers = house_kw > 0 and (s[4] / 1000.0) >= onset * house_kw
+            is_refill = solar_covers or (slot_start in cheap_starts)
+            slots.append((slot_start, house_kw, float(dur_h), is_refill))
 
-        # Projected house energy from now until refill (hour-of-day profile,
-        # weekday/weekend-aware), in 1-hour steps.
-        projected_kwh = 0.0
-        t = now
-        remaining = hours_to_refill
-        while remaining > 1e-6:
-            step = min(1.0, remaining)
-            loc = t.astimezone()
-            projected_kwh += self.get_house_load_profile(weekend=loc.weekday() >= 5)[loc.hour] * step
-            t = t + timedelta(hours=step)
-            remaining -= step
+        if not slots:
+            return None
+
+        # Next bridge = first upcoming non-refill slot.
+        start_idx = next((i for i, x in enumerate(slots) if not x[3]), None)
+        if start_idx is None:
+            # Solar/cheap windows cover the whole horizon — no bridge to reserve.
+            return float(DYNAMIC_FLOOR_MIN_SOC)
+
+        # Accumulate house energy across the bridge, until the next refill slot
+        # or the horizon cap.
+        bridge_kwh = 0.0
+        bridge_h = 0.0
+        for i in range(start_idx, len(slots)):
+            _st, house_kw, dur_h, is_refill = slots[i]
+            if i > start_idx and is_refill:
+                break
+            if bridge_h >= DYNAMIC_FLOOR_REFILL_MAX_H:
+                break
+            bridge_kwh += house_kw * dur_h
+            bridge_h += dur_h
 
         margin = float(self._stored.get("discharge_reserve_margin", DYNAMIC_FLOOR_MARGIN_DEFAULT))
-        reserve_kwh = projected_kwh / max(efficiency, 0.5) * margin
-        floor_soc = reserve_kwh / capacity_kwh * 100.0
-        return max(float(DYNAMIC_FLOOR_MIN_SOC), min(float(DYNAMIC_FLOOR_MAX_SOC), floor_soc))
+        reserve_kwh = bridge_kwh / max(efficiency, 0.5) * margin
+        # The battery only delivers down to the hardware minimum SoC
+        # (DYNAMIC_FLOOR_MIN_SOC), so the reserve must sit ON TOP of it: the
+        # export floor = hardware_floor + reserve%. Otherwise only
+        # (floor − hardware_floor) would actually be usable overnight.
+        floor_soc = float(DYNAMIC_FLOOR_MIN_SOC) + reserve_kwh / capacity_kwh * 100.0
+        return min(float(DYNAMIC_FLOOR_MAX_SOC), floor_soc)
 
     def _update_discharge_margin(self, now: datetime, battery_soc: float) -> None:
         """Self-correct the discharge reserve margin once per day (v0.47.0 — C).
@@ -5625,9 +5667,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         Returns a dict in EVCC-compatible format:
             {"rates": [{"start": "<utc-iso>", "value": <dkk_per_kwh>}, ...]}
 
-        The DayAheadPrices dataset has 15-minute resolution (4 slots/hour).
-        The optimizer averages slots within each hour, so 15-min data works
-        correctly without any pre-aggregation here.
+        The DayAheadPrices dataset has 15-minute resolution (4 slots/hour) and
+        every quarter-hour record becomes its own rate — no hourly aggregation.
+        The optimizer solves at this native 15-min slot resolution end-to-end
+        (slot durations are derived from the gaps in `_forecast_slots`).
 
         Nord Pool day-ahead prices are published at 13:00 CET for the next
         calendar day.  We fetch today + tomorrow (limit=192 = 4×48h) so the
