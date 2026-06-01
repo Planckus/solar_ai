@@ -9,6 +9,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.47.2] — 2026-06-01
+
+### Changed
+
+- **`Today's plan` sensor is now date-aware and bilingual.** It previously listed bare hour numbers (`Charge: 10h, 11h`), which made tomorrow's hours indistinguishable from today's. It now groups by day and tags them — e.g. `Køb: i dag 23h  ·  Salg: i morgen 10h, 11h, 14h` — using the resolved HA language.
+- **Prediction-scorecard warm-up lengthened** from 15 → 30 minutes (`PREDICTION_WARMUP_SECONDS`), so the rolling SoC-MAE isn't inflated by the optimiser plan still settling shortly after a restart.
+
+### Notes
+
+- Verified the full buy/sell/charge pipeline runs at **native 15-minute price resolution**: EDS DayAheadPrices is fetched at 15-min (limit=192 = 4×48 h), every quarter-hour becomes a rate with no hourly aggregation, and the DP solves per-15-min slot with decisions matched on 15-min buckets. The hourly elements (DSO tariff, house-load and EV models) are hourly by nature. The `15-min price resolution` switch only affects the price *chart* density, not the calculations. Corrected a stale docstring that claimed the optimizer averages slots to hourly.
+
+---
+
+## [0.47.1] — 2026-06-01
+
+### Fixed — dynamic discharge floor reserved for "now" instead of the night
+
+- The dynamic discharge floor computed the reserve as the house load from *now* until the next refill. During the day (and before sunset in summer) the next refill is essentially now, so the reserve collapsed to ~0 and the floor clamped to the 20 % minimum — *below* a typical static floor, which would let the pre-sunset export over-deplete the battery before the night began (the opposite of the feature's intent). The floor is now computed for the **next dark bridge** — the upcoming stretch where neither solar covers the house nor a cheap grid window exists — from its start (e.g. tonight's sunset) through to its refill (sunrise / cheap window). So the reserve reflects the real overnight need regardless of the current time of day. The reserve is also added **on top of the hardware minimum SoC** (`DYNAMIC_FLOOR_MIN_SOC`, 20 %), since the battery only delivers down to that floor — so the export floor is `hardware_floor + bridge_reserve`, leaving the full bridge energy actually usable overnight. Also includes the dashboard control (switch + `effective_floor` sensor) added under Indstillinger → Batteri-grænser.
+
+---
+
 ## [0.47.0] — 2026-06-01
 
 ### Changed — receding-horizon planning (A)
