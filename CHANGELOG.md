@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.47.4] — 2026-06-01
+
+### Documentation
+
+- The README Settings reference now lists each control in **both English and Danish** (the GUI shows Danish labels on a Danish Home Assistant and English elsewhere), so users on either language can map the docs to what they see.
+
+---
+
 ## [0.47.3] — 2026-06-01
 
 ### Documentation
