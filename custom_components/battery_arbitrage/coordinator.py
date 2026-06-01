@@ -577,6 +577,53 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         out["export_income_daily"] = list(ilog)
         return out
 
+    def get_grid_balance_summary(self) -> dict:
+        """Grid IMPORT cost (all import — house + battery charging) and the NET
+        grid balance (export income − import cost) over today / 7d / 30d /
+        month / year, plus the daily net series. v0.48.0."""
+        clog: list[dict] = self._stored.get("import_cost_log", [])
+        today = datetime.now().date()
+        today_str = today.isoformat()
+        week_ago = (today - timedelta(days=7)).isoformat()
+        month_ago = (today - timedelta(days=30)).isoformat()
+        month_prefix = today.strftime("%Y-%m")
+        year_prefix = str(today.year)
+        imp = dict(
+            import_cost_today=0.0, import_cost_7d=0.0, import_cost_30d=0.0,
+            import_cost_month=0.0, import_cost_year=0.0,
+        )
+        for e in clog:
+            d = e.get("date", "")
+            v = e.get("dkk", 0.0)
+            if d == today_str:
+                imp["import_cost_today"] += v
+            if d >= week_ago:
+                imp["import_cost_7d"] += v
+            if d >= month_ago:
+                imp["import_cost_30d"] += v
+            if d.startswith(month_prefix):
+                imp["import_cost_month"] += v
+            if d.startswith(year_prefix):
+                imp["import_cost_year"] += v
+        out = {k: round(v, 2) for k, v in imp.items()}
+        out["import_cost_total"] = round(self._stored.get("import_cost_total", 0.0), 2)
+        out["import_cost_daily"] = list(clog)
+        # Net = export income − import cost, per period.
+        exp = self.get_export_income_summary()
+        for p in ("today", "7d", "30d", "month", "year", "total"):
+            out[f"net_grid_{p}"] = round(
+                exp.get(f"export_income_{p}", 0.0) - out[f"import_cost_{p}"], 2,
+            )
+        # Daily net series (export − import, merged by date) for charting.
+        exp_by_date = {e["date"]: e.get("dkk", 0.0) for e in exp.get("export_income_daily", [])}
+        imp_by_date = {e["date"]: e.get("dkk", 0.0) for e in clog}
+        dates = sorted(set(exp_by_date) | set(imp_by_date))
+        out["net_grid_daily"] = [
+            {"date": d, "dkk": round(exp_by_date.get(d, 0.0) - imp_by_date.get(d, 0.0), 4)}
+            for d in dates
+        ]
+        return out
+
     def get_solar_accuracy_factor(self) -> float:
         """Return the rolling median of actual/forecast ratio (clamped 0.3–1.5)."""
         samples = self._stored.get("solar_accuracy_samples", [])
@@ -1424,7 +1471,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._last_plan_refresh is None
             or (now - self._last_plan_refresh).total_seconds() >= PLAN_REFRESH_SECONDS
         )
-        if tariff_stale or plan_stale or not self._optimizer_plan:
+        # v0.47.7 — only (re)solve when the inputs are actually ready. Right
+        # after a restart the price cache and live SoC haven't loaded on the
+        # first tick(s); solving then produced a degenerate all-IDLE plan that,
+        # being non-empty, got cached for up to PLAN_REFRESH_SECONDS (15 min) —
+        # so no charge/export executed for that whole window. Gating on
+        # inputs-ready leaves the plan empty (the reactive fallback handles the
+        # gap) and retries every tick until prices + SoC are present, then
+        # caches the first *real* plan.
+        inputs_ready = bool(grid_slot_data_opt) and battery_soc > 0
+        if inputs_ready and (tariff_stale or plan_stale or not self._optimizer_plan):
             self._last_plan_refresh = now
             max_export_kw_setting = float(self._stored.get("max_export_kw", DEFAULT_MAX_EXPORT_KW))
             self._optimizer_plan = self._run_optimizer(
@@ -1766,6 +1822,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 export_price, grid_arbitrage_spread,
                 battery_discharge_kw, battery_charge_kw,
                 learned_charge_rate, truly_exportable_kwh, importable_kwh,
+                grid_import_kw=grid_import_kw,
+                buy_price_now=round(
+                    (spot_ex_vat + spot_markup + tariff_sched[current_local_hour] + elafgift)
+                    * vat_factor, 4,
+                ),
             )
         savings = self.get_savings_summary()
 
@@ -1931,6 +1992,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             **ev_telemetry,
             **savings,
             **self.get_export_income_summary(),
+            **self.get_grid_balance_summary(),
             **self.get_prediction_accuracy_summary(),
         )
 
@@ -2744,6 +2806,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         learned_rate_kw: float,
         exportable_kwh: float,
         importable_kwh: float,
+        grid_import_kw: float = 0.0,
+        buy_price_now: float = 0.0,
     ) -> None:
         """Accumulate actual and missed DKK savings into today's daily log entry."""
         interval_h = LEARNING_TICK_INTERVAL_SECONDS / 3600  # 5/60 h
@@ -2779,6 +2843,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 if len(ilog) > 400:        # ~13 months of daily history
                     del ilog[: len(ilog) - 400]
             ilog[-1]["dkk"] = round(ilog[-1]["dkk"] + inc, 4)
+
+        # v0.48.0 — cumulative cost of ALL grid import (house load + battery
+        # grid-charging), for the net grid-balance figure. cost ≈ grid_import_kw
+        # × interval × full buy price. Mirrors export_income; capped daily log.
+        if grid_import_kw > 0 and buy_price_now > 0:
+            cost = grid_import_kw * interval_h * buy_price_now
+            self._stored["import_cost_total"] = round(
+                self._stored.get("import_cost_total", 0.0) + cost, 4,
+            )
+            clog: list[dict] = self._stored.setdefault("import_cost_log", [])
+            if not clog or clog[-1]["date"] != today:
+                clog.append({"date": today, "dkk": 0.0})
+                if len(clog) > 400:
+                    del clog[: len(clog) - 400]
+            clog[-1]["dkk"] = round(clog[-1]["dkk"] + cost, 4)
 
         if mode == MODE_EXPORTING and battery_discharge_kw > 0 and export_price > 0:
             # Actual export revenue from the battery portion

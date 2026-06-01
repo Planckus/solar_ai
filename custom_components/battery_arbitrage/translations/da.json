@@ -280,6 +280,8 @@
       "todays_plan": { "name": "Dagens plan" },
       "action_log": { "name": "Sessionslog" },
       "export_income": { "name": "Eksport-indtægt" },
+      "import_cost": { "name": "Import-omkostning" },
+      "net_grid_balance": { "name": "Netto el-balance" },
       "prediction_accuracy": { "name": "Forudsigelsesnøjagtighed" },
       "effective_floor": { "name": "Effektivt afladningsgulv" },
       "ev_target_kw":   { "name": "EV mål-opladningseffekt" },

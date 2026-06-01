@@ -280,6 +280,8 @@
       "todays_plan": { "name": "Today's plan" },
       "action_log": { "name": "Session log" },
       "export_income": { "name": "Export income" },
+      "import_cost": { "name": "Import cost" },
+      "net_grid_balance": { "name": "Net grid balance" },
       "prediction_accuracy": { "name": "Prediction accuracy" },
       "effective_floor": { "name": "Effective discharge floor" },
       "ev_target_kw":   { "name": "EV target charge rate" },
