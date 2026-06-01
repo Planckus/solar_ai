@@ -432,6 +432,27 @@ PREDICTION_WARMUP_SECONDS = 900       # 15 min
 # windows and less likely to over-export battery it will need on a cloudy day.
 DEFAULT_SOLAR_CONFIDENCE_PCT = 50     # percentile; range enforced 10–90 by the number entity
 
+# v0.47.0 — receding-horizon planning (A). The DP plan is re-solved at least
+# this often (and on restart / tariff refresh) instead of only once per day, so
+# it incorporates tomorrow's day-ahead prices as soon as they publish (~13:00)
+# and adapts to the live SoC / solar through the day.
+PLAN_REFRESH_SECONDS = 900            # 15 min
+
+# v0.47.0 — dynamic self-learning discharge floor (C). When enabled, the export
+# floor is set so the battery keeps enough charge to run the house (projected
+# load) until the next "refill" — sunrise solar or a cheap grid window — instead
+# of a fixed SoC. Clamped to a battery-health band; a learned safety margin
+# self-corrects from whether the reserve actually lasted the night.
+DYNAMIC_FLOOR_MIN_SOC = 20            # never reserve below this (battery health)
+DYNAMIC_FLOOR_MAX_SOC = 85            # never reserve above this (leave room to arbitrage)
+DYNAMIC_FLOOR_REFILL_MAX_H = 18.0     # cap the bridge horizon used for the reserve
+DYNAMIC_FLOOR_SOLAR_ONSET_FACTOR = 1.0  # solar "covers the house" when solar_kw ≥ this × house_kw
+DYNAMIC_FLOOR_MARGIN_DEFAULT = 1.10   # initial learned safety multiplier on projected load
+DYNAMIC_FLOOR_MARGIN_MIN = 0.80
+DYNAMIC_FLOOR_MARGIN_MAX = 1.60
+DYNAMIC_FLOOR_MARGIN_UP = 1.05        # bump when the reserve ran out overnight
+DYNAMIC_FLOOR_MARGIN_DOWN = 0.98      # relax slowly when it never ran out
+
 # v0.45.0 — E1: when the EV is plugged in and in a forced-draw mode (or actively
 # charging), the optimiser treats the next EV_SESSION_DP_HORIZON_H hours of EV
 # demand as near-certain (the live session) rather than the hour-of-day

@@ -303,6 +303,71 @@ class TestHouseLoadProfileSplit:
         assert self._call(stored, weekend=False)[8] == 0.4
 
 
+# ------------------------------------------------------------------ #
+# v0.47.0 — dynamic discharge floor: self-learning margin              #
+# ------------------------------------------------------------------ #
+
+class TestDischargeMargin:
+    """_update_discharge_margin bumps the reserve margin up on a day where the
+    battery hit the hard floor, and relaxes it down on a clean day."""
+
+    def _run(self, stored, soc, now):
+        import types
+        from custom_components.battery_arbitrage.coordinator import (
+            BatteryArbitrageCoordinator,
+        )
+        stub = types.SimpleNamespace(_stored=stored)
+        BatteryArbitrageCoordinator._update_discharge_margin(stub, now, soc)
+        return stored
+
+    def test_first_observation_no_change(self):
+        import datetime as dt
+        stored = {"discharge_reserve_margin": 1.10}
+        self._run(stored, 60.0, dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc))
+        assert stored["discharge_reserve_margin"] == 1.10  # no prior day → no adjust
+        assert stored["dynamic_floor_day"] == \
+            dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc).astimezone().date().isoformat()
+
+    def test_undershoot_bumps_margin_up(self):
+        import datetime as dt
+        stored = {
+            "discharge_reserve_margin": 1.10,
+            "dynamic_floor_day": "2000-01-01",
+            "dynamic_floor_undershot": True,
+        }
+        self._run(stored, 60.0, dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc))
+        assert stored["discharge_reserve_margin"] == round(1.10 * 1.05, 3)
+        assert stored["dynamic_floor_undershot"] is False
+
+    def test_clean_day_relaxes_margin_down(self):
+        import datetime as dt
+        stored = {
+            "discharge_reserve_margin": 1.10,
+            "dynamic_floor_day": "2000-01-01",
+            "dynamic_floor_undershot": False,
+        }
+        self._run(stored, 60.0, dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc))
+        assert stored["discharge_reserve_margin"] == round(1.10 * 0.98, 3)
+
+    def test_low_soc_sets_undershoot_flag(self):
+        import datetime as dt
+        # Same day (no rollover) but SoC at the hard floor → flag set.
+        today = dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc).astimezone().date().isoformat()
+        stored = {"discharge_reserve_margin": 1.10, "dynamic_floor_day": today}
+        self._run(stored, 21.0, dt.datetime(2026, 6, 1, 13, tzinfo=dt.timezone.utc))
+        assert stored["dynamic_floor_undershot"] is True
+
+    def test_margin_clamped(self):
+        import datetime as dt
+        stored = {
+            "discharge_reserve_margin": 1.58,
+            "dynamic_floor_day": "2000-01-01",
+            "dynamic_floor_undershot": True,
+        }
+        self._run(stored, 60.0, dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc))
+        assert stored["discharge_reserve_margin"] <= 1.60  # clamped at MAX
+
+
 class TestPredictionScorecard:
     """get_prediction_accuracy_summary computes SoC MAE over the recent log."""
 

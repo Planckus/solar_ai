@@ -281,6 +281,7 @@
       "action_log": { "name": "Sessionslog" },
       "export_income": { "name": "Eksport-indtægt" },
       "prediction_accuracy": { "name": "Forudsigelsesnøjagtighed" },
+      "effective_floor": { "name": "Effektivt afladningsgulv" },
       "ev_target_kw":   { "name": "EV mål-opladningseffekt" },
       "ev_target_amps": { "name": "EV mål-strøm" },
       "ev_surplus_kw":  { "name": "EV tilgængeligt overskud" },
@@ -427,7 +428,8 @@
       "ev_schedule_slot_2_enabled": { "name": "Skema 2 aktiveret" },
       "ev_schedule_slot_3_enabled": { "name": "Skema 3 aktiveret" },
       "ev_schedule_slot_4_enabled": { "name": "Skema 4 aktiveret" },
-      "auto_full_on_negative_price": { "name": "Auto-Fuld ved negativ pris" }
+      "auto_full_on_negative_price": { "name": "Auto-Fuld ved negativ pris" },
+      "dynamic_discharge_floor": { "name": "Dynamisk afladningsgulv (selvlærende)" }
     },
     "time": {
       "ev_schedule_slot_1_start": { "name": "Skema 1 starttid" },
