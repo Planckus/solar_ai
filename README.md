@@ -29,6 +29,13 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ## Recent releases
 
+### v0.47.0 — receding-horizon planning + dynamic discharge floor
+
+Two changes to how the optimiser reserves and times battery use:
+
+- **Receding-horizon planning.** The DP plan now re-solves every 15 minutes (and on restart / daily tariff refresh) instead of once per day, so it picks up tomorrow's day-ahead prices when they publish (~13:00) and tracks the live SoC and solar through the day. Previously a plan made in the morning was used unchanged for ~24 hours.
+- **Dynamic self-learning discharge floor** (new `Dynamic discharge floor` switch, default off). When on, the export floor is the SoC needed to run the house until the next refill — sunrise solar or a cheap grid window — times a self-learned safety margin, instead of a fixed value. A short bridge lets it export more; a long night with no cheap window holds enough to avoid expensive overnight imports. The margin self-corrects daily from whether the reserve actually lasted. The `effective_floor` sensor shows the floor in effect.
+
 ### v0.46.0 — weekday/weekend house-load split
 
 The learned house-load profile is now split into weekday and weekend curves, each learned separately and selected per slot by the slot's date (so a 48-hour horizon spanning the weekend uses the right shape). Both seed from the previous combined curve on upgrade. Tariff handling (seasonal + time-of-day, from EDS DatahubPricelist) was reviewed and already correct, so no tariff change was needed.

@@ -60,6 +60,8 @@ async def async_setup_entry(
         entities.append(BatteryArbitrageEvScheduleSlotEnabledSwitch(coordinator, entry, idx))
     # v0.39.0 — opt-in switch for auto-Full on negative buy price.
     entities.append(BatteryArbitrageAutoFullSwitch(coordinator, entry))
+    # v0.47.0 — opt-in dynamic self-learning discharge floor.
+    entities.append(BatteryArbitrageDynamicFloorSwitch(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -369,5 +371,46 @@ class BatteryArbitrageAutoFullSwitch(
 
     async def async_turn_off(self, **kwargs: object) -> None:
         self.coordinator._stored["auto_full_on_negative_price"] = False
+        await self.coordinator._store.async_save(self.coordinator._stored)
+        self.async_write_ha_state()
+
+
+class BatteryArbitrageDynamicFloorSwitch(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SwitchEntity
+):
+    """v0.47.0 — Opt-in dynamic self-learning discharge floor.
+
+    When ON, the export floor is computed each cycle as the SoC needed to run
+    the house (projected load) until the next refill — sunrise solar or a cheap
+    grid window — times a learned safety margin, instead of the fixed floor
+    slider. The margin self-corrects daily from whether the reserve actually
+    lasted. Default OFF — the static floor is used until enabled.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "dynamic_discharge_floor"
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:battery-arrow-down-outline"
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_dynamic_discharge_floor"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.coordinator._stored.get("dynamic_discharge_floor", False))
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        self.coordinator._stored["dynamic_discharge_floor"] = True
+        await self.coordinator._store.async_save(self.coordinator._stored)
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        self.coordinator._stored["dynamic_discharge_floor"] = False
         await self.coordinator._store.async_save(self.coordinator._stored)
         self.async_write_ha_state()

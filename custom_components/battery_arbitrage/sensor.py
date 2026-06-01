@@ -670,6 +670,24 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "recent": d.get("prediction_log", []),
         },
     ),
+    # ── Dynamic discharge floor (v0.47.0 — C) ─────────────────────────────
+    # State = the export floor actually in effect (% SoC). When the dynamic
+    # feature is on this is the bridge-to-refill reserve; when off it's the
+    # static slider value. Attributes show whether the dynamic floor is active,
+    # its computed value, and the self-learned safety margin.
+    BatteryArbitrageSensorDescription(
+        key="effective_floor",
+        translation_key="effective_floor",
+        icon="mdi:battery-arrow-down-outline",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.get("effective_floor_soc", 0),
+        attrs_fn=lambda d: {
+            "dynamic_active": d.get("dynamic_floor_active", False),
+            "dynamic_floor_soc": d.get("dynamic_floor_soc"),
+            "reserve_margin": d.get("discharge_reserve_margin", 1.0),
+        },
+    ),
     # ─────────────────────────────────────────────────────────────────────
     # Embedded OCPP charger sensors (v0.27.0)
     # Replace what `lbbrhzn/ocpp` integration used to expose. State is read
