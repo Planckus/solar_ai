@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.47.3] — 2026-06-01
+
+### Documentation
+
+- Added a complete **Settings reference** to the README, grouped to match the Settings (Indstillinger) dashboard page: master controls, battery limits, price parameters, optimizer, EV charge controller, temperature-banded charge rates, and notifications. Each setting lists its range, default, and a plain-English description. Corrected a stale value (the minimum-arbitrage-spread default is 0.30 DKK/kWh, not 1.00).
+
+---
+
 ## [0.47.2] — 2026-06-01
 
 ### Changed
