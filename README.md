@@ -289,23 +289,65 @@ Control loop properties:
 - Price and tariff data is refreshed at most once per hour.
 - Live data poll interval is configurable in *Configure* (10–300 s, default 30 s).
 
-### Dashboard controls
+### Settings reference
 
-All listed parameters are editable from the dashboard without restarting HA:
+Every setting below is editable from the dashboard (**Indstillinger / Settings** page) without restarting HA — changes take effect on the next coordinator cycle. The groupings match the cards on that page.
 
-| Control | Range | Default |
+#### Master controls
+
+| Setting | Type | What it does |
 |---|---|---|
-| Battery floor SoC (export minimum) | 10–100% | 50% |
-| Battery max SoC (grid charge ceiling) | 10–100% | 100% |
-| Minimum arbitrage spread | 0.10–3.00 DKK/kWh | 1.00 |
-| Minimum export price floor | 0.00–2.00 DKK/kWh | 0.00 |
-| Export power cap | 0–10 kW | 0 (no cap) |
-| Grid import limit | 5–63 kW | 17 kW |
-| Buy-side VAT | 0–50% | 25% |
-| Seller-side fee | 0.00–0.50 DKK/kWh | 0.00 |
-| Spot price markup | 0.00–0.50 DKK/kWh | 0.00 |
-| Elafgift | 0.00–3.00 DKK/kWh | 0.01 |
-| Notifications | On / Off | Off |
+| **Arbitrage enabled** | on/off | Master switch. When **off**, Solar AI still computes and reports its plan but sends **no** charge/export commands to the inverter — i.e. monitoring mode. Turn on to let it actually control the battery. |
+| **Mode-change notifications** | on/off | Master toggle for push notifications on mode changes (the per-event toggles below still apply). |
+| **15-minute price resolution** | on/off | **Display only.** On = the price chart shows every 15-min slot; off = one row per hour. Does **not** affect the calculations — the optimiser always runs at native 15-min resolution. |
+
+#### Battery limits
+
+| Setting | Range | Default | What it does |
+|---|---|---|---|
+| **Minimum SoC (export)** | 10–100 % | 50 % | The static export floor — the battery is never *exported* below this SoC, reserving the rest for the house. Ignored while *Dynamic discharge floor* is on. |
+| **Maximum SoC (grid charge)** | 10–100 % | 100 % | Ceiling that grid-charging will fill the battery to. |
+| **Export power cap** | 0–10 kW | 0 (no cap) | Limits how fast the battery discharges to the grid. 0 = use the full available rate. |
+| **Grid import limit** | 5–63 kW | 17 kW | Your main breaker rating. Total grid draw is kept under this — grid-charge power is reduced to leave headroom for house + EV load. |
+| **Dynamic discharge floor** | on/off | off | When on, replaces the static *Minimum SoC* with a self-learning floor sized to run the house until the next refill (sunrise solar or a cheap grid window), on top of the hardware minimum SoC. Short bridge → lower floor (export more); long winter night → higher floor (hold more). The safety margin self-corrects daily. |
+| **Effective discharge floor** | read-only | — | Shows the floor actually in effect right now (the static value, or the computed dynamic reserve) plus the self-learned safety margin. |
+
+#### Price parameters
+
+These build the buy- and sell-side prices the optimiser uses. (The DSO + Energinet **net tariff is fetched automatically** from Energi Data Service — it is not set here.)
+
+| Setting | Range | Default | What it does |
+|---|---|---|---|
+| **Buy-side VAT** | 0–50 % | 25 % | VAT applied to the buy price. |
+| **Electricity duty (elafgift)** | 0.00–3.00 DKK/kWh | 0.01 | Danish electricity tax added to the buy price. |
+| **Spot price markup** | 0.00–0.50 DKK/kWh | 0.00 | Your retailer's per-kWh add-on on top of spot (buy side). |
+| **Sell-side fee** | 0.00–0.50 DKK/kWh | 0.00 | Per-kWh cut your provider takes from export revenue (subtracted from the sell price). |
+| **Minimum export price** | 0.00–2.00 DKK/kWh | 0.00 | Blocks exporting when the net sell price is below this. 0 = allow any price, including negative. |
+
+#### Optimizer
+
+| Setting | Range | Default | What it does |
+|---|---|---|---|
+| **Minimum arbitrage spread** | 0.00–3.00 DKK/kWh | 0.30 | Required gap between selling now and buying back later (after round-trip losses) before the optimiser will export-and-rebuy. Higher = more conservative, fewer cycles. |
+| **Battery wear cost** | 0.00–1.00 DKK/kWh | 0.10 | Estimated battery degradation per kWh cycled. Subtracted from both charge and export rewards so the optimiser won't cycle the battery for tiny gains. Higher = less cycling. |
+| **Solar confidence** | 10–90 % | 50 | The percentile of each hour's solar forecast the optimiser plans against. 50 = median (neutral, = previous behaviour). Lower = assume less solar (more conservative — grid-charges more readily in cheap windows, holds back more battery). |
+
+#### EV charge controller (requires the OCPP server or EVCC live-data mode)
+
+| Setting | Range | Default | What it does |
+|---|---|---|---|
+| **EV minimum charge rate** | 1.4–11 kW | 4.14 | Lowest rate the controller will run the car at — your charger's minimum (4.14 kW ≈ 3-phase 6 A). |
+| **EV maximum charge rate** | 1.4–22 kW | 11.0 | Cap on the EV charge rate (11 kW ≈ 3-phase 16 A). |
+| **Battery-first threshold** | 50–100 % | 80 % | In solar modes, the EV waits until the house battery reaches this SoC before it starts consuming solar surplus. |
+| **Auto-Full on negative price** | on/off | off | When on, automatically promotes the EV to Full charging while the buy price is negative (paid to consume), then restores the previous mode afterwards. |
+
+#### Charge rates by temperature (auto-learned)
+
+Seven `Max charge rate` controls (`<0`, `0–5`, `6–15`, `16–21`, `21–35`, `35–50`, `>50 °C`) hold the battery's maximum charge rate per cell-temperature band. These are **learned automatically** from observed charging; you can override a band manually if needed.
+
+#### Notifications
+
+Per-event push toggles — **export started / stopped**, **charging started / stopped**, **solar export blocked / resumed (price floor)** — plus one toggle per discovered Home Assistant Companion device to choose where notifications are delivered.
 
 ### Export income
 
