@@ -900,6 +900,67 @@ views:
         type: column
         color: '#3e9c4d'
         data_generator: return (entity.attributes.daily || []).map(e => [new Date(e.date).getTime(), e.dkk]);
+    - type: custom:mushroom-title-card
+      title: Net grid balance
+      subtitle: Export income − all grid import (house + charging).
+    - type: custom:mushroom-chips-card
+      alignment: center
+      chips:
+      - type: template
+        icon: mdi:scale-balance
+        icon_color: blue
+        entity: sensor.solar_ai_netto_el_balance
+        content: Today {{ '%+.0f' | format(state_attr('sensor.solar_ai_netto_el_balance','today') | float(0)) }} DKK
+        tap_action:
+          action: more-info
+      - type: template
+        icon: mdi:scale-balance
+        icon_color: blue
+        entity: sensor.solar_ai_netto_el_balance
+        content: 7 d {{ '%+.0f' | format(state_attr('sensor.solar_ai_netto_el_balance','last_7_days') | float(0)) }} DKK
+        tap_action:
+          action: more-info
+      - type: template
+        icon: mdi:scale-balance
+        icon_color: blue
+        entity: sensor.solar_ai_netto_el_balance
+        content: Month {{ '%+.0f' | format(state_attr('sensor.solar_ai_netto_el_balance','this_month') | float(0)) }} DKK
+        tap_action:
+          action: more-info
+      - type: template
+        icon: mdi:scale-balance
+        icon_color: blue
+        entity: sensor.solar_ai_netto_el_balance
+        content: Year {{ '%+.0f' | format(state_attr('sensor.solar_ai_netto_el_balance','this_year') | float(0)) }} DKK
+        tap_action:
+          action: more-info
+    - type: custom:apexcharts-card
+      header:
+        show: true
+        title: Daily net balance
+        show_states: false
+      graph_span: 60d
+      span:
+        end: day
+      apex_config:
+        chart:
+          height: 250
+        legend:
+          show: false
+        xaxis:
+          labels:
+            datetimeUTC: false
+      yaxis:
+      - decimals: 0
+        apex_config:
+          title:
+            text: DKK
+      series:
+      - entity: sensor.solar_ai_netto_el_balance
+        name: Net
+        type: column
+        color: '#3d6fb4'
+        data_generator: return (entity.attributes.daily || []).map(e => [new Date(e.date).getTime(), e.dkk]);
 - title: History
   path: historik
   icon: mdi:chart-timeline-variant

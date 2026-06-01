@@ -524,6 +524,45 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "daily": d.get("export_income_daily", []),
         },
     ),
+    # v0.48.0 — cumulative cost of ALL grid import (house + battery charging).
+    BatteryArbitrageSensorDescription(
+        key="import_cost",
+        translation_key="import_cost",
+        icon="mdi:cash-minus",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement="DKK",
+        value_fn=lambda d: d.get("import_cost_total", 0.0),
+        attrs_fn=lambda d: {
+            "today": d.get("import_cost_today", 0.0),
+            "last_7_days": d.get("import_cost_7d", 0.0),
+            "last_30_days": d.get("import_cost_30d", 0.0),
+            "this_month": d.get("import_cost_month", 0.0),
+            "this_year": d.get("import_cost_year", 0.0),
+            "daily": d.get("import_cost_daily", []),
+        },
+    ),
+    # v0.48.0 — NET grid balance = export income − import cost. Can be negative
+    # (net buyer). MEASUREMENT, not total_increasing, since it moves both ways.
+    BatteryArbitrageSensorDescription(
+        key="net_grid_balance",
+        translation_key="net_grid_balance",
+        icon="mdi:scale-balance",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement="DKK",
+        value_fn=lambda d: d.get("net_grid_total", 0.0),
+        attrs_fn=lambda d: {
+            "today": d.get("net_grid_today", 0.0),
+            "last_7_days": d.get("net_grid_7d", 0.0),
+            "last_30_days": d.get("net_grid_30d", 0.0),
+            "this_month": d.get("net_grid_month", 0.0),
+            "this_year": d.get("net_grid_year", 0.0),
+            "export_today": d.get("export_income_today", 0.0),
+            "import_today": d.get("import_cost_today", 0.0),
+            "daily": d.get("net_grid_daily", []),
+        },
+    ),
     # ── EV charge controller (Phase B1) ──────────────────────────────────
     BatteryArbitrageSensorDescription(
         key="ev_target_kw",
