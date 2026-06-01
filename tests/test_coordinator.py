@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from custom_components.battery_arbitrage.coordinator import (
+    _forecast_slots,
     _forecast_values,
-    _predict_house_load,
     _rolling_mean,
     _sum_forecast,
     _temp_bucket,
@@ -115,29 +115,80 @@ class TestSumForecast:
 
 
 # ------------------------------------------------------------------ #
-# _predict_house_load                                                  #
+# v0.47.5 — _forecast_slots includes the in-progress slot              #
 # ------------------------------------------------------------------ #
 
-class TestPredictHouseLoad:
-    def test_vacation_mode_uses_2h(self):
-        load = _predict_house_load(0.2, 1.0, vacation_mode=True, hours=24)
-        # 0.2 * 1.5 * 24 = 7.2
-        assert abs(load - 7.2) < 0.01
+class TestForecastSlotsInProgress:
+    """The slot currently in progress must be slot 0 so the decision logic can
+    match the current (hour, minute-bucket) and execute the planned action."""
 
-    def test_vacation_minimum_floor(self):
-        # Very low load → floor at 0.05 kW
-        load = _predict_house_load(0.01, 0.01, vacation_mode=True, hours=24)
-        assert load == pytest.approx(0.05 * 24, abs=0.01)
+    _RATES = [
+        {"start": "2026-06-01T00:00:00+00:00", "value": 1.0},
+        {"start": "2026-06-01T00:15:00+00:00", "value": 2.0},
+        {"start": "2026-06-01T00:30:00+00:00", "value": 3.0},
+    ]
 
-    def test_normal_uses_higher_of_short_or_half_long(self):
-        # load_2h=0.5, load_28d=2.0 → max(0.5*1.1, 2.0*0.5) = max(0.55, 1.0) = 1.0
-        load = _predict_house_load(0.5, 2.0, vacation_mode=False, hours=10)
-        assert load == pytest.approx(1.0 * 10, abs=0.01)
+    def test_includes_in_progress_slot(self):
+        now = datetime(2026, 6, 1, 0, 7, tzinfo=timezone.utc)  # mid 00:00 slot
+        slots = _forecast_slots(self._RATES, now, 2)
+        # First slot is the in-progress 00:00 slot, not 00:15.
+        assert slots[0][4] == 1.0
+        assert slots[0][0] == datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
 
-    def test_normal_short_term_dominates(self):
-        # load_2h=3.0, load_28d=1.0 → max(3.0*1.1, 1.0*0.5) = 3.3
-        load = _predict_house_load(3.0, 1.0, vacation_mode=False, hours=1)
-        assert load == pytest.approx(3.3, abs=0.01)
+    def test_excludes_already_ended_slot(self):
+        now = datetime(2026, 6, 1, 0, 20, tzinfo=timezone.utc)  # 00:00 slot ended 00:15
+        slots = _forecast_slots(self._RATES, now, 2)
+        assert all(s[4] != 1.0 for s in slots)   # ended slot dropped
+        assert slots[0][4] == 2.0                 # 00:15 slot (ends 00:30 > now) kept
+
+    def test_slot_exactly_at_boundary(self):
+        now = datetime(2026, 6, 1, 0, 15, tzinfo=timezone.utc)  # exactly at 00:15
+        slots = _forecast_slots(self._RATES, now, 2)
+        # 00:00 ended at 00:15 (<= now) → dropped; 00:15 is the current slot.
+        assert slots[0][4] == 2.0
+
+
+# ------------------------------------------------------------------ #
+# v0.47.5 — _predict_house_load_window (profile-based, no spike blow-up)#
+# ------------------------------------------------------------------ #
+
+class TestPredictHouseLoadWindow:
+    """Projects from the learned hourly profile; a short-term spike is bounded
+    by the recent-activity scaler instead of being multiplied across 24 h."""
+
+    def _call(self, profile_kw, *, hours, vacation, load_2h):
+        import types
+        from custom_components.battery_arbitrage.coordinator import (
+            BatteryArbitrageCoordinator,
+        )
+        stub = types.SimpleNamespace(
+            get_house_load_profile=lambda weekend=None: [profile_kw] * 24
+        )
+        now = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+        return BatteryArbitrageCoordinator._predict_house_load_window(
+            stub, now, hours, vacation, load_2h
+        )
+
+    def test_profile_sum_when_recent_matches(self):
+        # Flat 0.5 kW profile, recent load matches → ~0.5 * 24 = 12 kWh.
+        assert self._call(0.5, hours=24, vacation=False, load_2h=0.5) == pytest.approx(12.0, abs=0.1)
+
+    def test_spike_is_bounded_not_extrapolated(self):
+        # 0.5 kW profile but a 2.0 kW recent spike: old code → 2.0*1.1*24 ≈ 53.
+        # New code caps the scaler at 1.4 → 12 * 1.4 = 16.8, not ~48–53.
+        out = self._call(0.5, hours=24, vacation=False, load_2h=2.0)
+        assert out == pytest.approx(16.8, abs=0.1)
+        assert out < 20.0
+
+    def test_low_recent_scales_down_bounded(self):
+        # Very low recent load → scaler floored at 0.8, not 0.
+        assert self._call(0.5, hours=24, vacation=False, load_2h=0.0) == pytest.approx(12.0, abs=0.1)
+        assert self._call(0.5, hours=24, vacation=False, load_2h=0.1) == pytest.approx(12.0 * 0.8, abs=0.1)
+
+    def test_vacation_tracks_low_live_load(self):
+        # Away: ignore the profile, track the (low) live load with a floor.
+        assert self._call(0.5, hours=24, vacation=True, load_2h=0.2) == pytest.approx(0.2 * 24, abs=0.1)
+        assert self._call(0.5, hours=24, vacation=True, load_2h=0.0) == pytest.approx(0.05 * 24, abs=0.1)
 
 
 # ------------------------------------------------------------------ #

@@ -9,6 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.47.5] — 2026-06-01
+
+### Fixed — optimiser never executed charge/export under receding-horizon (regression)
+
+- **The planned charge/export action was rarely executed.** The plan was built from `_forecast_slots(..., now, ...)`, which kept only slots with `start >= now` — dropping the **in-progress** 15-minute slot. The decision logic matches the *current* (hour, minute-bucket) to a plan slot, so once the plan was (re)built mid-slot the current interval had no slot to act on and fell through to IDLE. With the v0.47.0 receding-horizon replan (every 15 min, almost always mid-slot) this happened nearly every cycle, so the battery sat in Self Use and missed export/charge windows — e.g. it failed to sell into a 3+ DKK/kWh evening price spike despite a full battery. `_forecast_slots` now includes the in-progress slot (kept if its end is after `now`), so plan slot 0 covers "now" and the match — and execution — work. Pre-0.47.0 (a once-daily plan built in the morning) included every slot, which is why this only surfaced after receding-horizon shipped.
+
+### Fixed — house-load 24 h projection over-extrapolated short-term spikes
+
+- `predicted_house_load_24h` was `max(load_2h × 1.1, load_28d × 0.5) × 24` — it multiplied the trailing **2-hour** average across the whole day, so a brief evening peak (e.g. 0.83 kW) projected to ~22 kWh when the real day is ~11 kWh. It now projects from the learned **weekday/weekend hourly profile** (correct daily shape) with a bounded recent-activity scaler (0.8–1.4×), so genuine busy days still register but a transient spike can't run away. This value feeds the reactive `truly_exportable` and `solar_will_fill` guards; the old over-projection made them needlessly conservative (reserving phantom house load against exportable energy and mis-judging whether solar would refill).
+
+---
+
 ## [0.47.4] — 2026-06-01
 
 ### Documentation

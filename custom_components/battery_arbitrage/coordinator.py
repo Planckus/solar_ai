@@ -1261,8 +1261,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if is_learning_tick:
             self._vacation_mode = self._update_vacation_mode(load_2h_avg, load_28d_avg)
         vacation_mode = self._vacation_mode
-        predicted_house_load_24h = _predict_house_load(
-            load_2h_avg, load_28d_avg, vacation_mode, forecast_hours
+        # v0.47.5 — project from the learned hourly profile (realistic daily
+        # shape) instead of flat-extrapolating the 2-hour average across 24 h.
+        predicted_house_load_24h = self._predict_house_load_window(
+            now, forecast_hours, vacation_mode, load_2h_avg
         )
 
         # ---- temperature learning (gated) ----
@@ -2386,6 +2388,38 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 v = legacy[h] if legacy[h] > 0.0 else (other[h] if other[h] > 0.0 else fallback)
             out.append(round(v, 3))
         return out
+
+    def _predict_house_load_window(
+        self, now: datetime, hours: float, vacation_mode: bool, load_2h: float,
+    ) -> float:
+        """Predict house energy (kWh) over the next `hours` (v0.47.5).
+
+        Uses the learned weekday/weekend **hourly profile** for the daily shape
+        — so a short-term spike is not extrapolated across the whole day (the
+        old `load_2h × 1.1 × 24` blew a 2-hour evening peak up into a ~22 kWh
+        day). A bounded recent-activity scaler keeps it responsive: if the last
+        two hours ran hotter than the profile expects for the current hour, the
+        whole-day estimate is nudged up, clamped to ±, so genuine busy days
+        still register without a single spike dominating.
+        """
+        if vacation_mode:
+            # Away: the normal profile doesn't apply — track the (low) live load.
+            return round(max(load_2h, 0.05) * hours, 3)
+        total = 0.0
+        cur = now.astimezone()
+        remaining = float(hours)
+        while remaining > 1e-6:
+            step = min(1.0, remaining)
+            total += self.get_house_load_profile(weekend=cur.weekday() >= 5)[cur.hour] * step
+            cur = cur + timedelta(hours=step)
+            remaining -= step
+        # Bounded recent-activity scaler (last 2 h vs the profile's value for the
+        # current hour) — responsive but a transient spike can't run away.
+        local = now.astimezone()
+        typical_now = self.get_house_load_profile(weekend=local.weekday() >= 5)[local.hour]
+        if load_2h > 0 and typical_now > 0.05:
+            total *= max(0.8, min(1.4, load_2h / typical_now))
+        return round(total, 3)
 
     # ── Dynamic self-learning discharge floor (v0.47.0 — C) ───────────────
     def _compute_dynamic_floor_soc(
@@ -6216,6 +6250,17 @@ def _forecast_slots(
     Handles any slot granularity (15-min, 30-min, 1h) automatically by deriving
     the duration from the gap to the next slot.  Falls back to 15 minutes for the
     last slot.  Slots are returned in ascending time order.
+
+    v0.47.5 fix: the slot currently *in progress* is INCLUDED (a slot is kept if
+    it has not yet ended, i.e. its end > now), not just slots starting at/after
+    `now`. Previously slots were filtered `now <= start`, which dropped the
+    in-progress slot whenever the plan was (re)built mid-slot. The decision
+    logic matches the current (hour, minute-bucket) to a plan slot, so dropping
+    the in-progress slot left the optimiser with no slot to act on for the
+    current interval — it fell through to IDLE and never executed the planned
+    charge/export. With the receding-horizon replan (every 15 min, usually
+    mid-slot) this happened almost every cycle. Including the in-progress slot
+    makes plan slot 0 cover "now", so the match — and execution — work.
     """
     cutoff = now + timedelta(hours=hours)
     parsed: list[tuple] = []
@@ -6228,12 +6273,18 @@ def _forecast_slots(
 
     result: list[tuple] = []
     for i, (start, value) in enumerate(parsed):
-        if not (now <= start < cutoff):
+        if start >= cutoff:
             continue
         if i + 1 < len(parsed):
-            dur_h = (parsed[i + 1][0] - start).total_seconds() / 3600
+            next_start = parsed[i + 1][0]
+            dur_h = (next_start - start).total_seconds() / 3600
         else:
+            next_start = start + timedelta(minutes=15)
             dur_h = 0.25  # default 15 min for the last slot
+        # Keep the slot if it hasn't ended yet (covers the in-progress slot) —
+        # not just slots starting at/after `now`.
+        if next_start <= now:
+            continue
         local = start.astimezone()
         result.append((start, dur_h, local.hour, local.minute, value))
     return result
@@ -6295,9 +6346,7 @@ def _rolling_mean(history: list[float], window: int) -> float:
     return round(statistics.mean(relevant), 3) if relevant else 0.0
 
 
-def _predict_house_load(load_2h: float, load_28d: float, vacation_mode: bool, hours: float) -> float:
-    if vacation_mode:
-        hourly_kw = max(load_2h * 1.5, 0.05)
-    else:
-        hourly_kw = max(load_2h * 1.1, load_28d * 0.5)
-    return round(hourly_kw * hours, 3)
+# NOTE: house-load projection moved to BatteryArbitrageCoordinator.
+# _predict_house_load_window (v0.47.5) — it uses the learned hourly profile
+# instead of flat-extrapolating the 2-hour average, which over-projected a
+# short evening spike across the whole day.
