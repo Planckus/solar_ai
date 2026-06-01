@@ -372,6 +372,13 @@ For an arbitrary from/to date range with daily/weekly/monthly breakdowns, add th
 
 Pair it with the feed-in kWh entity for energy totals and the export-price entity for the rate, both of which the integration already reads.
 
+**Note — export income is gross.** `export_income` is export revenue only; it does **not** subtract what you pay to import. For the true net position, two companion sensors are provided (v0.48.0):
+
+- **`import_cost`** ("Import-omkostning" / "Import cost") — cumulative cost of **all** grid import (house load *and* battery grid-charging), `import kWh × full buy price` per tick, with the same period attributes.
+- **`net_grid_balance`** ("Netto el-balance" / "Net grid balance") — **export income − import cost** (can be negative if you're a net buyer), with `today` / `last_7_days` / `last_30_days` / `this_month` / `this_year` and a daily net series.
+
+The Prices page shows a net-balance card beside the export-income card.
+
 ---
 
 ## Prerequisites

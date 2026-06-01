@@ -9,6 +9,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.48.0] — 2026-06-01
+
+### Added — grid import cost + net grid balance
+
+- **Import cost tracking.** A new `import_cost` sensor (DKK, `total_increasing` + `monetary`) accumulates the cost of **all** grid import — house load *and* battery grid-charging — as `import_kWh × full buy price` each tick, with today / 7d / 30d / month / year attributes and a daily series.
+- **Net grid balance.** A new `net_grid_balance` sensor shows **export income − import cost** (true net cash flow with the grid; can be negative if you're a net buyer), with the same period rollups and a daily net series. The existing `export_income` figure remains **gross export revenue** — `net_grid_balance` is the figure that nets the import against it.
+- The Prices/Priser dashboard page gains a net-balance card beside the export-income card.
+
+---
+
+## [0.47.7] — 2026-06-01
+
+### Fixed — cold all-IDLE plan cached for ~15 min after a restart
+
+- After a restart the optimiser ran on the first tick before the price cache and live SoC had loaded, producing a degenerate all-IDLE plan. Because that plan is non-empty it was cached until the next scheduled re-solve (`PLAN_REFRESH_SECONDS`, 15 min), so no charge/export executed for that whole window. The optimiser now only solves when its inputs are ready (`grid_slot_data` populated and `battery_soc > 0`); until then the plan stays empty and the reactive fallback covers the gap, then the first *real* plan is cached. This stops a restart from silently disabling trading for up to 15 minutes.
+
+---
+
 ## [0.47.6] — 2026-06-01
 
 ### Fixed — battery arbitrage export now actually discharges to the grid
