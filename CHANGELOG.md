@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.47.0] — 2026-06-01
+
+### Changed — receding-horizon planning (A)
+
+- **The DP plan now re-solves every 15 minutes** (plus on restart and the daily tariff refresh) instead of only once per day. Previously a plan computed in the morning was locked in for ~24 hours, so it never incorporated tomorrow's day-ahead prices when they publish (~13:00) and didn't adapt to the live SoC or to solar over/under-delivery. The plan now tracks current conditions and folds in new prices within 15 minutes (`PLAN_REFRESH_SECONDS`). The solver is unchanged — only the re-solve cadence.
+
+### Added — dynamic self-learning discharge floor (C)
+
+- **New `Dynamic discharge floor` switch (default OFF).** When on, the export floor is no longer a fixed SoC. Each cycle it is computed as the SoC needed to run the house (projected load, weekday/weekend-aware) until the next *refill* — whichever comes first of sunrise solar covering the house, or a cheap grid window (buy price within 10 % of the horizon minimum) — multiplied by a self-learned safety margin. Clamped to a battery-health band (`DYNAMIC_FLOOR_MIN_SOC` 20 %…`DYNAMIC_FLOOR_MAX_SOC` 85 %).
+  - Effect: a short bridge (sun or a cheap window soon) lowers the floor so more can be exported at the peak; a long winter night with no cheap window raises it so enough is held to avoid expensive overnight imports.
+  - **Self-learning margin**: once per day the margin nudges up if the reserve ran down to the hard floor (under-reserved → import risk) and slowly relaxes down if it never came close (over-reserved → missed arbitrage). Bounded 0.80–1.60.
+  - New `effective_floor` sensor shows the floor actually in effect, with `dynamic_active`, `dynamic_floor_soc`, and `reserve_margin` attributes. When the switch is off, behaviour is unchanged (static floor slider).
+
+---
+
 ## [0.46.1] — 2026-05-31
 
 ### Fixed — prediction scorecard restart artifacts
