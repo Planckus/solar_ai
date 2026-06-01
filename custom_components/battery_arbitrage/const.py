@@ -423,7 +423,9 @@ PREDICTION_MAE_WINDOW_SLOTS_LONG = 2880  # 30 days
 # v0.46.1 — skip scorecard logging for this long after (re)start: the optimiser
 # plan is cold and emits garbage predicted SoC until live inputs stabilise. A
 # restart is an operational event, not a prediction to grade.
-PREDICTION_WARMUP_SECONDS = 900       # 15 min
+PREDICTION_WARMUP_SECONDS = 1800      # 30 min — long enough for prices/solar/SoC
+                                      # + the optimiser plan to fully stabilise
+                                      # after a restart before the scorecard logs
 
 # v0.44.0 — S1: solar-forecast confidence percentile fed to the DP optimiser.
 # 50 = the per-hour median (numerically identical to the prior behaviour, so the

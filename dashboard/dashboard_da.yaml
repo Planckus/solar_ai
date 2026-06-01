@@ -1018,6 +1018,10 @@ views:
         name: Eksporteffekt-grænse (kW)
       - entity: number.solar_ai_net_importgraense
         name: Net-importgrænse (kW)
+      - entity: switch.solar_ai_dynamisk_afladningsgulv_selvlaerende
+        name: Dynamisk afladningsgulv (auto)
+      - entity: sensor.solar_ai_effektivt_afladningsgulv
+        name: Effektivt gulv (aktivt)
     - type: entities
       title: Prisparametre
       icon: mdi:currency-eur

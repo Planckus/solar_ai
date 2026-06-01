@@ -1018,6 +1018,10 @@ views:
         name: Export-power limit (kW)
       - entity: number.solar_ai_net_importgraense
         name: Grid-import limit (kW)
+      - entity: switch.solar_ai_dynamisk_afladningsgulv_selvlaerende
+        name: Dynamic discharge floor (auto)
+      - entity: sensor.solar_ai_effektivt_afladningsgulv
+        name: Effective floor (active)
     - type: entities
       title: Price parameters
       icon: mdi:currency-eur
