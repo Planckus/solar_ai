@@ -110,6 +110,7 @@ from .const import (
     VACATION_SHORT_WINDOW,
     VACATION_THRESHOLD,
     WORK_MODE_EXPORT,
+    WORK_MODE_FORCE_DISCHARGE,
     WORK_MODE_FORCE_CHARGE,
     WORK_MODE_SELF_USE,
     EVCC_BATTERY_CHARGE,
@@ -2008,12 +2009,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         coordinate_with_evcc = live_source in (LIVE_SOURCE_EVCC, LIVE_SOURCE_HYBRID) and evcc_url
 
         if new_mode == MODE_EXPORTING:
-            # Feed-in First: inverter pushes battery + solar to grid
-            await self._set_work_mode(WORK_MODE_EXPORT)
-            # Apply export power cap if configured (0 = no cap)
+            # v0.47.6 — Force Discharge actively pushes the battery to the grid.
+            # (The old "Feed-in First" only re-routes solar surplus and does not
+            # discharge the battery at night, so arbitrage export never fired.)
+            await self._set_work_mode(WORK_MODE_FORCE_DISCHARGE)
+            # Set the discharge power: user export cap if configured, else 0 →
+            # full rate (the entity's max). Always set it now that we Force
+            # Discharge, so the inverter actually exports.
             max_export_kw = float(self._stored.get("max_export_kw", DEFAULT_MAX_EXPORT_KW))
-            if max_export_kw > 0:
-                await self._set_discharge_power(max_export_kw)
+            await self._set_discharge_power(max_export_kw)
             # Tell EVCC to hold so it doesn't fight our export
             if coordinate_with_evcc:
                 self._we_set_evcc_mode = True
@@ -2197,29 +2201,43 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if rate_kw < GRID_MIN_CHARGE_KW:
             _LOGGER.warning("Battery Arbitrage: charge rate %.2f kW below minimum — skipping", rate_kw)
             return
-        rate_w = int(rate_kw * 1000)
         entity = self.config.get("foxess_force_charge_entity", "number.foxessmodbus_force_charge_power")
+        # v0.47.6 — the FoxESS force-charge-power entity is in kW (not W). The
+        # previous `int(rate_kw * 1000)` wrote watts into a 0–10 kW field, so the
+        # set silently failed (out of range) and the power stayed at its max,
+        # ignoring the grid-headroom cap. Write kW, clamped to the entity range.
+        st = self.hass.states.get(entity)
+        ent_max = float(st.attributes.get("max", 10.0)) if st else 10.0
+        value = round(max(0.0, min(rate_kw, ent_max)), 3)
         try:
             await self.hass.services.async_call(
                 "number", "set_value",
-                {"entity_id": entity, "value": rate_w},
+                {"entity_id": entity, "value": value},
                 blocking=True,
             )
-            _LOGGER.debug("Battery Arbitrage: force charge power → %dW", rate_w)
+            _LOGGER.debug("Battery Arbitrage: force charge power → %.3f kW", value)
         except Exception as err:
             _LOGGER.error("Failed to set force charge power: %s", err)
 
     async def _set_discharge_power(self, max_kw: float) -> None:
-        """Set the Force Discharge power entity to cap grid export at max_kw."""
-        rate_w = int(max_kw * 1000)
+        """Set the Force Discharge power (kW). `max_kw <= 0` → full rate (the
+        entity's max).
+
+        v0.47.6 — the FoxESS force-discharge-power entity is in kW (not W); the
+        previous `int(max_kw * 1000)` wrote watts into a 0–10 kW field and the
+        set silently failed. Write kW, clamped to the entity range.
+        """
         entity = self.config.get("foxess_force_discharge_entity", FOXESS_FORCE_DISCHARGE_ENTITY)
+        st = self.hass.states.get(entity)
+        ent_max = float(st.attributes.get("max", 10.0)) if st else 10.0
+        value = round(ent_max if max_kw <= 0 else max(0.0, min(float(max_kw), ent_max)), 3)
         try:
             await self.hass.services.async_call(
                 "number", "set_value",
-                {"entity_id": entity, "value": rate_w},
+                {"entity_id": entity, "value": value},
                 blocking=True,
             )
-            _LOGGER.debug("Battery Arbitrage: force discharge power capped → %dW", rate_w)
+            _LOGGER.debug("Battery Arbitrage: force discharge power → %.3f kW", value)
         except Exception as err:
             _LOGGER.error("Failed to set force discharge power: %s", err)
 

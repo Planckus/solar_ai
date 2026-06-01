@@ -370,7 +370,11 @@ EVCC_API_BATTERY_MODE = "/api/batterymode"
 # FoxESS work mode values
 WORK_MODE_SELF_USE = "Self Use"
 WORK_MODE_FORCE_CHARGE = "Force Charge"
-WORK_MODE_EXPORT = "Feed-in First"  # FoxESS mode for grid export (battery + solar pushed to grid)
+WORK_MODE_EXPORT = "Feed-in First"  # legacy: only re-routes SOLAR surplus to grid — does NOT
+                                    # discharge the battery at night. Kept for reference.
+WORK_MODE_FORCE_DISCHARGE = "Force Discharge"  # actively discharges the battery to grid at the
+                                               # force-discharge power — the correct mode for
+                                               # battery arbitrage export (v0.47.6).
 
 # Pre-existing HA automation that controls the export limit register —
 # disabled while our integration is running to avoid conflicts
