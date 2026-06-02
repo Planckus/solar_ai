@@ -765,6 +765,26 @@ views:
         type: column
         color: '#3e9c4d'
         data_generator: "const slots = entity.attributes.slots || [];\nconst today = new Date();\ntoday.setHours(0, 0, 0, 0);\nreturn slots.map(s => [\n  today.getTime() + s.h * 3600 * 1000 + (s.m || 0) * 60 * 1000,\n  s.sell\n]);"
+    - type: markdown
+      content: '## Buy-price matrix (DKK/kWh)
+
+        {% set slots = state_attr(''sensor.solar_ai_kobspris_prognose'',''slots'') or [] %}{% set today = now().date() %}{% set tom = today + timedelta(days=1) %}{% macro cell(v) %}{% if v is none %}·{% elif v<1.0 %}🟢{{''%.1f''|format(v)}}{% elif v<1.5 %}🟡{{''%.1f''|format(v)}}{% elif v<2.0 %}🟠{{''%.1f''|format(v)}}{% else %}🔴{{''%.1f''|format(v)}}{% endif %}{% endmacro %}
+
+        | | {% for h in range(24) %}{{''%02d''|format(h)}} | {% endfor %}
+
+        |--|{% for h in range(24) %}:--:|{% endfor %}
+
+        | **Today** | {% for h in range(24) %}{% set v=namespace(b=none) %}{% for s in slots %}{% set d=s.iso|as_datetime|as_local %}{% if d.hour==h and d.date()==today %}{% set v.b=s.buy %}{% endif %}{% endfor %}{{ cell(v.b) }} | {% endfor %}
+
+        | **Tomorrow** | {% for h in range(24) %}{% set v=namespace(b=none) %}{% for s in slots %}{% set d=s.iso|as_datetime|as_local %}{% if d.hour==h and d.date()==tom %}{% set v.b=s.buy %}{% endif %}{% endfor %}{{ cell(v.b) }} | {% endfor %}'
+      card_mod:
+        style:
+          .: 'ha-card { overflow-x: auto; }'
+          ha-markdown $: 'table { font-size: 13px; white-space: nowrap; border-collapse: collapse; min-width: max-content; }
+
+            th, td { padding: 4px 8px; text-align: center; }
+
+            td:first-child, th:first-child { position: sticky; left: 0; background: var(--ha-card-background, var(--card-background-color, white)); font-weight: 600; }'
     - type: entities
       title: 24h prisstatistik
       icon: mdi:chart-bar

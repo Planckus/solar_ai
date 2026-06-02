@@ -29,6 +29,12 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ## Recent releases
 
+### v0.47.5–v0.48.1 — execution fixes, net balance, price matrix
+
+- **Export/charge execution fixes (v0.47.5–v0.47.7).** The optimiser's planned charge/export wasn't reliably executing: the in-progress 15-minute slot was dropped from the plan (so the current interval matched nothing), export used FoxESS "Feed-in First" (which only routes solar, never discharges the battery) instead of "Force Discharge", the force-charge/-discharge power setpoints wrote watts into kW fields (so they ran at full power, ignoring the grid-headroom cap), and a cold plan right after a restart was cached for ~15 min. All fixed — the battery now actually performs arbitrage export.
+- **Net grid balance (v0.48.0).** New `import_cost` sensor (all grid import — house + battery charging) and `net_grid_balance` sensor (export income − import cost), with a net-balance card beside export income on the Prices page. `export_income` remains gross export.
+- **Buy-price matrix (v0.48.1).** New `price_forecast` sensor (hourly, timestamped buy/sell prices over today + tomorrow) and a colour-coded price-matrix card on the Prices page, so upcoming buy prices are visible at a glance (green = cheap, red = expensive).
+
 ### v0.47.0 — receding-horizon planning + dynamic discharge floor
 
 Two changes to how the optimiser reserves and times battery use:
