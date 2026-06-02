@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.49.0] — 2026-06-02
+
+### Changed — clearer "no-trade day" wording
+
+- When the optimiser runs and finds nothing worth doing (prices too flat to clear the spread, battery already covered by solar), the daily plan now reads **"No trades today — prices too flat to arbitrage (running on self-use)"** / **"Ingen handler i dag — priserne er for flade til arbitrage (kører på selvforbrug)"** instead of a bare "Charge: none · Export: none", which looked like an error or a failed calculation. Display only — no change to optimiser logic.
+
+### Added — disk-space alarm
+
+- **`sensor.solar_ai_disk_free`** (diagnostic) — free space (GB) on the partition Home Assistant runs on, with `pct_free`, total/used, the probe path, and the alarm threshold as attributes. This watches the actual disk that fills up on a Pi/SD-card install (where the recorder DB and `.storage` live).
+- **`binary_sensor.solar_ai_disk_low`** (device class `problem`) — turns on when free space drops below the configured threshold. Use it in your own automations.
+- **Configurable threshold** — a number entity in the settings panel sets the alarm at a chosen **% free** (default 10%, range 1–50).
+- **Mobile push** — fires once when free space first crosses below the threshold, with a recovery hysteresis so a borderline reading doesn't repeat. Gated by a new `notify_disk_low` switch (default on) and the master notifications toggle + targets.
+
+---
+
 ## [0.48.1] — 2026-06-02
 
 ### Added — buy-price forecast + price matrix

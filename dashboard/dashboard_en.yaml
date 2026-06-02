@@ -1128,6 +1128,17 @@ views:
       - entity: number.solar_ai_batteri_slidomkostning_dkk_kwh_cyklet
         name: Battery wear cost
     - type: entities
+      title: System
+      icon: mdi:harddisk
+      show_header_toggle: false
+      entities:
+      - entity: sensor.solar_ai_ledig_diskplads
+        name: Free disk space
+      - entity: binary_sensor.solar_ai_lav_diskplads
+        name: Low disk space (alarm)
+      - entity: number.solar_ai_alarmgraense_for_lav_diskplads_ledig
+        name: Alarm threshold (% free)
+    - type: entities
       title: Notifikationer
       icon: mdi:bell-outline
       show_header_toggle: false
@@ -1144,6 +1155,8 @@ views:
         name: Solar export blocked (price floor)
       - entity: switch.solar_ai_notifikation_solareksport_genoptaget
         name: Solar export resumed
+      - entity: switch.solar_ai_notifikation_lav_diskplads
+        name: Low disk space
       - type: divider
       - entity: switch.solar_ai_notifikation_iphone
         name: 📱 Telefon

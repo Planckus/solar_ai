@@ -280,6 +280,7 @@
       "solar_tomorrow_kwh": { "name": "Solar: expected tomorrow" },
       "todays_plan": { "name": "Today's plan" },
       "action_log": { "name": "Session log" },
+      "disk_free": { "name": "Free disk space" },
       "export_income": { "name": "Export income" },
       "import_cost": { "name": "Import cost" },
       "net_grid_balance": { "name": "Net grid balance" },
@@ -391,7 +392,8 @@
       "solar_will_fill": { "name": "Solar will fill battery" },
       "ev_connected": { "name": "EV connected" },
       "ev_charging_now": { "name": "EV charging (now/minpv mode)" },
-      "ev_charging_solar": { "name": "EV on Solar" }
+      "ev_charging_solar": { "name": "EV on Solar" },
+      "disk_low": { "name": "Low disk space" }
     },
     "number": {
       "charge_rate_below_0": { "name": "Max charge rate — under 0°C" },
@@ -415,7 +417,8 @@
       "ev_min_charge_kw": { "name": "EV minimum charge rate (kW)" },
       "ev_max_charge_kw": { "name": "EV maximum charge rate (kW)" },
       "ev_battery_priority_soc": { "name": "Battery-first threshold (%) — EV waits until house battery reaches this SoC" },
-      "solar_confidence_pct": { "name": "Solar confidence (%) — forecast percentile the optimiser plans against (50 = median)" }
+      "solar_confidence_pct": { "name": "Solar confidence (%) — forecast percentile the optimiser plans against (50 = median)" },
+      "disk_alarm_threshold": { "name": "Low-disk alarm threshold (% free)" }
     },
     "switch": {
       "enabled": { "name": "Arbitrage enabled" },
@@ -427,6 +430,7 @@
       "notify_charge_stop":         { "name": "Notify: charging stopped" },
       "notify_solar_floor_blocked": { "name": "Notify: solar export blocked (price floor)" },
       "notify_solar_floor_resumed": { "name": "Notify: solar export resumed" },
+      "notify_disk_low":            { "name": "Notify: low disk space" },
       "ev_schedule_slot_1_enabled": { "name": "Schedule 1 enabled" },
       "ev_schedule_slot_2_enabled": { "name": "Schedule 2 enabled" },
       "ev_schedule_slot_3_enabled": { "name": "Schedule 3 enabled" },

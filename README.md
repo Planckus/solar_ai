@@ -29,6 +29,11 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ## Recent releases
 
+### v0.49.0 — clearer no-trade wording + disk-space alarm
+
+- **No-trade-day wording.** When the optimiser finds nothing worth doing (prices too flat to clear the spread, battery already covered by solar), the daily plan now says so explicitly instead of a bare "none · none" that read like an error.
+- **Disk-space alarm.** New `disk_free` sensor (free GB + % on the partition HA runs on) and `disk_low` problem binary_sensor, with a GUI threshold (default 10% free) and an optional mobile push. Aimed at Pi/SD-card installs. See [Disk-space alarm](#disk-space-alarm).
+
 ### v0.47.5–v0.48.1 — execution fixes, net balance, price matrix
 
 - **Export/charge execution fixes (v0.47.5–v0.47.7).** The optimiser's planned charge/export wasn't reliably executing: the in-progress 15-minute slot was dropped from the plan (so the current interval matched nothing), export used FoxESS "Feed-in First" (which only routes solar, never discharges the battery) instead of "Force Discharge", the force-charge/-discharge power setpoints wrote watts into kW fields (so they ran at full power, ignoring the grid-headroom cap), and a cold plan right after a restart was cached for ~15 min. All fixed — the battery now actually performs arbitrage export.
@@ -384,6 +389,21 @@ Pair it with the feed-in kWh entity for energy totals and the export-price entit
 - **`net_grid_balance`** ("Netto el-balance" / "Net grid balance") — **export income − import cost** (can be negative if you're a net buyer), with `today` / `last_7_days` / `last_30_days` / `this_month` / `this_year` and a daily net series.
 
 The Prices page shows a net-balance card beside the export-income card.
+
+---
+
+### Disk-space alarm
+
+On a Raspberry Pi / SD-card install the disk can fill up over time (mostly Home Assistant's recorder database). Solar AI watches free space on the partition HA runs on and warns before it becomes a problem.
+
+| Entity | What it does |
+|---|---|
+| `sensor.solar_ai_disk_free` ("Ledig diskplads" / "Free disk space") | Free space in GB. Attributes: `pct_free`, `total_gb`, `used_gb`, `path`, `alarm_threshold_pct`. |
+| `binary_sensor.solar_ai_disk_low` ("Lav diskplads" / "Low disk space") | Problem sensor — on when free space is below the threshold. Hang your own automations off this. |
+| `number.solar_ai_…_threshold` ("Alarmgrænse for lav diskplads" / "Low-disk alarm threshold") | The threshold in **% free** (default 10, range 1–50), in the settings panel. |
+| `switch.solar_ai_…_notify_disk_low` ("Notifikation: lav diskplads" / "Notify: low disk space") | Toggles the mobile push (default on). |
+
+Free space is checked every 5 minutes. When it first drops below the threshold a single mobile push is sent (subject to the master notifications switch and configured targets); the alarm clears only after recovering a few points above the threshold, so a borderline reading doesn't repeat. The `disk_low` binary sensor reflects the state regardless of whether push is configured.
 
 ---
 

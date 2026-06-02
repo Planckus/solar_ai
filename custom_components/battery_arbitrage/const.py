@@ -718,3 +718,11 @@ CAPACITY_MIN_CHARGE_KW = 0.5        # kW — minimum charge power to count as a 
 CAPACITY_MIN_SAMPLES = 20           # Need this many samples before trusting the learned value
 CAPACITY_MAX_SAMPLES = 300          # Rolling window size
 EFFICIENCY_MIN_TOTAL_KWH = 100      # kWh — minimum lifetime charge before trusting auto-efficiency
+
+# ── Disk-space alarm (v0.49.0) ────────────────────────────────────────────────
+# Watches free space on the partition HA runs on (the real Pi/SD-card concern).
+# Threshold is user-editable in the GUI (% free); a push fires once when free
+# space first drops below it, and the alarm clears only after recovering past
+# threshold + hysteresis, so a borderline reading doesn't spam notifications.
+DEFAULT_DISK_ALARM_THRESHOLD_PCT = 10.0    # warn under 10% free by default
+DISK_ALARM_RECOVERY_HYSTERESIS_PCT = 3.0   # clear only above threshold + 3 pts
