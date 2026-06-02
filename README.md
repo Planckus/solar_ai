@@ -499,38 +499,86 @@ number.foxessmodbus_force_discharge_power
 
 ## Installation
 
-### 1. Copy the integration
+This is a step-by-step walkthrough written for someone who has used Home Assistant but has never installed a custom integration. Budget about 30 minutes. Read [Prerequisites](#prerequisites) first and make sure the required integrations (at minimum the FoxESS Modbus integration and a solar-forecast source) are already installed and producing data — Solar AI builds on top of them.
 
-Copy the `custom_components/battery_arbitrage` folder into the HA config directory:
+The steps, in order:
 
-```
-/homeassistant/custom_components/battery_arbitrage/
-```
+1. Install HACS (skip if you already have it).
+2. Add Solar AI to HACS and download it — or copy the files manually.
+3. Restart Home Assistant.
+4. Install the dashboard cards (HACS Frontend).
+5. Add and configure the integration (the setup wizard).
+6. Connect an EV charger (optional).
+7. Import the dashboard.
+8. Enter your electricity prices.
+9. Run in monitoring mode, then enable control.
 
-Via HACS: add this repository as a custom repository and install from there.
+### 1. Install HACS
 
-### 2. Restart Home Assistant
+HACS (the Home Assistant Community Store) is the easiest way to install and update custom integrations. If *Settings → Devices & Services* already shows a **HACS** entry, skip to step 2. Otherwise follow the official guide: <https://hacs.xyz/docs/use/download/download/>. After installing HACS you must restart Home Assistant and add the HACS integration before continuing.
 
-### 3. Add the integration
+### 2. Add Solar AI to HACS
 
-*Settings → Devices & Services → Add Integration → Solar AI*
+1. Open **HACS** from the left sidebar.
+2. Click the three-dot menu (⋮) in the top-right corner and choose **Custom repositories**.
+3. In **Repository**, paste:
+   ```
+   https://github.com/Planckus/solar_ai
+   ```
+4. In **Type**, choose **Integration**, then click **Add**. Close the dialog.
+5. Back in HACS, search for **Solar AI**, open it, and click **Download** (accept the version shown). 
+6. Continue to step 3 to restart.
 
-The wizard covers:
+**Manual installation (no HACS).** If you prefer not to use HACS:
 
-1. Live data source (EVCC / Hybrid / FoxESS only).
-2. EVCC URL (EVCC and Hybrid modes), e.g. `http://your-ha-ip:7070`.
-3. FoxESS live sensor overrides (Hybrid and FoxESS-only modes).
-4. No-EV acknowledgement (FoxESS-only mode).
-5. FoxESS control entities: inverter ID, work-mode select, force-charge / force-discharge number entities.
-6. Battery sensors: SoC, temperature, charge/discharge power, lifetime totals.
-7. Spot price entity (optional). If blank, Energi Data Service is used directly.
-8. Solar forecast source: EVCC / Solcast / Forecast.Solar / Auto, plus entity overrides.
-9. Battery and trading parameters: capacity, efficiency, initial thresholds, DSO, currency.
-10. Dashboard link (optional).
+1. Download the repository as a ZIP from <https://github.com/Planckus/solar_ai> (green **Code** button → **Download ZIP**) and unzip it.
+2. Copy the folder `custom_components/battery_arbitrage` from the unzipped files into your Home Assistant configuration folder so the final path is:
+   ```
+   /config/custom_components/battery_arbitrage/
+   ```
+   Use the **File editor** or **Studio Code Server** add-on, the **Samba share** add-on, or SSH to copy files. The `custom_components` folder sits next to your `configuration.yaml`; create it if it does not exist.
+3. Continue to step 3.
 
-All of these can be changed later via *Settings → Devices & Services → Solar AI → Configure* without re-running the wizard.
+### 3. Restart Home Assistant
 
-### 4. Connect an EV charger (optional)
+*Settings → System → (power icon, top-right) → Restart Home Assistant.* Wait for it to come back online. This is what makes the newly-copied integration code available.
+
+### 4. Install the dashboard cards
+
+The bundled dashboard uses five custom Lovelace cards. Install each one before importing the dashboard, or the dashboard will show "Custom element doesn't exist" errors. In **HACS**, search for each card by name and click **Download**:
+
+| Card to search for | Why it's needed |
+|---|---|
+| Mushroom | Status tiles, charge-mode selector, section titles |
+| ApexCharts Card | Price/SoC chart and the 48-h solar forecast chart |
+| Power Flow Card Plus | Animated energy-flow diagram on the home screen |
+| card-mod | Layout and width styling |
+| button-card | Cohesive card styling |
+
+After downloading all five, **hard-refresh your browser** so it picks up the new cards: `Ctrl+Shift+R` (Windows/Linux) or `Cmd+Shift+R` (macOS).
+
+### 5. Add and configure the integration
+
+1. Go to *Settings → Devices & Services → **Add Integration*** (bottom-right).
+2. Search for **Solar AI** and click it. (If it does not appear, the restart in step 3 was missed, or the browser needs a hard-refresh.)
+3. A setup wizard opens. Work through the pages:
+
+   | Page | What to enter |
+   |---|---|
+   | **Live data source** | Pick **EVCC**, **Hybrid**, or **FoxESS only** — see the [Live data mode](#live-data-mode) table. If unsure and you have no EV, choose **FoxESS only**. |
+   | **EVCC URL** *(EVCC/Hybrid only)* | The address of your EVCC instance, e.g. `http://your-ha-ip:7070`. |
+   | **FoxESS live sensors** *(Hybrid / FoxESS-only)* | Grid-import, grid-export, PV-power and house-load sensors. Auto-detected defaults are pre-filled — change only if your entity IDs differ. |
+   | **No-EV acknowledgement** *(FoxESS-only)* | Confirm you have no EV, or that your charger never pulls from the house battery. This avoids tripping your main breaker. |
+   | **Inverter control entities** | The work-mode `select`, the force-charge and force-discharge `number` entities, and the inverter ID. Defaults match the FoxESS Modbus integration; see [FoxESS Modbus entity IDs](#foxess-modbus-entity-ids). |
+   | **Battery sensors** | SoC, cell temperature, charge/discharge power, and lifetime charge/discharge totals. |
+   | **Electricity price** | A spot-price sensor (Strømligning, Tibber, etc.) excluding VAT. Leave blank to fetch prices directly from Energi Data Service. |
+   | **Solar forecast source** | EVCC, Solcast, Forecast.Solar, or Auto — plus the entity overrides. For Solcast see [the two-entity wiring note](#solcast-ha-integration--two-entity-wiring-v0280). |
+   | **Battery & trading parameters** | Battery capacity (kWh), round-trip efficiency, starting thresholds, your grid operator (DSO) and currency. |
+   | **Dashboard link** *(optional)* | Skip for now; you import the dashboard in step 7. |
+
+Everything here can be changed later from *Settings → Devices & Services → Solar AI → **Configure*** without re-running the wizard. When the wizard finishes, Solar AI creates its sensors and switches and starts in monitoring mode (control off).
+
+### 6. Connect an EV charger (optional)
 
 For an OCPP 1.6 charger driven by the integration's EV controller:
 
@@ -552,34 +600,60 @@ For an OCPP 1.6 charger driven by the integration's EV controller:
 
 The embedded server tolerates non-standard OCPP frames (empty-`[]` keepalives from the FoxESS L11PMC are silently ignored). Charger metadata is persisted to HA storage and `TriggerMessage` is sent on reconnect so sensors do not blank after an HA restart.
 
-### 5. Import the dashboard
+### 7. Import the dashboard
 
-Two dashboard YAML files are included:
+Two ready-made dashboard files are included — pick one by language:
 
 | File | Language |
 |---|---|
-| `dashboard/dashboard_da.yaml` | Danish |
 | `dashboard/dashboard_en.yaml` | English |
+| `dashboard/dashboard_da.yaml` | Danish |
 
-Both files share the same single-screen layout (the English file is a full translation of the Danish one). Integration-generated text (status reasons, notifications) follows Home Assistant's configured language — Danish on a Danish HA, English otherwise (v0.41.0).
+Both share the same single-screen layout (the English file is a full translation of the Danish one). Integration-generated text (status reasons, notifications) follows Home Assistant's configured language regardless of which file you pick.
 
-Import via *Settings → Dashboards → Add Dashboard → From YAML*.
+To import it:
 
-### 6. Set electricity cost parameters
+1. Open the file you want on GitHub, e.g. <https://github.com/Planckus/solar_ai/blob/main/dashboard/dashboard_en.yaml>, click the **Raw** button, and copy the entire contents (`Ctrl/Cmd+A`, then `Ctrl/Cmd+C`). If you installed manually, the same file is in your downloaded copy.
+2. In Home Assistant, go to *Settings → **Dashboards*** → **Add dashboard** (bottom-right) → **New dashboard from scratch**. Give it a title (e.g. "Solar AI"), optionally an icon, and click **Create**.
+3. Open the new (empty) dashboard. Click the pencil **Edit** icon (top-right). If asked, choose to take control / continue.
+4. Click the three-dot menu (⋮, top-right) → **Raw configuration editor**.
+5. Select all the existing text in the editor and delete it, then paste the YAML you copied in step 1. Click **Save**, then close the editor.
 
-In the dashboard *Priskonfiguration / Price Configuration* card, set the values from your electricity contract:
+The dashboard now renders. If you see "Custom element doesn't exist" messages, a card from step 4 is missing — install it via HACS and hard-refresh.
 
-- Elafgift: Danish electricity duty (check your bill).
-- Spot markup (handelstillæg): retailer's per-kWh add-on.
-- VAT: 25% in Denmark.
-- Seller-side fee: retailer's per-kWh cut on exports (if any).
-- Min. export price: optional floor below which the integration will not export (default 0.00).
+### 8. Enter your electricity prices
 
-The indfødningstarif (DSO + Energinet feed-in production tariff) is fetched and deducted automatically.
+Open the new dashboard, go to the **Settings / Indstillinger** page, and fill in the **Price parameters** card from your electricity contract:
 
-### 7. Monitoring mode first
+- **Elafgift** — electricity duty (from your bill).
+- **Spot markup** — your retailer's per-kWh add-on.
+- **VAT** — 25% in Denmark.
+- **Seller-side fee** — your retailer's per-kWh cut on exports, if any.
+- **Minimum export price** — optional floor below which Solar AI will not export (default 0.00).
 
-The system starts with the arbitrage switch off. The `Decision reason` sensor shows what the integration *would* do. Flip the switch on once the planned actions look reasonable for your setup.
+The grid feed-in tariff (DSO + Energinet production tariff) is fetched and deducted automatically, so you do not enter it by hand.
+
+### 9. Run in monitoring mode, then enable control
+
+Solar AI starts with the **Arbitrage enabled** switch **off**. In this mode it calculates and shows what it *would* do but never changes the inverter. On the dashboard, watch:
+
+- **Today's plan** — the charge/export hours it has scheduled.
+- **Decision reason** — why it is choosing the current action.
+
+Let it run for a day or two and confirm the planned actions look sensible for your setup and prices. When you are comfortable, turn **Arbitrage enabled** on (Settings page or `switch.solar_ai_...arbitrage`). From then on it actively sets the inverter work mode and charge/export power within your configured limits.
+
+### Verify the install / troubleshooting
+
+| Symptom | Likely cause and fix |
+|---|---|
+| "Solar AI" not in the Add Integration list | Restart HA (step 3) was skipped, or the browser is cached — hard-refresh (`Ctrl/Cmd+Shift+R`). |
+| Integration loads but values are `unknown` / `unavailable` | A source integration isn't ready. Confirm FoxESS Modbus and your solar-forecast entities have live values; re-check the entity IDs in *Solar AI → Configure*. |
+| Dashboard shows "Custom element doesn't exist: …" | A Lovelace card from step 4 is not installed. Install it in HACS and hard-refresh. |
+| No charge/export ever happens | Expected if **Arbitrage enabled** is off (step 9), or if prices are too flat to clear your minimum spread — check **Today's plan** and **Decision reason**. |
+| EV charger stays `Unavailable` | Re-check the OCPP backend URL and Charge Point ID (step 6), then power-cycle the charger. |
+| Prices look wrong | Re-check the price parameters (step 8) and your selected grid operator (DSO) in *Configure*. |
+
+For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#disk-space-alarm) so you are warned before storage fills up.
 
 ---
 
