@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -12,6 +13,14 @@ _LOGGER = logging.getLogger(__name__)
 
 _DATAHUB_URL = "https://api.energidataservice.dk/dataset/DatahubPricelist"
 _TIMEOUT = aiohttp.ClientTimeout(total=15)
+
+# v0.49.1 — Energi Data Service rate-limits bursts of requests (HTTP 429).
+# The tariff refresh fires several D03 queries near-simultaneously, so retry
+# 429s and transient 5xx/network errors with a short, jittered backoff before
+# giving up. Jitter de-synchronises concurrent retries so they don't re-burst
+# together.
+_FETCH_RETRIES = 4
+_RETRY_BACKOFF_SECONDS = [1.5, 2.5, 4.0]   # waits between attempts (last value reused)
 
 # Historical lookback start date.  Covers all seasonal/annual tariff records
 # (Energinet updates once a year, most DSOs update 1–4 times per year).
@@ -60,16 +69,27 @@ async def _fetch_raw_records(
         url += f"&end={end}"
     if sort:
         url += f"&sort={sort}"
-    try:
-        async with session.get(url, timeout=_TIMEOUT) as resp:
-            resp.raise_for_status()
-            data: dict[str, Any] = await resp.json(content_type=None)
-            return data.get("records", [])
-    except Exception as err:
-        _LOGGER.warning(
-            "DatahubPricelist fetch failed for GLN %s (start=%s): %s", gln, start, err
-        )
-        return []
+    last_err: Any = None
+    for attempt in range(_FETCH_RETRIES):
+        try:
+            async with session.get(url, timeout=_TIMEOUT) as resp:
+                if resp.status == 429 or resp.status >= 500:
+                    last_err = f"HTTP {resp.status}"
+                else:
+                    resp.raise_for_status()
+                    data: dict[str, Any] = await resp.json(content_type=None)
+                    return data.get("records", [])
+        except Exception as err:  # noqa: BLE001 — network/JSON/timeout all retryable
+            last_err = err
+        # Back off (with jitter) before the next attempt, except after the last.
+        if attempt < _FETCH_RETRIES - 1:
+            base = _RETRY_BACKOFF_SECONDS[min(attempt, len(_RETRY_BACKOFF_SECONDS) - 1)]
+            await asyncio.sleep(base + random.uniform(0, 1.0))
+    _LOGGER.warning(
+        "DatahubPricelist fetch failed for GLN %s (start=%s) after %d attempts: %s",
+        gln, start, _FETCH_RETRIES, last_err,
+    )
+    return []
 
 
 async def fetch_tariff_schedule(
@@ -302,7 +322,7 @@ async def fetch_feed_in_tariff(
     dso_gln: str,
     energinet_gln: str,
     reference_dt: datetime,
-) -> tuple[float, float]:
+) -> tuple[float | None, float | None]:
     """Return ``(dso_feed_in, energinet_feed_in)`` flat rates in DKK/kWh.
 
     Fetches two flat-rate tariffs that are deducted from the gross export price:
@@ -319,8 +339,10 @@ async def fetch_feed_in_tariff(
     few times per year, so the same two-query strategy as :func:`fetch_tariff_schedule`
     is used for reliability.
 
-    Returns ``(0.0, 0.0)`` on API failure — the coordinator keeps the previous
-    cached values.
+    Each element is ``None`` when its lookup failed or no valid record was
+    found (e.g. an EDS 429) — the coordinator then keeps the previous cached
+    value rather than zeroing the export price. A real DK feed-in tariff is
+    always > 0, so a genuine zero is not expected.
     """
     today_str = reference_dt.strftime("%Y-%m-%d")
     tomorrow_str = (reference_dt + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -337,7 +359,7 @@ async def fetch_feed_in_tariff(
 
     now = reference_dt
 
-    def _first_valid_flat(records_a: list[dict], records_b: list[dict], filter_fn) -> float:
+    def _first_valid_flat(records_a: list[dict], records_b: list[dict], filter_fn) -> float | None:
         seen: set[tuple] = set()
         for r in records_a + records_b:
             key = (r.get("ChargeTypeCode"), r.get("ValidFrom"))
@@ -372,7 +394,10 @@ async def fetch_feed_in_tariff(
             price1 = r.get("Price1")
             if price1 is not None:
                 return round(float(price1), 6)
-        return 0.0
+        # v0.49.1 — None (not 0.0) signals "no valid record found / fetch
+        # failed", so the coordinator keeps the last good cached value instead
+        # of zeroing the export price.
+        return None
 
     def _is_dso_feed_in(r: dict) -> bool:
         note = (r.get("Note") or "").lower()
@@ -385,7 +410,7 @@ async def fetch_feed_in_tariff(
     energinet_rate = _first_valid_flat(en_records, [], _is_energinet_feed_in)
 
     _LOGGER.debug(
-        "Feed-in tariff: DSO (GLN %s) %.4f + Energinet %.4f = %.4f DKK/kWh",
-        dso_gln, dso_rate, energinet_rate, dso_rate + energinet_rate,
+        "Feed-in tariff: DSO (GLN %s) %s + Energinet %s DKK/kWh (None = lookup failed, cache kept)",
+        dso_gln, dso_rate, energinet_rate,
     )
     return dso_rate, energinet_rate

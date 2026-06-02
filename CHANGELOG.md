@@ -9,6 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.49.1] — 2026-06-02
+
+### Fixed — feed-in tariff dropping to 0
+
+- The grid feed-in tariff (DSO indfødning C + Energinet production tariff, deducted from the export price) could fall to **0 DKK/kWh** after a restart or whenever Energi Data Service rate-limited the tariff fetch (HTTP 429). The daily refresh fires several D03 queries near-simultaneously; when the consumption-tariff queries succeeded but the feed-in queries were 429'd, `fetch_feed_in_tariff` returned `0.0` and the old commit guard (which only checked the consumption schedules) overwrote the previously-good feed-in value with zero, locking it for up to an hour. The values were also not persisted, so every restart started at 0 until the next successful fetch.
+- Three changes:
+  - `fetch_feed_in_tariff` now returns `None` (not `0.0`) when a lookup fails or finds no valid record; the coordinator commits the new value only when it is a real number, otherwise keeping the last good cached value.
+  - The feed-in tariff is now persisted to storage and restored on startup, so the export price is correct immediately after a restart.
+  - The daily tariff refresh now issues its Energi Data Service queries sequentially instead of firing all six at once, which was reliably tripping the rate limit; `DatahubPricelist` requests also retry HTTP 429 and transient errors with a short, jittered backoff.
+
+---
+
 ## [0.49.0] — 2026-06-02
 
 ### Changed — clearer "no-trade day" wording

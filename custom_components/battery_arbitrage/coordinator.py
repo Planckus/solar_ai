@@ -844,6 +844,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._ev_active_mode = self._stored.get("ev_active_mode", EV_MODE_LOCKED)
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
+        # v0.49.1 — restore the last good feed-in tariff so the export price is
+        # correct immediately after a restart, instead of sitting at 0 until the
+        # next successful daily tariff fetch.
+        self._feed_in_tariff_dso = float(self._stored.get("feed_in_tariff_dso", 0.0))
+        self._feed_in_tariff_energinet = float(self._stored.get("feed_in_tariff_energinet", 0.0))
 
     # ------------------------------------------------------------------ #
     # Legacy automation management                                          #
@@ -967,32 +972,40 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             from .tariffs import fetch_tariff_schedule, fetch_feed_in_tariff  # avoid circular import at module level
             dso_gln = self.config.get(CONF_DSO_GLN, DEFAULT_DSO_GLN)
             try:
-                dso_sched, energinet_sched, (dso_feed_in, en_feed_in) = await asyncio.gather(
-                    # DSO: 24 hourly prices + genuinely varying hours, restricted
-                    # to the residential C-time band via Note substring.
-                    # v0.39.8 — added `note_substring="Nettarif C"` because the
-                    # require-all-prices + require-varying filters alone still
-                    # let through tier-A and tier-B records (Dinel publishes
-                    # 7 parallel bands; previously all 6 distinct profiles
-                    # were summed, overstating the per-kWh tariff ~3x).
-                    fetch_tariff_schedule(
-                        session, dso_gln, now,
-                        require_all_prices=True,
-                        require_varying_prices=True,
-                        note_substring="Nettarif C",
-                    ),
-                    # Energinet: codes 40000 (Transmissions nettarif) + 41000
-                    # (Systemtarif) — both apply to residential consumers.
-                    # v0.39.8 — 41000 added; was missing before, halving the
-                    # Energinet contribution. Excludes 40010 (Indfødningstarif
-                    # produktion), 40020 (HV 132/150 kV), capacity / industrial
-                    # tariffs.
-                    fetch_tariff_schedule(
-                        session, ENERGINET_GLN, now,
-                        allowed_codes=ENERGINET_TARIFF_CODES,
-                    ),
-                    # Feed-in tariffs: DSO indfødning C + Energinet indfødning produktion (40010)
-                    fetch_feed_in_tariff(session, dso_gln, ENERGINET_GLN, now),
+                # v0.49.1 — fetch sequentially, NOT via one asyncio.gather.
+                # Each call below itself issues two concurrent EDS queries, so
+                # gathering all three fired six requests at once and reliably
+                # tripped Energi Data Service's rate limit (HTTP 429). A 429 on
+                # an unlucky tick committed degenerate/zero data that then stuck
+                # for 24 h. This is a once-a-day fetch, so the small extra
+                # latency from running them one after another is irrelevant and
+                # keeps the burst within the rate limit.
+                #
+                # DSO: 24 hourly prices + genuinely varying hours, restricted
+                # to the residential C-time band via Note substring.
+                # v0.39.8 — `note_substring="Nettarif C"` because the
+                # require-all-prices + require-varying filters alone still let
+                # through tier-A and tier-B records (Dinel publishes 7 parallel
+                # bands; previously all 6 distinct profiles were summed,
+                # overstating the per-kWh tariff ~3x).
+                dso_sched = await fetch_tariff_schedule(
+                    session, dso_gln, now,
+                    require_all_prices=True,
+                    require_varying_prices=True,
+                    note_substring="Nettarif C",
+                )
+                # Energinet: codes 40000 (Transmissions nettarif) + 41000
+                # (Systemtarif) — both apply to residential consumers.
+                # v0.39.8 — 41000 added; was missing before, halving the
+                # Energinet contribution. Excludes 40010 (Indfødningstarif
+                # produktion), 40020 (HV 132/150 kV), capacity / industrial.
+                energinet_sched = await fetch_tariff_schedule(
+                    session, ENERGINET_GLN, now,
+                    allowed_codes=ENERGINET_TARIFF_CODES,
+                )
+                # Feed-in tariffs: DSO indfødning C + Energinet indfødning produktion (40010)
+                dso_feed_in, en_feed_in = await fetch_feed_in_tariff(
+                    session, dso_gln, ENERGINET_GLN, now,
                 )
                 # v0.39.13 — only commit if BOTH fetches returned non-empty
                 # data. Before this guard, a partial fetch (e.g. Energinet
@@ -1010,9 +1023,29 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     self._tariff_schedule = [
                         round(d + e, 4) for d, e in zip(dso_sched, energinet_sched)
                     ]
-                    self._feed_in_tariff_dso = dso_feed_in
-                    self._feed_in_tariff_energinet = en_feed_in
+                    # v0.49.1 — fetch_feed_in_tariff now returns None (not 0.0)
+                    # when the lookup failed (e.g. an EDS 429 on the feed-in
+                    # queries while the consumption queries succeeded). Only
+                    # commit + persist a real value; otherwise keep the last
+                    # good cached one instead of zeroing the export price.
+                    if dso_feed_in is not None:
+                        self._feed_in_tariff_dso = dso_feed_in
+                        self._stored["feed_in_tariff_dso"] = dso_feed_in
+                    if en_feed_in is not None:
+                        self._feed_in_tariff_energinet = en_feed_in
+                        self._stored["feed_in_tariff_energinet"] = en_feed_in
                     self._last_tariff_schedule_refresh = now
+                    # v0.49.1 — if we still have NO feed-in tariff at all (cold
+                    # cache plus a failed feed-in lookup, e.g. a 429 that the
+                    # retries didn't clear), don't sit on the 24-hour timer with
+                    # the export price stuck at 0. Pretend the refresh is nearly
+                    # stale so the next attempt happens in ~15 min instead.
+                    # Once any real feed-in value lands (and is persisted) this
+                    # branch stops firing and the normal 24-hour cadence holds.
+                    if not (self._feed_in_tariff_dso or self._feed_in_tariff_energinet):
+                        self._last_tariff_schedule_refresh = now - timedelta(
+                            seconds=max(0, TARIFF_SCHEDULE_REFRESH_SECONDS - 900),
+                        )
                     _LOGGER.debug(
                         "Tariff schedule refreshed (GLN %s + Energinet). "
                         "Hour 0: %.4f, Hour 12: %.4f DKK/kWh",
