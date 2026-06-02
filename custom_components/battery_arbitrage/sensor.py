@@ -12,7 +12,15 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfEnergy, UnitOfPower, UnitOfTemperature, UnitOfTime
+from homeassistant.const import (
+    EntityCategory,
+    PERCENTAGE,
+    UnitOfEnergy,
+    UnitOfInformation,
+    UnitOfPower,
+    UnitOfTemperature,
+    UnitOfTime,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -515,6 +523,27 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         value_fn=lambda d: d.get("action_log_count", 0),
         attrs_fn=lambda d: {
             "sessions": d.get("action_log", []),
+        },
+    ),
+    # ── Disk-space monitor (v0.49.0) ──────────────────────────────────────
+    # State = free space (GB) on the partition HA runs on. Attributes give the
+    # % free, total/used, the probe path, and the configured alarm threshold.
+    BatteryArbitrageSensorDescription(
+        key="disk_free",
+        translation_key="disk_free",
+        icon="mdi:harddisk",
+        device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        suggested_display_precision=1,
+        value_fn=lambda d: d.get("disk_free_gb"),
+        attrs_fn=lambda d: {
+            "pct_free": d.get("disk_pct_free"),
+            "total_gb": d.get("disk_total_gb"),
+            "used_gb": d.get("disk_used_gb"),
+            "path": d.get("disk_path"),
+            "alarm_threshold_pct": d.get("disk_alarm_threshold_pct"),
         },
     ),
     # v0.42.0 — cumulative income from exported energy (DKK). TOTAL_INCREASING

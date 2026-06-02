@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import statistics
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -104,6 +105,8 @@ from .const import (
     DYNAMIC_FLOOR_MARGIN_DOWN,
     STORAGE_KEY,
     STORAGE_VERSION,
+    DEFAULT_DISK_ALARM_THRESHOLD_PCT,
+    DISK_ALARM_RECOVERY_HYSTERESIS_PCT,
     STROMLIGNING_SPOTPRICE_EX_VAT,
     TEMP_BUCKETS,
     VACATION_MIN_DURATION,
@@ -269,6 +272,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self.config = config
         self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._stored: dict[str, Any] = {}
+        # v0.49.0 — disk-space alarm: latest reading + latched alarm state
+        self._disk_usage: dict[str, Any] = {}
+        self._disk_low: bool = False
         self._current_mode = MODE_NORMAL
         self._mode_reason = ""
         # v0.41.0 — language for user-facing strings (reasons, notifications).
@@ -748,6 +754,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.setdefault("notify_charge_stop", False)
             self._stored.setdefault("notify_solar_floor_blocked", False)
             self._stored.setdefault("notify_solar_floor_resumed", False)
+            # v0.49.0 — disk-space alarm (default ON: it's a safety alert)
+            self._stored.setdefault("notify_disk_low", True)
+            self._stored.setdefault("disk_alarm_threshold_pct", DEFAULT_DISK_ALARM_THRESHOLD_PCT)
             self._stored.setdefault("notify_targets", [])
             self._stored.setdefault("battery_degradation_cost", DEFAULT_BATTERY_DEGRADATION_COST)
             # EV charge controller (Phase B1)
@@ -1728,10 +1737,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     parts.append(f"{label} {hrs}")
                 return "  |  ".join(parts)
 
-            plan_text = (
-                f"{self._msg('Charge', 'Køb')}: {_fmt_plan('CHARGE')}"
-                f"  ·  {self._msg('Export', 'Salg')}: {_fmt_plan('EXPORT')}"
-            )
+            charge_str = _fmt_plan("CHARGE")
+            export_str = _fmt_plan("EXPORT")
+            none_label = self._msg("none", "ingen")
+            if charge_str == none_label and export_str == none_label:
+                # v0.49.0 — the optimizer ran and found nothing worth doing
+                # today (e.g. prices too flat to clear the spread, battery
+                # covered by solar). Spell that out so a bare "ingen · ingen"
+                # doesn't read like an error or a failed calculation.
+                plan_text = self._msg(
+                    "No trades today — prices too flat to arbitrage (running on self-use)",
+                    "Ingen handler i dag — priserne er for flade til arbitrage (kører på selvforbrug)",
+                )
+            else:
+                plan_text = (
+                    f"{self._msg('Charge', 'Køb')}: {charge_str}"
+                    f"  ·  {self._msg('Export', 'Salg')}: {export_str}"
+                )
         elif price_chart_slots:
             # Fallback: simple greedy sort (used before first optimizer run)
             sorted_by_buy = sorted(price_chart_slots, key=lambda s: s["buy"])
@@ -1875,6 +1897,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # ---- save storage (learning tick only — avoids flash wear on fast ticks) ----
         if is_learning_tick:
+            # v0.49.0 — refresh disk usage and evaluate the low-space alarm
+            self._disk_usage = await self._async_disk_usage()
+            await self._check_disk_alarm()
             await self._store.async_save(self._stored)
 
         return self._make_result(
@@ -1975,6 +2000,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             action_log_count=len(self._stored.get("action_log", [])),
             solar_floor_log=self.get_solar_floor_log(20),
             solar_floor_log_count=len(self._stored.get("solar_floor_log", [])),
+            # v0.49.0 — disk-space monitor / alarm
+            disk_free_gb=self._disk_usage.get("free_gb"),
+            disk_pct_free=self._disk_usage.get("pct_free"),
+            disk_total_gb=self._disk_usage.get("total_gb"),
+            disk_used_gb=self._disk_usage.get("used_gb"),
+            disk_path=self._disk_usage.get("path"),
+            disk_alarm_threshold_pct=float(self._stored.get(
+                "disk_alarm_threshold_pct", DEFAULT_DISK_ALARM_THRESHOLD_PCT)),
+            disk_low=self._disk_low,
             solar_hourly_factors=self.get_solar_hourly_accuracy_profile(),
             solar_hourly_samples=self.get_solar_hourly_sample_counts(),
             # v0.43.0 — S1 groundwork: per-hour forecast-ratio percentiles
@@ -3337,6 +3371,70 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 self._msg("⚡ Solar AI: Charging finished", "⚡ Solar AI: Opladning afsluttet"),
                 f"SoC {soc_start:.0f}%→{soc_end:.0f}% · {duration_min} min · {kwh} kWh · {dkk} DKK",
             )
+
+    async def _async_disk_usage(self) -> dict[str, Any]:
+        """Free/used space on the partition Home Assistant runs on.
+
+        Uses the config directory as the probe path — that is where the
+        recorder DB and .storage live, i.e. the disk that actually fills up
+        on a Pi/SD-card install. shutil.disk_usage is a blocking stat, so it
+        runs in the executor. Returns {} on error.
+        """
+        path = self.hass.config.config_dir
+
+        def _usage() -> dict[str, Any]:
+            try:
+                total, used, free = shutil.disk_usage(path)
+            except OSError:
+                return {}
+            return {
+                "total_gb": round(total / 1_000_000_000, 1),
+                "used_gb": round(used / 1_000_000_000, 1),
+                "free_gb": round(free / 1_000_000_000, 2),
+                "pct_free": round(100 * free / total, 1) if total else 0.0,
+                "path": path,
+            }
+
+        try:
+            return await self.hass.async_add_executor_job(_usage)
+        except Exception:  # noqa: BLE001
+            return {}
+
+    async def _check_disk_alarm(self) -> None:
+        """Latch the low-disk alarm and fire one push when it first trips.
+
+        Edge-triggered with a recovery hysteresis so a reading that hovers at
+        the threshold doesn't spam notifications. The alarm state itself
+        (self._disk_low) drives the binary_sensor regardless of push config.
+        """
+        du = self._disk_usage
+        pct = du.get("pct_free")
+        if pct is None:
+            return
+        threshold = float(self._stored.get(
+            "disk_alarm_threshold_pct", DEFAULT_DISK_ALARM_THRESHOLD_PCT))
+
+        if not self._disk_low and pct < threshold:
+            self._disk_low = True
+            _LOGGER.warning(
+                "Low disk space: %.1f%% (%s GB) free on %s — below %.0f%% threshold",
+                pct, du.get("free_gb"), du.get("path"), threshold,
+            )
+            if (self._stored.get("notifications_enabled", False)
+                    and self._stored.get("notify_disk_low", True)):
+                await self._send_mobile_notification(
+                    self._msg("⚠️ Solar AI: Low disk space",
+                              "⚠️ Solar AI: Lav diskplads"),
+                    self._msg(
+                        f"Only {du.get('free_gb')} GB ({pct:.0f}%) free on "
+                        f"{du.get('path')} — below the {threshold:.0f}% alarm threshold",
+                        f"Kun {du.get('free_gb')} GB ({pct:.0f}%) ledig på "
+                        f"{du.get('path')} — under {threshold:.0f}%-alarmgrænsen",
+                    ),
+                )
+        elif self._disk_low and pct >= threshold + DISK_ALARM_RECOVERY_HYSTERESIS_PCT:
+            self._disk_low = False
+            _LOGGER.info("Disk space recovered: %.1f%% free on %s", pct, du.get("path"))
 
     async def _send_mobile_notification(self, title: str, message: str) -> None:
         """Send a push notification to all user-selected HA Companion mobile apps.

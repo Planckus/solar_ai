@@ -96,6 +96,20 @@ BINARY_SENSORS: tuple[BatteryArbitrageBinarySensorDescription, ...] = (
         value_fn=lambda d: d.get("ev_charging_solar", False),
         attr_fn=lambda d: {"charge_kw": f"{round(d.get('ev_charge_power_w', 0) / 1000, 1)} kW" if d.get("ev_charging_solar") else "—"},
     ),
+    # v0.49.0 — low disk-space alarm (trips below the configured % free)
+    BatteryArbitrageBinarySensorDescription(
+        key="disk_low",
+        translation_key="disk_low",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        icon="mdi:harddisk-remove",
+        value_fn=lambda d: d.get("disk_low", False),
+        attr_fn=lambda d: {
+            "pct_free": d.get("disk_pct_free"),
+            "free_gb": d.get("disk_free_gb"),
+            "threshold_pct": d.get("disk_alarm_threshold_pct"),
+            "path": d.get("disk_path"),
+        },
+    ),
 )
 
 

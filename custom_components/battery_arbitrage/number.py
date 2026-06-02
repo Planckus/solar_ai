@@ -21,6 +21,7 @@ from .const import (
     CONF_STROMLIGNING_USE_MANUAL_OVERRIDES,
     DEFAULT_BATTERY_DEGRADATION_COST,
     DEFAULT_BATTERY_FLOOR_SOC,
+    DEFAULT_DISK_ALARM_THRESHOLD_PCT,
     DEFAULT_BATTERY_MAX_SOC,
     DEFAULT_BUY_PRICE_MODE,
     DEFAULT_ELAFGIFT_DKK_KWH,
@@ -56,6 +57,18 @@ async def async_setup_entry(
         for key, _, _, default in TEMP_BUCKETS
     ]
     entities += [
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="disk_alarm_threshold_pct",
+            translation_key="disk_alarm_threshold",
+            default=DEFAULT_DISK_ALARM_THRESHOLD_PCT,
+            icon="mdi:harddisk",
+            unit=PERCENTAGE,
+            min_val=1,
+            max_val=50,
+            step=1,
+            mode=NumberMode.BOX,
+        ),
         BatteryArbitrageConfigNumber(
             coordinator, entry,
             storage_key="battery_floor_soc",

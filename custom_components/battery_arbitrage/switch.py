@@ -22,6 +22,7 @@ _NOTIFY_SWITCHES = [
     ("notify_charge_stop",         "notify_charge_stop",         "mdi:battery-check"),
     ("notify_solar_floor_blocked", "notify_solar_floor_blocked", "mdi:solar-power-variant-outline"),
     ("notify_solar_floor_resumed", "notify_solar_floor_resumed", "mdi:solar-power-variant"),
+    ("notify_disk_low",            "notify_disk_low",            "mdi:harddisk-remove"),
 ]
 
 
