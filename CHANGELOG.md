@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.48.1] — 2026-06-02
+
+### Added — buy-price forecast + price matrix
+
+- New `price_forecast` sensor exposing an **hourly, timestamped buy/sell price forecast over the full horizon** (today + tomorrow once the day-ahead prices publish ~13:00), as a `slots` attribute of `{iso, buy, sell}`. The existing 24h price-chart sensor only covered today and carried no dates; this one is date-aware and spans the whole horizon. A **price matrix** card on the Prices page lays the upcoming buy prices out as a two-row grid (today / tomorrow × hour), colour-coded green = cheap → red = pricey, with 1-decimal prices, pinned row labels and horizontal scroll for mobile.
+
+---
+
 ## [0.48.0] — 2026-06-01
 
 ### Added — grid import cost + net grid balance

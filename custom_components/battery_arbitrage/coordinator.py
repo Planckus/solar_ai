@@ -1605,6 +1605,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     sell_slot = round(max(0.0, spot - export_fee - feed_in_tariff), 3)
                     price_chart_slots.append({"h": h, "m": 0, "buy": buy_slot, "sell": sell_slot})
 
+        # v0.48.1 — hourly, timestamped buy/sell price forecast over the FULL
+        # horizon (today + tomorrow once day-ahead publishes ~13:00), for the
+        # "price matrix" card. 15-min slots are averaged into their hour.
+        hourly_acc: dict = {}
+        for slot_start, dur_h, h, m, spot in grid_slot_data_opt:
+            buy = (spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor
+            sell = max(0.0, spot - export_fee - feed_in_tariff)
+            key = slot_start.replace(minute=0, second=0, microsecond=0).isoformat()
+            hourly_acc.setdefault(key, []).append((buy, sell))
+        buy_price_forecast = [
+            {
+                "iso": k,
+                "buy": round(sum(b for b, _ in v) / len(v), 3),
+                "sell": round(sum(s for _, s in v) / len(v), 3),
+            }
+            for k, v in sorted(hourly_acc.items())
+        ]
+
         # ── Solar forecast chart data (v0.28.2, 48 h) ───────────────────────
         # One entry per native forecast slot (hourly for Solcast, 15-min for
         # some Forecast.Solar setups). Each entry carries:
@@ -1942,6 +1960,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             efficiency_source="auto" if auto_efficiency is not None else "configured",
             capacity_sample_count=len(self._stored.get("capacity_samples", [])),
             price_chart_slots=price_chart_slots,
+            buy_price_forecast=buy_price_forecast,
             solar_chart_slots=solar_chart_slots,
             solar_today_remaining_raw_kwh=round(solar_today_remaining_raw_kwh, 2),
             solar_today_remaining_adj_kwh=round(solar_today_remaining_adj_kwh, 2),
