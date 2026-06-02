@@ -273,6 +273,7 @@
       "pv_power": { "name": "Solar production (live)" },
       "tariff_this_hour": { "name": "Grid tariff this hour" },
       "price_chart": { "name": "24h price chart" },
+      "price_forecast": { "name": "Buy-price forecast" },
       "solar_forecast_48h_chart": { "name": "Solar forecast 48h (chart)" },
       "solar_forecast_error_now": { "name": "Solar forecast error (now)" },
       "solar_today_remaining_kwh": { "name": "Solar: rest of today" },

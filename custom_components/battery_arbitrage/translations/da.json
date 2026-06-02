@@ -273,6 +273,7 @@
       "pv_power": { "name": "Solcelleproduktion (live)" },
       "tariff_this_hour": { "name": "Nettarif denne time" },
       "price_chart": { "name": "24h priskort" },
+      "price_forecast": { "name": "Købspris-prognose" },
       "solar_forecast_48h_chart": { "name": "Solcelleprognose 48t (graf)" },
       "solar_forecast_error_now": { "name": "Solcelleprognose-fejl (nu)" },
       "solar_today_remaining_kwh": { "name": "Solcelle: rest af i dag" },

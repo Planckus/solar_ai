@@ -423,6 +423,20 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "slots": d.get("price_chart_slots", []),
         },
     ),
+    # v0.48.1 — hourly, timestamped buy/sell price forecast over the full
+    # horizon (today + tomorrow once published). Feeds the "price matrix" card.
+    # State = next-hour buy price; attrs hold the full forecast.
+    BatteryArbitrageSensorDescription(
+        key="price_forecast",
+        translation_key="price_forecast",
+        icon="mdi:table-clock",
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement="DKK/kWh",
+        value_fn=lambda d: (d.get("buy_price_forecast") or [{}])[0].get("buy", 0.0),
+        attrs_fn=lambda d: {
+            "slots": d.get("buy_price_forecast", []),
+        },
+    ),
     # ── 48h solar forecast chart (v0.28.2) ────────────────────────────────
     # State = number of slots available (handy for dashboard "no data" guards).
     # `slots` attribute holds the per-slot forecast points consumed by the
