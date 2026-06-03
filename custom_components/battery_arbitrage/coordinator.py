@@ -5156,6 +5156,26 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             days.sort(key=EV_SCHEDULE_DAYS.index)
         self._persist_schedules()
 
+    def set_schedule_slot_day(self, slot_idx: int, day: str, present: bool) -> None:
+        """Add or remove a single weekday from a slot (for the GUI day toggles).
+
+        Unlike toggle_schedule_slot_day this sets an explicit on/off state, so
+        a switch turning on/off lands deterministically regardless of the
+        current membership.
+        """
+        if day not in EV_SCHEDULE_DAYS:
+            return
+        if not (1 <= slot_idx <= EV_SCHEDULES_MAX):
+            return
+        slot = self._get_or_create_slot(slot_idx)
+        days: list = slot.setdefault("days", [])
+        if present and day not in days:
+            days.append(day)
+            days.sort(key=EV_SCHEDULE_DAYS.index)
+        elif not present and day in days:
+            days.remove(day)
+        self._persist_schedules()
+
     def set_schedule_slot_days(self, slot_idx: int, days: list[str]) -> None:
         if not (1 <= slot_idx <= EV_SCHEDULES_MAX): return
         clean = [d for d in (days or []) if d in EV_SCHEDULE_DAYS]
