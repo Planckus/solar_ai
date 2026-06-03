@@ -7,9 +7,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 
-from .const import DOMAIN, EV_SCHEDULES_MAX
+from .const import DOMAIN, EV_SCHEDULE_DAYS, EV_SCHEDULE_DEFAULT_DAYS, EV_SCHEDULES_MAX
 from .coordinator import BatteryArbitrageCoordinator
 from .sensor import _device_info
 
@@ -59,6 +59,12 @@ async def async_setup_entry(
     # so the dashboard cards always have an entity to bind to).
     for idx in range(1, EV_SCHEDULES_MAX + 1):
         entities.append(BatteryArbitrageEvScheduleSlotEnabledSwitch(coordinator, entry, idx))
+    # v0.50.0 — seven weekday toggles per schedule slot, so the active
+    # weekdays of each charge plan are editable from the GUI (e.g. only
+    # Mon/Tue/Fri). Backed by `_stored["ev_schedules"][slot].days`.
+    for idx in range(1, EV_SCHEDULES_MAX + 1):
+        for day in EV_SCHEDULE_DAYS:
+            entities.append(BatteryArbitrageEvScheduleSlotDaySwitch(coordinator, entry, idx, day))
     # v0.39.0 — opt-in switch for auto-Full on negative buy price.
     entities.append(BatteryArbitrageAutoFullSwitch(coordinator, entry))
     # v0.47.0 — opt-in dynamic self-learning discharge floor.
@@ -328,6 +334,80 @@ class BatteryArbitrageEvScheduleSlotEnabledSwitch(
 
     async def async_turn_off(self, **kwargs: object) -> None:
         self.coordinator.set_schedule_slot_enabled(self._slot_idx, False)
+        self.async_write_ha_state()
+
+
+# Localised weekday names for the per-day toggle friendly names. The HA
+# language at entity-creation time fixes the entity_id slug (Danish on a
+# Danish install). Falls back to English.
+_EV_DAY_NAMES = {
+    "da": {"mon": "Mandag", "tue": "Tirsdag", "wed": "Onsdag", "thu": "Torsdag",
+           "fri": "Fredag", "sat": "Lørdag", "sun": "Søndag"},
+    "en": {"mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday",
+           "fri": "Friday", "sat": "Saturday", "sun": "Sunday"},
+}
+_EV_SCHEDULE_PREFIX = {"da": "Skema", "en": "Schedule"}
+
+
+class BatteryArbitrageEvScheduleSlotDaySwitch(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SwitchEntity
+):
+    """One weekday on/off toggle for a native EV schedule slot (v0.50.0).
+
+    Seven instances per slot. When on, the slot's `days` list includes this
+    weekday, so `_resolve_effective_ev_mode` activates the slot on that day.
+    Lets the user pick arbitrary weekdays per charge plan (e.g. Mon/Tue/Fri)
+    entirely from the GUI. Toggling a day on a slot that does not yet exist
+    creates it with defaults so there is always something to write to.
+    """
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:calendar-today"
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+        slot_idx: int,
+        day: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._slot_idx = slot_idx
+        self._day = day
+        lang = (getattr(coordinator.hass.config, "language", "en") or "en")[:2]
+        names = _EV_DAY_NAMES.get(lang, _EV_DAY_NAMES["en"])
+        prefix = _EV_SCHEDULE_PREFIX.get(lang, _EV_SCHEDULE_PREFIX["en"])
+        # Name is unique per slot+day so the generated entity_id is stable.
+        self._attr_name = f"{prefix} {slot_idx} {names[day]}"
+        self._attr_unique_id = f"{entry.entry_id}_ev_schedule_slot_{slot_idx}_day_{day}"
+        self._attr_device_info = _device_info(entry)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, f"{DOMAIN}_schedules_changed",
+                self.async_write_ha_state,
+            )
+        )
+
+    @property
+    def is_on(self) -> bool:
+        slot = self.coordinator.get_schedule_slot(self._slot_idx)
+        if slot is None:
+            # Unconfigured slot reports the default day set, so the toggles
+            # show what would apply once the slot is first edited.
+            return self._day in EV_SCHEDULE_DEFAULT_DAYS
+        return self._day in (slot.get("days") or [])
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        self.coordinator.set_schedule_slot_day(self._slot_idx, self._day, True)
+        async_dispatcher_send(self.hass, f"{DOMAIN}_schedules_changed")
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        self.coordinator.set_schedule_slot_day(self._slot_idx, self._day, False)
+        async_dispatcher_send(self.hass, f"{DOMAIN}_schedules_changed")
         self.async_write_ha_state()
 
 
