@@ -291,404 +291,406 @@ views:
   subview: true
   panel: true
   cards:
-  - type: vertical-stack
+  - type: custom:mod-card
     card_mod:
       style: ':host { max-width: 1000px; margin: 0 auto; display: block; }
 
         '
-    cards:
-    - type: conditional
-      conditions:
-      - condition: state
-        entity: binary_sensor.solar_ai_eksport_stop_aktiv
-        state: 'on'
-      card:
-        type: custom:mushroom-template-card
-        primary: 🛑 Export-stop active
-        secondary: '{% set since = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''since'') %}{% set floor = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''floor'') %}{% set price = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''price_at_start'') | float(0) %}The sell price is below the floor ({% if floor is not none %}{{ ''%.2f'' | format(floor) }}{% else %}–{% endif %} DKK/kWh). Solar export is blocked.{% if price %} Price at start: {{ ''%.3f'' | format(price) }} DKK/kWh.{% endif %}{% if since %} Active since {{ since[11:16] }}.{% endif %}'
-        icon: mdi:transmission-tower-off
-        icon_color: red
-        fill_container: true
-        multiline_secondary: true
-        entity: binary_sensor.solar_ai_eksport_stop_aktiv
-        tap_action:
-          action: more-info
-    - type: vertical-stack
+    card:
+      type: vertical-stack
       cards:
+      - type: conditional
+        conditions:
+        - condition: state
+          entity: binary_sensor.solar_ai_eksport_stop_aktiv
+          state: 'on'
+        card:
+          type: custom:mushroom-template-card
+          primary: 🛑 Export-stop active
+          secondary: '{% set since = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''since'') %}{% set floor = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''floor'') %}{% set price = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''price_at_start'') | float(0) %}The sell price is below the floor ({% if floor is not none %}{{ ''%.2f'' | format(floor) }}{% else %}–{% endif %} DKK/kWh). Solar export is blocked.{% if price %} Price at start: {{ ''%.3f'' | format(price) }} DKK/kWh.{% endif %}{% if since %} Active since {{ since[11:16] }}.{% endif %}'
+          icon: mdi:transmission-tower-off
+          icon_color: red
+          fill_container: true
+          multiline_secondary: true
+          entity: binary_sensor.solar_ai_eksport_stop_aktiv
+          tap_action:
+            action: more-info
       - type: vertical-stack
         cards:
-        - type: custom:mushroom-title-card
-          title: EV charge mode
+        - type: vertical-stack
+          cards:
+          - type: custom:mushroom-title-card
+            title: EV charge mode
+          - type: horizontal-stack
+            cards:
+            - type: custom:mushroom-template-card
+              primary: false
+              icon: mdi:lock
+              icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''locked'' %}blue{% else %}grey{% endif %}'
+              fill_container: true
+              layout: vertical
+              tap_action:
+                action: call-service
+                service: select.select_option
+                service_data:
+                  option: locked
+                target:
+                  entity_id: select.solar_ai_ev_opladningstilstand
+              hold_action:
+                action: none
+            - type: custom:mushroom-template-card
+              primary: Solar
+              icon: mdi:weather-sunny
+              icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''pv'' %}blue{% else %}grey{% endif %}'
+              fill_container: true
+              layout: vertical
+              tap_action:
+                action: call-service
+                service: select.select_option
+                service_data:
+                  option: pv
+                target:
+                  entity_id: select.solar_ai_ev_opladningstilstand
+              hold_action:
+                action: none
+            - type: custom:mushroom-template-card
+              primary: Solar+Bat
+              icon: mdi:weather-sunny-alert
+              icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''pv_battery'' %}blue{% else %}grey{% endif %}'
+              fill_container: true
+              layout: vertical
+              tap_action:
+                action: call-service
+                service: select.select_option
+                service_data:
+                  option: pv_battery
+                target:
+                  entity_id: select.solar_ai_ev_opladningstilstand
+              hold_action:
+                action: none
+            - type: custom:mushroom-template-card
+              primary: Fast
+              icon: mdi:rocket-launch
+              icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''full'' %}blue{% else %}grey{% endif %}'
+              fill_container: true
+              layout: vertical
+              tap_action:
+                action: call-service
+                service: select.select_option
+                service_data:
+                  option: full
+                target:
+                  entity_id: select.solar_ai_ev_opladningstilstand
+              hold_action:
+                action: none
+            - type: custom:mushroom-template-card
+              primary: Scheduled
+              icon: mdi:calendar-clock
+              icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''scheduled'' %}blue{% else %}grey{% endif %}'
+              fill_container: true
+              layout: vertical
+              tap_action:
+                action: call-service
+                service: select.select_option
+                service_data:
+                  option: scheduled
+                target:
+                  entity_id: select.solar_ai_ev_opladningstilstand
+              hold_action:
+                action: none
         - type: horizontal-stack
           cards:
           - type: custom:mushroom-template-card
-            primary: false
-            icon: mdi:lock
-            icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''locked'' %}blue{% else %}grey{% endif %}'
-            fill_container: true
-            layout: vertical
+            primary: Car connected
+            secondary: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s in [''Charging''] %}🔋 Charging now — {{ states(''sensor.solar_ai_lader_effekt'') }} kW{% elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE'', ''Finishing''] %}🔌 Car connected ({{ s }}){% elif s == ''Available'' %}⚪ No car connected{% elif s in [''Disconnected'', ''Unavailable'', ''Unknown'', ''unavailable'', ''unknown''] %}❌ Charger not connected{% else %}{{ s }}{% endif %}'
+            icon: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}mdi:battery-charging{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}mdi:ev-plug-type2{% elif s == ''Available'' %}mdi:car-electric-outline{% else %}mdi:lan-disconnect{% endif %}'
+            icon_color: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}green{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}blue{% elif s == ''Available'' %}grey{% else %}red{% endif %}'
+            entity: sensor.solar_ai_lader_status
             tap_action:
-              action: call-service
-              service: select.select_option
-              service_data:
-                option: locked
-              target:
-                entity_id: select.solar_ai_ev_opladningstilstand
-            hold_action:
-              action: none
+              action: more-info
+            fill_container: true
           - type: custom:mushroom-template-card
-            primary: Solar
-            icon: mdi:weather-sunny
-            icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''pv'' %}blue{% else %}grey{% endif %}'
+            primary: EV-charger
+            secondary: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% set seen = state_attr(''sensor.solar_ai_lader_status'', ''seconds_since_seen'') %}{% if s in [''Disconnected'', ''Unavailable''] %}❌ Disconnected{% elif s in [''Unknown'', ''unknown'', ''unavailable''] %}⏳ Waiting for status{% else %}✅ {{ s }}{% if seen %} · {{ seen | int }}s ago{% endif %}{% endif %}'
+            icon: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}mdi:battery-charging-high{% elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE''] %}mdi:ev-plug-type2{% elif s == ''Finishing'' %}mdi:battery-charging-50{% elif s == ''Available'' %}mdi:ev-station{% elif s == ''Reserved'' %}mdi:calendar-clock{% elif s == ''Faulted'' %}mdi:alert-circle{% elif s in [''Disconnected'', ''Unavailable''] %}mdi:lan-disconnect{% else %}mdi:ev-station{% endif %}'
+            icon_color: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}green{% elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE''] %}amber{% elif s == ''Finishing'' %}cyan{% elif s == ''Available'' %}blue{% elif s == ''Reserved'' %}purple{% elif s == ''Faulted'' %}red{% elif s in [''Disconnected'', ''Unavailable''] %}grey{% else %}grey{% endif %}'
             fill_container: true
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: select.select_option
-              service_data:
-                option: pv
-              target:
-                entity_id: select.solar_ai_ev_opladningstilstand
-            hold_action:
-              action: none
+        - type: horizontal-stack
+          cards:
           - type: custom:mushroom-template-card
-            primary: Solar+Bat
-            icon: mdi:weather-sunny-alert
-            icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''pv_battery'' %}blue{% else %}grey{% endif %}'
+            primary: '{{ states(''sensor.solar_ai_lader_effekt'') }} kW'
+            secondary: EFFEKT
+            icon: mdi:flash
+            icon_color: '{% set p = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% if p > 0.1 %}green{% else %}grey{% endif %}'
             fill_container: true
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: select.select_option
-              service_data:
-                option: pv_battery
-              target:
-                entity_id: select.solar_ai_ev_opladningstilstand
-            hold_action:
-              action: none
           - type: custom:mushroom-template-card
-            primary: Fast
-            icon: mdi:rocket-launch
-            icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''full'' %}blue{% else %}grey{% endif %}'
+            primary: '{% set surp = state_attr(''sensor.solar_ai_ev_status'', ''surplus_kw'') | float(0) %}{{ ''%.2f'' | format(surp) }} kW'
+            secondary: SURPLUS TO EV
+            icon: mdi:solar-power-variant
+            icon_color: '{% set surp = state_attr(''sensor.solar_ai_ev_status'', ''surplus_kw'') | float(0) %}{% if surp > 0.1 %}amber{% else %}grey{% endif %}'
             fill_container: true
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: select.select_option
-              service_data:
-                option: full
-              target:
-                entity_id: select.solar_ai_ev_opladningstilstand
-            hold_action:
-              action: none
-          - type: custom:mushroom-template-card
-            primary: Scheduled
-            icon: mdi:calendar-clock
-            icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''scheduled'' %}blue{% else %}grey{% endif %}'
-            fill_container: true
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: select.select_option
-              service_data:
-                option: scheduled
-              target:
-                entity_id: select.solar_ai_ev_opladningstilstand
-            hold_action:
-              action: none
-      - type: horizontal-stack
+        - type: markdown
+          content: '{% set st = states(''sensor.solar_ai_ev_status'') %}{% set en = state_attr(''sensor.solar_ai_ev_status'', ''enabled'') %}{% set reason = state_attr(''sensor.solar_ai_ev_status'', ''reason'') %}{% set arm_iso = state_attr(''sensor.solar_ai_ev_status'',''arming_until'') %}{% set arm_raw = ((as_timestamp(arm_iso) - as_timestamp(now())) | int(0)) if arm_iso else 0 %}{% set arm = [arm_raw, 0] | max %}{% set cool_iso = state_attr(''sensor.solar_ai_ev_status'',''cooling_until'') %}{% set cool_raw = ((as_timestamp(cool_iso) - as_timestamp(now())) | int(0)) if cool_iso else 0 %}{% set cool = [cool_raw, 0] | max %}{% set kw = state_attr(''sensor.solar_ai_ev_status'',''target_kw'') | float(0) %}{% set amps = state_attr(''sensor.solar_ai_ev_status'',''target_amps'') | int(0) %}{% set bat_locked = state_attr(''sensor.solar_ai_ev_status'',''battery_locked'') %}{% if not en %}🔒 **EV-controller slået fra.**{% elif st == ''CHARGING'' %}🔋 **Oplader: {{ ''%.1f'' | format(kw) }} kW · {{ amps }} A**{% if bat_locked %}  ·  🔒 House battery locked{% endif %}{% elif st == ''ARMING'' %}⏳ **Starter om {{ arm }} sek**{% elif st == ''COOLING'' %}⏳ **Stopper om {{ cool }} sek**{% else %}💤 **Inaktiv**{% if reason %}
+
+
+            _{{ reason }}_{% endif %}{% endif %}'
+      - type: markdown
+        content: '{% set pv = states(''sensor.pv_power_foxessmodbus'') | float(0) %}{% set load = states(''sensor.foxessmodbus_load_power'') | float(0) %}{% set bat_c = states(''sensor.foxessmodbus_battery_charge'') | float(0) %}{% set bat_d = states(''sensor.foxessmodbus_battery_discharge'') | float(0) %}{% set imp = states(''sensor.foxessmodbus_grid_consumption'') | float(0) %}{% set exp = states(''sensor.foxessmodbus_feed_in'') | float(0) %}{% set ev = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% set soc = states(''sensor.foxessmodbus_battery_soc_1'') | int(0) %}{% set ev_status = states(''sensor.solar_ai_lader_status'') %}{# load incl. EV — subtract EV for true household load #}{% set house = [load - ev, 0] | max %}{% set total_in = pv + bat_d + imp %}{% set total_out = house + ev + bat_c + exp %}
+
+          ## ⚡ Energi-flow  ·  🔋 {{ soc }}%  ·  ☀️ {{ ''%.2f'' | format(pv) }} kW
+
+
+          | **⬇️ Ind ({{ ''%.2f'' | format(total_in) }} kW)** | | **⬆️ Ud ({{ ''%.2f'' | format(total_out) }} kW)** | |
+
+          |---|---:|---|---:|
+
+          | ☀️ Solceller | {{ ''%.2f'' | format(pv) }} | 🏠 Load (ekskl. EV) | {{ ''%.2f'' | format(house) }} |
+
+          | 🔋 Battery aflader | {{ ''%.2f'' | format(bat_d) }} | 🚗 EV-lader | {{ ''%.2f'' | format(ev) }} |
+
+          | ⚡ Import fra elnet | {{ ''%.2f'' | format(imp) }} | 🔋 Battery oplader | {{ ''%.2f'' | format(bat_c) }} |
+
+          | | | ↗ Export til elnet | {{ ''%.2f'' | format(exp) }} |'
+      - type: vertical-stack
         cards:
+        - type: custom:mushroom-title-card
+          title: Settings
+        - type: entities
+          icon: mdi:tune
+          show_header_toggle: false
+          entities:
+          - entity: select.solar_ai_ev_minimum_opladningshastighed
+            name: Minimum charge rate
+            icon: mdi:battery-charging-low
+          - entity: select.solar_ai_ev_maksimum_opladningshastighed
+            name: Maximum charge rate
+            icon: mdi:battery-charging-high
+          - entity: number.solar_ai_batteri_forst_taerskel_ev_venter_til_husbatteriet_nar_dette_niveau
+            name: Battery-first threshold (%)
+            icon: mdi:battery-arrow-up
+          - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
+            name: Default mode on connect
+            icon: mdi:car-connected
+      - type: vertical-stack
+        cards:
+        - type: custom:mushroom-title-card
+          title: Charger info
+        - type: markdown
+          content: '{% set i = states.sensor.solar_ai_lader_info %}{% if i is none or i.state in [''unavailable'',''unknown'',''Unknown''] %}*Charger not connected yet*{% else %}* Vendor: **{{ i.attributes.vendor }}** · Model: **{{ i.attributes.model }}**
+
+            * Firmware: {{ i.attributes.firmware }}
+
+            * Sidst kontaktet: {{ i.attributes.seconds_since_seen }} sec ago{% endif %}'
+        - type: custom:mushroom-title-card
+          title: Solar forecast
+        - type: markdown
+          content: '{% set today = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_kwh'') | float(0) %}{% set today_raw = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_raw_kwh'') | float(0) %}{% set tom = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_kwh'') | float(0) %}{% set tom_raw = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_raw_kwh'') | float(0) %}<!-- 🌞 Solar forecast — totals -->
+
+            | | | |
+
+            |---|---:|---:|
+
+            | ☀️ **Rest of today** | Adjusted forecast: **{{ ''%.1f'' | format(today) }} kWh** | _Raw forecast: {{ ''%.1f'' | format(today_raw) }} kWh_ |
+
+            | 📅 **I morgen** | Adjusted forecast: **{{ ''%.1f'' | format(tom) }} kWh** | _Raw forecast: {{ ''%.1f'' | format(tom_raw) }} kWh_ |
+
+            '
         - type: custom:mushroom-template-card
-          primary: Car connected
-          secondary: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s in [''Charging''] %}🔋 Charging now — {{ states(''sensor.solar_ai_lader_effekt'') }} kW{% elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE'', ''Finishing''] %}🔌 Car connected ({{ s }}){% elif s == ''Available'' %}⚪ No car connected{% elif s in [''Disconnected'', ''Unavailable'', ''Unknown'', ''unavailable'', ''unknown''] %}❌ Charger not connected{% else %}{{ s }}{% endif %}'
-          icon: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}mdi:battery-charging{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}mdi:ev-plug-type2{% elif s == ''Available'' %}mdi:car-electric-outline{% else %}mdi:lan-disconnect{% endif %}'
-          icon_color: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}green{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}blue{% elif s == ''Available'' %}grey{% else %}red{% endif %}'
-          entity: sensor.solar_ai_lader_status
+          primary: Live solar correction
+          secondary: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}Waiting for first 15-min slot…{% else %}{{ ''%+.0f'' | format(p) }}%  ·  {{ n }} slot{{ ''s'' if n != 1 else '''' }}  ·  damping over 2 h{% endif %}'
+          icon: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}mdi:timer-sand{% elif p > 10 %}mdi:weather-sunny{% elif p < -10 %}mdi:weather-cloudy{% else %}mdi:chart-bell-curve{% endif %}'
+          icon_color: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}grey{% elif p > 10 %}green{% elif p > -10 %}grey{% elif p > -25 %}amber{% else %}red{% endif %}'
+          entity: sensor.solar_ai_solcelleprognose_fejl_nu
           tap_action:
             action: more-info
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: Solar forecast (48 h)
+          show_states: false
+        graph_span: 48h
+        span:
+          start: hour
+          offset: -0h
+        now:
+          show: true
+          label: Nu
+          color: '#9aa0a6'
+        yaxis:
+        - min: 0
+          decimals: 1
+          apex_config:
+            title:
+              text: kW
+            forceNiceScale: true
+        apex_config:
+          chart:
+            height: 280
+          legend:
+            show: true
+            position: top
+          xaxis:
+            labels:
+              datetimeUTC: false
+              format: ddd HH
+          stroke:
+            curve: smooth
+            width:
+            - 0
+            - 3
+        series:
+        - entity: sensor.solar_ai_solcelleprognose_48t_graf
+          name: Raw forecast (Solcast)
+          type: column
+          color: '#b0bec5'
+          opacity: 0.55
+          show:
+            in_header: false
+            legend_value: false
+          data_generator: return (entity.attributes.slots || []).map(s => [new Date(s.start).getTime(), s.raw_kw]);
+        - entity: sensor.solar_ai_solcelleprognose_48t_graf
+          name: Adjusted (solar forecast)
+          type: line
+          color: '#f9a825'
+          stroke_width: 3
+          show:
+            in_header: false
+            legend_value: false
+          data_generator: return (entity.attributes.slots || []).map(s => [new Date(s.start).getTime(), s.adj_kw]);
+      - type: conditional
+        conditions:
+        - condition: state
+          entity: select.solar_ai_ev_opladningstilstand
+          state_not: scheduled
+        card:
+          type: custom:mushroom-template-card
+          primary: Schedules are inactive right now
+          secondary: 'Schedules only control charging when EV mode is "Scheduled". Current mode: {{ states(''sensor.solar_ai_ev_aktuel_tilstand'') }}. Changes here do not affect active charging — select "Scheduled" above to use the schedules.'
+          icon: mdi:calendar-alert
+          icon_color: orange
+          multiline_secondary: true
           fill_container: true
-        - type: custom:mushroom-template-card
-          primary: EV-charger
-          secondary: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% set seen = state_attr(''sensor.solar_ai_lader_status'', ''seconds_since_seen'') %}{% if s in [''Disconnected'', ''Unavailable''] %}❌ Disconnected{% elif s in [''Unknown'', ''unknown'', ''unavailable''] %}⏳ Waiting for status{% else %}✅ {{ s }}{% if seen %} · {{ seen | int }}s ago{% endif %}{% endif %}'
-          icon: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}mdi:battery-charging-high{% elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE''] %}mdi:ev-plug-type2{% elif s == ''Finishing'' %}mdi:battery-charging-50{% elif s == ''Available'' %}mdi:ev-station{% elif s == ''Reserved'' %}mdi:calendar-clock{% elif s == ''Faulted'' %}mdi:alert-circle{% elif s in [''Disconnected'', ''Unavailable''] %}mdi:lan-disconnect{% else %}mdi:ev-station{% endif %}'
-          icon_color: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}green{% elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE''] %}amber{% elif s == ''Finishing'' %}cyan{% elif s == ''Available'' %}blue{% elif s == ''Reserved'' %}purple{% elif s == ''Faulted'' %}red{% elif s in [''Disconnected'', ''Unavailable''] %}grey{% else %}grey{% endif %}'
-          fill_container: true
-      - type: horizontal-stack
-        cards:
-        - type: custom:mushroom-template-card
-          primary: '{{ states(''sensor.solar_ai_lader_effekt'') }} kW'
-          secondary: EFFEKT
-          icon: mdi:flash
-          icon_color: '{% set p = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% if p > 0.1 %}green{% else %}grey{% endif %}'
-          fill_container: true
-        - type: custom:mushroom-template-card
-          primary: '{% set surp = state_attr(''sensor.solar_ai_ev_status'', ''surplus_kw'') | float(0) %}{{ ''%.2f'' | format(surp) }} kW'
-          secondary: SURPLUS TO EV
-          icon: mdi:solar-power-variant
-          icon_color: '{% set surp = state_attr(''sensor.solar_ai_ev_status'', ''surplus_kw'') | float(0) %}{% if surp > 0.1 %}amber{% else %}grey{% endif %}'
-          fill_container: true
-      - type: markdown
-        content: '{% set st = states(''sensor.solar_ai_ev_status'') %}{% set en = state_attr(''sensor.solar_ai_ev_status'', ''enabled'') %}{% set reason = state_attr(''sensor.solar_ai_ev_status'', ''reason'') %}{% set arm_iso = state_attr(''sensor.solar_ai_ev_status'',''arming_until'') %}{% set arm_raw = ((as_timestamp(arm_iso) - as_timestamp(now())) | int(0)) if arm_iso else 0 %}{% set arm = [arm_raw, 0] | max %}{% set cool_iso = state_attr(''sensor.solar_ai_ev_status'',''cooling_until'') %}{% set cool_raw = ((as_timestamp(cool_iso) - as_timestamp(now())) | int(0)) if cool_iso else 0 %}{% set cool = [cool_raw, 0] | max %}{% set kw = state_attr(''sensor.solar_ai_ev_status'',''target_kw'') | float(0) %}{% set amps = state_attr(''sensor.solar_ai_ev_status'',''target_amps'') | int(0) %}{% set bat_locked = state_attr(''sensor.solar_ai_ev_status'',''battery_locked'') %}{% if not en %}🔒 **EV-controller slået fra.**{% elif st == ''CHARGING'' %}🔋 **Oplader: {{ ''%.1f'' | format(kw) }} kW · {{ amps }} A**{% if bat_locked %}  ·  🔒 House battery locked{% endif %}{% elif st == ''ARMING'' %}⏳ **Starter om {{ arm }} sek**{% elif st == ''COOLING'' %}⏳ **Stopper om {{ cool }} sek**{% else %}💤 **Inaktiv**{% if reason %}
-
-
-          _{{ reason }}_{% endif %}{% endif %}'
-    - type: markdown
-      content: '{% set pv = states(''sensor.pv_power_foxessmodbus'') | float(0) %}{% set load = states(''sensor.foxessmodbus_load_power'') | float(0) %}{% set bat_c = states(''sensor.foxessmodbus_battery_charge'') | float(0) %}{% set bat_d = states(''sensor.foxessmodbus_battery_discharge'') | float(0) %}{% set imp = states(''sensor.foxessmodbus_grid_consumption'') | float(0) %}{% set exp = states(''sensor.foxessmodbus_feed_in'') | float(0) %}{% set ev = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% set soc = states(''sensor.foxessmodbus_battery_soc_1'') | int(0) %}{% set ev_status = states(''sensor.solar_ai_lader_status'') %}{# load incl. EV — subtract EV for true household load #}{% set house = [load - ev, 0] | max %}{% set total_in = pv + bat_d + imp %}{% set total_out = house + ev + bat_c + exp %}
-
-        ## ⚡ Energi-flow  ·  🔋 {{ soc }}%  ·  ☀️ {{ ''%.2f'' | format(pv) }} kW
-
-
-        | **⬇️ Ind ({{ ''%.2f'' | format(total_in) }} kW)** | | **⬆️ Ud ({{ ''%.2f'' | format(total_out) }} kW)** | |
-
-        |---|---:|---|---:|
-
-        | ☀️ Solceller | {{ ''%.2f'' | format(pv) }} | 🏠 Load (ekskl. EV) | {{ ''%.2f'' | format(house) }} |
-
-        | 🔋 Battery aflader | {{ ''%.2f'' | format(bat_d) }} | 🚗 EV-lader | {{ ''%.2f'' | format(ev) }} |
-
-        | ⚡ Import fra elnet | {{ ''%.2f'' | format(imp) }} | 🔋 Battery oplader | {{ ''%.2f'' | format(bat_c) }} |
-
-        | | | ↗ Export til elnet | {{ ''%.2f'' | format(exp) }} |'
-    - type: vertical-stack
-      cards:
       - type: custom:mushroom-title-card
-        title: Settings
+        title: Scheduled charging
+        subtitle: 4 schedules. Enable one or more and set EV mode to "Scheduled" to use them.
+      - type: markdown
+        content: '{% set slots = [1, 2, 3, 4] %}
+
+          | # | Active | Mode | Start | End |
+
+          |:-:|:-----:|:---------|:------|:-----|
+
+          {% for n in slots %}{% set enabled = is_state(''switch.solar_ai_skema_'' ~ n ~ ''_aktiveret'', ''on'') %}{% set mode = states(''select.solar_ai_skema_'' ~ n ~ ''_mode'') %}{% set start = states(''time.solar_ai_skema_'' ~ n ~ ''_starttid'') %}{% set end = states(''time.solar_ai_skema_'' ~ n ~ ''_sluttid'') %}{% set mark = ''✅'' if enabled else ''⛔'' %}
+
+          | {{ n }} | {{ mark }} | {{ mode }} | {{ start[:5] }} | {{ end[:5] }} |{% endfor %}'
       - type: entities
-        icon: mdi:tune
+        title: Schedule 1
+        icon: mdi:calendar-clock
         show_header_toggle: false
         entities:
-        - entity: select.solar_ai_ev_minimum_opladningshastighed
-          name: Minimum charge rate
-          icon: mdi:battery-charging-low
-        - entity: select.solar_ai_ev_maksimum_opladningshastighed
-          name: Maximum charge rate
-          icon: mdi:battery-charging-high
-        - entity: number.solar_ai_batteri_forst_taerskel_ev_venter_til_husbatteriet_nar_dette_niveau
-          name: Battery-first threshold (%)
-          icon: mdi:battery-arrow-up
-        - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
-          name: Default mode on connect
-          icon: mdi:car-connected
-    - type: vertical-stack
-      cards:
-      - type: custom:mushroom-title-card
-        title: Charger info
-      - type: markdown
-        content: '{% set i = states.sensor.solar_ai_lader_info %}{% if i is none or i.state in [''unavailable'',''unknown'',''Unknown''] %}*Charger not connected yet*{% else %}* Vendor: **{{ i.attributes.vendor }}** · Model: **{{ i.attributes.model }}**
-
-          * Firmware: {{ i.attributes.firmware }}
-
-          * Sidst kontaktet: {{ i.attributes.seconds_since_seen }} sec ago{% endif %}'
-      - type: custom:mushroom-title-card
-        title: Solar forecast
-      - type: markdown
-        content: '{% set today = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_kwh'') | float(0) %}{% set today_raw = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_raw_kwh'') | float(0) %}{% set tom = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_kwh'') | float(0) %}{% set tom_raw = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_raw_kwh'') | float(0) %}<!-- 🌞 Solar forecast — totals -->
-
-          | | | |
-
-          |---|---:|---:|
-
-          | ☀️ **Rest of today** | Adjusted forecast: **{{ ''%.1f'' | format(today) }} kWh** | _Raw forecast: {{ ''%.1f'' | format(today_raw) }} kWh_ |
-
-          | 📅 **I morgen** | Adjusted forecast: **{{ ''%.1f'' | format(tom) }} kWh** | _Raw forecast: {{ ''%.1f'' | format(tom_raw) }} kWh_ |
-
-          '
-      - type: custom:mushroom-template-card
-        primary: Live solar correction
-        secondary: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}Waiting for first 15-min slot…{% else %}{{ ''%+.0f'' | format(p) }}%  ·  {{ n }} slot{{ ''s'' if n != 1 else '''' }}  ·  damping over 2 h{% endif %}'
-        icon: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}mdi:timer-sand{% elif p > 10 %}mdi:weather-sunny{% elif p < -10 %}mdi:weather-cloudy{% else %}mdi:chart-bell-curve{% endif %}'
-        icon_color: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}grey{% elif p > 10 %}green{% elif p > -10 %}grey{% elif p > -25 %}amber{% else %}red{% endif %}'
-        entity: sensor.solar_ai_solcelleprognose_fejl_nu
-        tap_action:
-          action: more-info
-    - type: custom:apexcharts-card
-      header:
-        show: true
-        title: Solar forecast (48 h)
-        show_states: false
-      graph_span: 48h
-      span:
-        start: hour
-        offset: -0h
-      now:
-        show: true
-        label: Nu
-        color: '#9aa0a6'
-      yaxis:
-      - min: 0
-        decimals: 1
-        apex_config:
-          title:
-            text: kW
-          forceNiceScale: true
-      apex_config:
-        chart:
-          height: 280
-        legend:
-          show: true
-          position: top
-        xaxis:
-          labels:
-            datetimeUTC: false
-            format: ddd HH
-        stroke:
-          curve: smooth
-          width:
-          - 0
-          - 3
-      series:
-      - entity: sensor.solar_ai_solcelleprognose_48t_graf
-        name: Raw forecast (Solcast)
-        type: column
-        color: '#b0bec5'
-        opacity: 0.55
-        show:
-          in_header: false
-          legend_value: false
-        data_generator: return (entity.attributes.slots || []).map(s => [new Date(s.start).getTime(), s.raw_kw]);
-      - entity: sensor.solar_ai_solcelleprognose_48t_graf
-        name: Adjusted (solar forecast)
-        type: line
-        color: '#f9a825'
-        stroke_width: 3
-        show:
-          in_header: false
-          legend_value: false
-        data_generator: return (entity.attributes.slots || []).map(s => [new Date(s.start).getTime(), s.adj_kw]);
-    - type: conditional
-      conditions:
-      - condition: state
-        entity: select.solar_ai_ev_opladningstilstand
-        state_not: scheduled
-      card:
-        type: custom:mushroom-template-card
-        primary: Schedules are inactive right now
-        secondary: 'Schedules only control charging when EV mode is "Scheduled". Current mode: {{ states(''sensor.solar_ai_ev_aktuel_tilstand'') }}. Changes here do not affect active charging — select "Scheduled" above to use the schedules.'
-        icon: mdi:calendar-alert
-        icon_color: orange
-        multiline_secondary: true
-        fill_container: true
-    - type: custom:mushroom-title-card
-      title: Scheduled charging
-      subtitle: 4 schedules. Enable one or more and set EV mode to "Scheduled" to use them.
-    - type: markdown
-      content: '{% set slots = [1, 2, 3, 4] %}
-
-        | # | Active | Mode | Start | End |
-
-        |:-:|:-----:|:---------|:------|:-----|
-
-        {% for n in slots %}{% set enabled = is_state(''switch.solar_ai_skema_'' ~ n ~ ''_aktiveret'', ''on'') %}{% set mode = states(''select.solar_ai_skema_'' ~ n ~ ''_mode'') %}{% set start = states(''time.solar_ai_skema_'' ~ n ~ ''_starttid'') %}{% set end = states(''time.solar_ai_skema_'' ~ n ~ ''_sluttid'') %}{% set mark = ''✅'' if enabled else ''⛔'' %}
-
-        | {{ n }} | {{ mark }} | {{ mode }} | {{ start[:5] }} | {{ end[:5] }} |{% endfor %}'
-    - type: entities
-      title: Schedule 1
-      icon: mdi:calendar-clock
-      show_header_toggle: false
-      entities:
-      - entity: switch.solar_ai_skema_1_aktiveret
-        name: Enabled
-      - entity: select.solar_ai_skema_1_tilstand
-        name: Mode
-      - entity: time.solar_ai_skema_1_starttid
-        name: Start time
-      - entity: time.solar_ai_skema_1_sluttid
-        name: End time
-      - entity: switch.solar_ai_skema_1_mandag
-        name: Monday
-      - entity: switch.solar_ai_skema_1_tirsdag
-        name: Tuesday
-      - entity: switch.solar_ai_skema_1_onsdag
-        name: Wednesday
-      - entity: switch.solar_ai_skema_1_torsdag
-        name: Thursday
-      - entity: switch.solar_ai_skema_1_fredag
-        name: Friday
-      - entity: switch.solar_ai_skema_1_lordag
-        name: Saturday
-      - entity: switch.solar_ai_skema_1_sondag
-        name: Sunday
-    - type: entities
-      title: Schedule 2
-      icon: mdi:calendar-clock
-      show_header_toggle: false
-      entities:
-      - entity: switch.solar_ai_skema_2_aktiveret
-        name: Enabled
-      - entity: select.solar_ai_skema_2_tilstand
-        name: Mode
-      - entity: time.solar_ai_skema_2_starttid
-        name: Start time
-      - entity: time.solar_ai_skema_2_sluttid
-        name: End time
-      - entity: switch.solar_ai_skema_2_mandag
-        name: Monday
-      - entity: switch.solar_ai_skema_2_tirsdag
-        name: Tuesday
-      - entity: switch.solar_ai_skema_2_onsdag
-        name: Wednesday
-      - entity: switch.solar_ai_skema_2_torsdag
-        name: Thursday
-      - entity: switch.solar_ai_skema_2_fredag
-        name: Friday
-      - entity: switch.solar_ai_skema_2_lordag
-        name: Saturday
-      - entity: switch.solar_ai_skema_2_sondag
-        name: Sunday
-    - type: entities
-      title: Schedule 3
-      icon: mdi:calendar-clock
-      show_header_toggle: false
-      entities:
-      - entity: switch.solar_ai_skema_3_aktiveret
-        name: Enabled
-      - entity: select.solar_ai_skema_3_tilstand
-        name: Mode
-      - entity: time.solar_ai_skema_3_starttid
-        name: Start time
-      - entity: time.solar_ai_skema_3_sluttid
-        name: End time
-      - entity: switch.solar_ai_skema_3_mandag
-        name: Monday
-      - entity: switch.solar_ai_skema_3_tirsdag
-        name: Tuesday
-      - entity: switch.solar_ai_skema_3_onsdag
-        name: Wednesday
-      - entity: switch.solar_ai_skema_3_torsdag
-        name: Thursday
-      - entity: switch.solar_ai_skema_3_fredag
-        name: Friday
-      - entity: switch.solar_ai_skema_3_lordag
-        name: Saturday
-      - entity: switch.solar_ai_skema_3_sondag
-        name: Sunday
-    - type: entities
-      title: Schedule 4
-      icon: mdi:calendar-clock
-      show_header_toggle: false
-      entities:
-      - entity: switch.solar_ai_skema_4_aktiveret
-        name: Enabled
-      - entity: select.solar_ai_skema_4_tilstand
-        name: Mode
-      - entity: time.solar_ai_skema_4_starttid
-        name: Start time
-      - entity: time.solar_ai_skema_4_sluttid
-        name: End time
-      - entity: switch.solar_ai_skema_4_mandag
-        name: Monday
-      - entity: switch.solar_ai_skema_4_tirsdag
-        name: Tuesday
-      - entity: switch.solar_ai_skema_4_onsdag
-        name: Wednesday
-      - entity: switch.solar_ai_skema_4_torsdag
-        name: Thursday
-      - entity: switch.solar_ai_skema_4_fredag
-        name: Friday
-      - entity: switch.solar_ai_skema_4_lordag
-        name: Saturday
-      - entity: switch.solar_ai_skema_4_sondag
-        name: Sunday
+        - entity: switch.solar_ai_skema_1_aktiveret
+          name: Enabled
+        - entity: select.solar_ai_skema_1_tilstand
+          name: Mode
+        - entity: time.solar_ai_skema_1_starttid
+          name: Start time
+        - entity: time.solar_ai_skema_1_sluttid
+          name: End time
+        - entity: switch.solar_ai_skema_1_mandag
+          name: Monday
+        - entity: switch.solar_ai_skema_1_tirsdag
+          name: Tuesday
+        - entity: switch.solar_ai_skema_1_onsdag
+          name: Wednesday
+        - entity: switch.solar_ai_skema_1_torsdag
+          name: Thursday
+        - entity: switch.solar_ai_skema_1_fredag
+          name: Friday
+        - entity: switch.solar_ai_skema_1_lordag
+          name: Saturday
+        - entity: switch.solar_ai_skema_1_sondag
+          name: Sunday
+      - type: entities
+        title: Schedule 2
+        icon: mdi:calendar-clock
+        show_header_toggle: false
+        entities:
+        - entity: switch.solar_ai_skema_2_aktiveret
+          name: Enabled
+        - entity: select.solar_ai_skema_2_tilstand
+          name: Mode
+        - entity: time.solar_ai_skema_2_starttid
+          name: Start time
+        - entity: time.solar_ai_skema_2_sluttid
+          name: End time
+        - entity: switch.solar_ai_skema_2_mandag
+          name: Monday
+        - entity: switch.solar_ai_skema_2_tirsdag
+          name: Tuesday
+        - entity: switch.solar_ai_skema_2_onsdag
+          name: Wednesday
+        - entity: switch.solar_ai_skema_2_torsdag
+          name: Thursday
+        - entity: switch.solar_ai_skema_2_fredag
+          name: Friday
+        - entity: switch.solar_ai_skema_2_lordag
+          name: Saturday
+        - entity: switch.solar_ai_skema_2_sondag
+          name: Sunday
+      - type: entities
+        title: Schedule 3
+        icon: mdi:calendar-clock
+        show_header_toggle: false
+        entities:
+        - entity: switch.solar_ai_skema_3_aktiveret
+          name: Enabled
+        - entity: select.solar_ai_skema_3_tilstand
+          name: Mode
+        - entity: time.solar_ai_skema_3_starttid
+          name: Start time
+        - entity: time.solar_ai_skema_3_sluttid
+          name: End time
+        - entity: switch.solar_ai_skema_3_mandag
+          name: Monday
+        - entity: switch.solar_ai_skema_3_tirsdag
+          name: Tuesday
+        - entity: switch.solar_ai_skema_3_onsdag
+          name: Wednesday
+        - entity: switch.solar_ai_skema_3_torsdag
+          name: Thursday
+        - entity: switch.solar_ai_skema_3_fredag
+          name: Friday
+        - entity: switch.solar_ai_skema_3_lordag
+          name: Saturday
+        - entity: switch.solar_ai_skema_3_sondag
+          name: Sunday
+      - type: entities
+        title: Schedule 4
+        icon: mdi:calendar-clock
+        show_header_toggle: false
+        entities:
+        - entity: switch.solar_ai_skema_4_aktiveret
+          name: Enabled
+        - entity: select.solar_ai_skema_4_tilstand
+          name: Mode
+        - entity: time.solar_ai_skema_4_starttid
+          name: Start time
+        - entity: time.solar_ai_skema_4_sluttid
+          name: End time
+        - entity: switch.solar_ai_skema_4_mandag
+          name: Monday
+        - entity: switch.solar_ai_skema_4_tirsdag
+          name: Tuesday
+        - entity: switch.solar_ai_skema_4_onsdag
+          name: Wednesday
+        - entity: switch.solar_ai_skema_4_torsdag
+          name: Thursday
+        - entity: switch.solar_ai_skema_4_fredag
+          name: Friday
+        - entity: switch.solar_ai_skema_4_lordag
+          name: Saturday
+        - entity: switch.solar_ai_skema_4_sondag
+          name: Sunday
 - title: Prices & Plan
   path: priser
   icon: mdi:currency-eur
