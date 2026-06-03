@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.50.0] — 2026-06-02
+
+### Added — per-schedule weekday selection in the GUI
+
+- Each EV charge schedule (1–4) now has **seven weekday on/off toggles** (Mon–Sun), so you can pick exactly which days a plan runs — e.g. charge 02:00–05:00 on Monday, Tuesday and Friday only — entirely from the dashboard. Backed by the schedule slot's existing `days` list and a new `set_schedule_slot_day()` coordinator method; the resolver already honours per-day activation (including windows that wrap past midnight). New slots still default to Mon–Fri. The toggles are grouped under each Skema / Schedule card on the EV page.
+
+---
+
 ## [0.49.1] — 2026-06-02
 
 ### Fixed — feed-in tariff dropping to 0

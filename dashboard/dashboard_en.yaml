@@ -594,6 +594,20 @@ views:
         name: Start time
       - entity: time.solar_ai_skema_1_sluttid
         name: End time
+      - entity: switch.solar_ai_skema_1_mandag
+        name: Monday
+      - entity: switch.solar_ai_skema_1_tirsdag
+        name: Tuesday
+      - entity: switch.solar_ai_skema_1_onsdag
+        name: Wednesday
+      - entity: switch.solar_ai_skema_1_torsdag
+        name: Thursday
+      - entity: switch.solar_ai_skema_1_fredag
+        name: Friday
+      - entity: switch.solar_ai_skema_1_lordag
+        name: Saturday
+      - entity: switch.solar_ai_skema_1_sondag
+        name: Sunday
     - type: entities
       title: Schedule 2
       icon: mdi:calendar-clock
@@ -607,6 +621,20 @@ views:
         name: Start time
       - entity: time.solar_ai_skema_2_sluttid
         name: End time
+      - entity: switch.solar_ai_skema_2_mandag
+        name: Monday
+      - entity: switch.solar_ai_skema_2_tirsdag
+        name: Tuesday
+      - entity: switch.solar_ai_skema_2_onsdag
+        name: Wednesday
+      - entity: switch.solar_ai_skema_2_torsdag
+        name: Thursday
+      - entity: switch.solar_ai_skema_2_fredag
+        name: Friday
+      - entity: switch.solar_ai_skema_2_lordag
+        name: Saturday
+      - entity: switch.solar_ai_skema_2_sondag
+        name: Sunday
     - type: entities
       title: Schedule 3
       icon: mdi:calendar-clock
@@ -620,6 +648,20 @@ views:
         name: Start time
       - entity: time.solar_ai_skema_3_sluttid
         name: End time
+      - entity: switch.solar_ai_skema_3_mandag
+        name: Monday
+      - entity: switch.solar_ai_skema_3_tirsdag
+        name: Tuesday
+      - entity: switch.solar_ai_skema_3_onsdag
+        name: Wednesday
+      - entity: switch.solar_ai_skema_3_torsdag
+        name: Thursday
+      - entity: switch.solar_ai_skema_3_fredag
+        name: Friday
+      - entity: switch.solar_ai_skema_3_lordag
+        name: Saturday
+      - entity: switch.solar_ai_skema_3_sondag
+        name: Sunday
     - type: entities
       title: Schedule 4
       icon: mdi:calendar-clock
@@ -633,6 +675,20 @@ views:
         name: Start time
       - entity: time.solar_ai_skema_4_sluttid
         name: End time
+      - entity: switch.solar_ai_skema_4_mandag
+        name: Monday
+      - entity: switch.solar_ai_skema_4_tirsdag
+        name: Tuesday
+      - entity: switch.solar_ai_skema_4_onsdag
+        name: Wednesday
+      - entity: switch.solar_ai_skema_4_torsdag
+        name: Thursday
+      - entity: switch.solar_ai_skema_4_fredag
+        name: Friday
+      - entity: switch.solar_ai_skema_4_lordag
+        name: Saturday
+      - entity: switch.solar_ai_skema_4_sondag
+        name: Sunday
 - title: Prices & Plan
   path: priser
   icon: mdi:currency-eur
