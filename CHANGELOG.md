@@ -9,6 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.50.1] — 2026-06-03
+
+### Fixed — EV page rendering full-width
+
+- After v0.50.0 added the 28 weekday toggles, the EV / OCPP page rendered edge-to-edge instead of the centred ~1000 px width used by the other pages. The page wraps its content in a single `vertical-stack` whose width is capped by a card-mod `:host` style; the larger view tripped card-mod's timing so the style stopped applying. The EV view now wraps its content in a `custom:mod-card`, which applies the same max-width deterministically. Dashboard-only — no integration or restart needed.
+
+### Docs
+
+- README install instructions moved to the top and clarified: electricity prices are fetched automatically from Energi Data Service by choosing a country, price area (DK1/DK2) and grid company (DSO) — no separate price integration required. Added v0.50.0/v0.50.1 release notes.
+
+---
+
 ## [0.50.0] — 2026-06-02
 
 ### Added — per-schedule weekday selection in the GUI
