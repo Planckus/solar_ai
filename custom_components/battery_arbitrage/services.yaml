@@ -31,7 +31,9 @@ create_dashboard:
   description: >
     Create the bundled Solar AI dashboard (Danish or English, matching your
     Home Assistant language). Useful for existing installs that were set up
-    before auto-creation, or to refresh the dashboard after an update.
+    before auto-creation, or to refresh the dashboard after an update. A
+    newly-created dashboard is usable immediately; restart Home Assistant once
+    afterwards to finalise it under Settings - Dashboards.
   fields:
     force:
       name: Overwrite existing
