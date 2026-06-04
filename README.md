@@ -194,6 +194,10 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ## Recent releases
 
+### v0.51.2 — dashboard width fix on all pages
+
+- Every dashboard page now wraps its content in a `custom:mod-card` width cap (the EV page already did). This replaces the card-mod `:host`-on-a-bare-stack trick that intermittently failed after a restart and left pages stretched full-width.
+
 ### v0.51.1 — auto-dashboard finalise-on-restart
 
 - An auto-created dashboard works immediately but isn't listed under *Settings → Dashboards* (so it can't be edited/removed there) until the next Home Assistant restart — a limitation of HA not exposing its live dashboards collection to integrations. The integration now raises a notification telling you to restart once to finalise it; after that it behaves like any normal dashboard.
