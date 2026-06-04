@@ -68,6 +68,7 @@ from .const import (
     CONF_SPOT_MARKUP,
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
+    CONF_CREATE_DASHBOARD,
     DOMAIN,
     CONF_BATTERY_CAPACITY,
     CONF_BATTERY_FLOOR_SOC,
@@ -360,6 +361,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register integration services (only once, even with multiple entries)
     _register_services(hass)
 
+    # v0.51.0 — opt-in: auto-create the bundled Solar AI dashboard, once.
+    # Guarded by a stored flag so it never re-creates a dashboard the user
+    # later deleted, and never blocks entry setup if Lovelace internals change.
+    uses_our_dashboard = bool(
+        entry.data.get(CONF_CREATE_DASHBOARD, False)
+        or coordinator._stored.get("dashboard_auto_created")
+    )
+    if entry.data.get(CONF_CREATE_DASHBOARD, False) and not coordinator._stored.get(
+        "dashboard_auto_created"
+    ):
+        from .dashboard_setup import async_create_dashboard
+        if await async_create_dashboard(hass):
+            coordinator._stored["dashboard_auto_created"] = True
+            hass.async_create_task(coordinator._store.async_save(coordinator._stored))
+    # v0.51.0 — flag any missing custom Lovelace cards via Repairs (re-checked
+    # each setup, so it clears once the user installs them). Only for users who
+    # are on the bundled dashboard, to avoid noise for custom-dashboard setups.
+    if uses_our_dashboard:
+        from .dashboard_setup import async_check_dashboard_cards
+        await async_check_dashboard_cards(hass)
+
     # Start the decoupled EV control loop (v0.26.0). It runs at its own
     # configurable cadence regardless of the main fast-poll. Inert when the
     # controller is disabled — the loop's first action is to check the master
@@ -467,6 +489,19 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, "remove_schedule_slot", handle_remove_schedule_slot)
     hass.services.async_register(DOMAIN, "toggle_schedule_day", handle_toggle_schedule_day)
     hass.services.async_register(DOMAIN, "set_schedule_days", handle_set_schedule_days)
+
+    async def handle_create_dashboard(call: ServiceCall) -> None:
+        """v0.51.0 — create or refresh the bundled Solar AI dashboard.
+
+        `force: true` overwrites an existing Solar AI dashboard with the
+        bundled version (e.g. to pull in dashboard improvements after an
+        update); otherwise an existing one is left untouched.
+        """
+        from .dashboard_setup import async_create_dashboard, async_check_dashboard_cards
+        await async_create_dashboard(hass, force=bool(call.data.get("force", False)))
+        await async_check_dashboard_cards(hass)
+
+    hass.services.async_register(DOMAIN, "create_dashboard", handle_create_dashboard)
 
     async def handle_force_stop_charger(call: ServiceCall) -> None:
         """v0.37.0 — Force-stop a runaway OCPP session.

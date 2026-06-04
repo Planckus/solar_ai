@@ -110,10 +110,11 @@
         }
       },
       "dashboard": {
-        "title": "Dashboard (valgfrit)",
-        "description": "Tilknyt eventuelt et eksisterende Lovelace-dashboard. Tilgængelige dashboards: {dashboards}",
+        "title": "Dashboard",
+        "description": "Lad feltet være markeret for at oprette Solar AI-dashboardet automatisk (du skal stadig installere de tilpassede Lovelace-kort fra HACS — se README). Eksisterende dashboards: {dashboards}",
         "data": {
-          "dashboard_url_path": "Dashboard URL-sti"
+          "create_dashboard": "Opret Solar AI-dashboardet for mig",
+          "dashboard_url_path": "Eller tilknyt et eksisterende dashboard (valgfrit)"
         }
       }
     },
@@ -465,6 +466,12 @@
     "reset_learning": {
       "name": "Nulstil lærte data",
       "description": "Sletter alle lærte opladningshastigheder og forbrugshistorik."
+    }
+  },
+  "issues": {
+    "missing_dashboard_cards": {
+      "title": "Solar AI-dashboardkort ikke installeret",
+      "description": "Solar AI-dashboardet bruger tilpassede Lovelace-kort, der endnu ikke er installeret: {cards}. Installer dem via HACS → Frontend, og genindlæs derefter browseren (dokumentationslinket nedenfor har hvert kort)."
     }
   }
 }

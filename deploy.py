@@ -101,11 +101,10 @@ HASS_TOKEN = _read_token()
 
 REPO_ROOT       = Path(__file__).parent
 INTEGRATION_SRC = REPO_ROOT / "custom_components" / "battery_arbitrage"
-DASHBOARD_YAML  = REPO_ROOT / "dashboard" / "dashboard_da.yaml"
-# v0.39.9 — switched from the legacy `battery_arbitrage_dashboard.yaml`
-# (a backward-compat mirror that drifted silently from `dashboard_da.yaml`)
-# to the file the README documents as canonical. The legacy mirror has
-# been deleted; do not reintroduce it.
+DASHBOARD_YAML  = INTEGRATION_SRC / "dashboards" / "dashboard_da.yaml"
+# v0.51.0 — the canonical dashboards now live inside the integration package
+# (custom_components/battery_arbitrage/dashboards/) so they ship via HACS and
+# can be auto-created at setup. Previously they were at the repo-root dashboard/.
 
 DOMAIN              = "battery_arbitrage"
 DASHBOARD_URL_PATH  = "battery-arbitrage"

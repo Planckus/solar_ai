@@ -110,10 +110,11 @@
         }
       },
       "dashboard": {
-        "title": "Dashboard (optional)",
-        "description": "Optionally link an existing Lovelace dashboard. Available dashboards: {dashboards}",
+        "title": "Dashboard",
+        "description": "Leave the box ticked to create the Solar AI dashboard automatically (you still need the custom Lovelace cards from HACS — see the README). Existing dashboards: {dashboards}",
         "data": {
-          "dashboard_url_path": "Dashboard URL path"
+          "create_dashboard": "Create the Solar AI dashboard for me",
+          "dashboard_url_path": "Or link an existing dashboard (optional)"
         }
       }
     },
@@ -465,6 +466,12 @@
     "reset_learning": {
       "name": "Reset learned data",
       "description": "Clear all learned charge rates and load history."
+    }
+  },
+  "issues": {
+    "missing_dashboard_cards": {
+      "title": "Solar AI dashboard cards not installed",
+      "description": "The Solar AI dashboard uses custom Lovelace cards that aren't installed yet: {cards}. Install them from HACS → Frontend, then reload your browser (the documentation link below has each card)."
     }
   }
 }
