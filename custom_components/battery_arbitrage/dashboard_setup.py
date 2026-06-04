@@ -57,11 +57,18 @@ def _load_dashboard_yaml(language: str) -> dict[str, Any] | None:
 async def async_create_dashboard(hass: HomeAssistant, *, force: bool = False) -> str | None:
     """Create (or, with force, overwrite) the Solar AI storage dashboard.
 
-    HA's LovelaceData does not expose the live dashboards collection, so we
-    persist the dashboard's metadata through a DashboardsCollection (writes the
-    same `.storage/lovelace_dashboards` file), add a LovelaceStorage config to
-    the live `data.dashboards` map, and register the sidebar panel — so the
-    dashboard appears immediately and survives a restart.
+    HA's LovelaceData does not expose the *live* dashboards collection (it is a
+    local in async_setup; only its change-listener writes back to
+    `data.dashboards`). So we persist the dashboard's metadata through our own
+    DashboardsCollection (writes the same `.storage/lovelace_dashboards` file),
+    add a LovelaceStorage config to the live `data.dashboards` map, and register
+    the sidebar panel — the dashboard appears immediately and survives a
+    restart. The one consequence is that until the next HA restart the live
+    collection doesn't yet track it, so it can't be edited/removed from
+    Settings → Dashboards (and a manual dashboard reorganisation could drop it).
+    On a newly-created dashboard we therefore raise a persistent notification
+    recommending a one-time restart to finalise it; after that it is fully
+    managed like any other dashboard.
 
     Idempotent: if the dashboard already exists and force is False, it is left
     untouched. Returns the url_path on success, None on any failure (the user
@@ -95,7 +102,8 @@ async def async_create_dashboard(hass: HomeAssistant, *, force: bool = False) ->
         await collection.async_load()
         items = {it["url_path"]: it for it in collection.async_items()}
         item = items.get(DASHBOARD_URL_PATH)
-        if item is None:
+        newly_created = item is None
+        if newly_created:
             item = await collection.async_create_item({
                 "url_path": DASHBOARD_URL_PATH,
                 "title": DASHBOARD_TITLE,
@@ -118,11 +126,30 @@ async def async_create_dashboard(hass: HomeAssistant, *, force: bool = False) ->
                 )
 
         await store.async_save(config)
-        _LOGGER.info(
-            "Solar AI dashboard %s at /%s",
-            "updated" if (force and DASHBOARD_URL_PATH in dashboards_map) else "created",
-            DASHBOARD_URL_PATH,
-        )
+        _LOGGER.info("Solar AI dashboard %s at /%s",
+                     "created" if newly_created else "updated", DASHBOARD_URL_PATH)
+
+        if newly_created:
+            # The live dashboards collection won't track it until the next
+            # restart, so prompt the user to do one to finalise management.
+            try:
+                from homeassistant.components.persistent_notification import (
+                    async_create as _pn_create,
+                )
+                _pn_create(
+                    hass,
+                    "The Solar AI dashboard was created at **/solar-ai** and is ready to "
+                    "use now.\n\nRestart Home Assistant once when convenient to finalise it "
+                    "— after a restart it appears in **Settings → Dashboards**, where it can "
+                    "be edited or removed like any other dashboard. (It also needs the custom "
+                    "Lovelace cards from HACS to render fully — see Settings → Repairs if any "
+                    "are missing.)",
+                    title="Solar AI dashboard created",
+                    notification_id="solar_ai_dashboard_created",
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("Could not raise dashboard-created notification", exc_info=True)
+
         return DASHBOARD_URL_PATH
     except Exception:  # noqa: BLE001 — must never break config-entry setup
         _LOGGER.exception("Auto-create of the Solar AI dashboard failed")
