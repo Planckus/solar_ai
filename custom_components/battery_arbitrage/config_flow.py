@@ -23,6 +23,7 @@ from .const import (
     CONF_CELL_TEMP_ENTITY,
     CONF_CURRENCY,
     CONF_DASHBOARD_URL_PATH,
+    CONF_CREATE_DASHBOARD,
     CONF_DSO_GLN,
     CONF_EVCC_URL,
     CONF_FAST_POLL_INTERVAL,
@@ -495,6 +496,8 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             dashboard_path = user_input.get(CONF_DASHBOARD_URL_PATH, "")
             self._data[CONF_DASHBOARD_URL_PATH] = dashboard_path
+            # v0.51.0 — opt-in: create the bundled Solar AI dashboard at setup
+            self._data[CONF_CREATE_DASHBOARD] = user_input.get(CONF_CREATE_DASHBOARD, True)
 
             # Normalise efficiency: stored as 0.0–1.0
             eff = self._data.get(CONF_ROUND_TRIP_EFFICIENCY, 92)
@@ -515,6 +518,7 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="dashboard",
             data_schema=vol.Schema({
+                vol.Optional(CONF_CREATE_DASHBOARD, default=True): bool,
                 vol.Optional(CONF_DASHBOARD_URL_PATH, default=""): vol.In(
                     [""] + [d["url_path"] for d in dashboards]
                 ) if dashboards else str,

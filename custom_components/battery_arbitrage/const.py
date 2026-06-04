@@ -38,6 +38,7 @@ CONF_ROUND_TRIP_EFFICIENCY = "round_trip_efficiency"
 CONF_MIN_SPREAD_ARBITRAGE = "min_spread_arbitrage"
 CONF_FORECAST_HOURS = "forecast_hours"
 CONF_DASHBOARD_URL_PATH = "dashboard_url_path"
+CONF_CREATE_DASHBOARD = "create_dashboard"   # v0.51.0 — auto-create the bundled Solar AI dashboard
 CONF_FOXESS_WORK_MODE_ENTITY = "foxess_work_mode_entity"
 CONF_FOXESS_FORCE_CHARGE_ENTITY = "foxess_force_charge_entity"
 CONF_FOXESS_FORCE_DISCHARGE_ENTITY = "foxess_force_discharge_entity"
