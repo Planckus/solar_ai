@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.51.2] — 2026-06-04
+
+### Fixed — dashboard pages rendering full-width after a restart
+
+- The remaining dashboard pages (Home, Prices, History, Settings, Logs) capped their width with a card-mod `:host` style on a bare `vertical-stack`. That style intermittently failed to apply after a Home Assistant restart, leaving the page stretched edge-to-edge. All pages now wrap their content in a `custom:mod-card` — the same fix the EV page got in v0.50.1 — which applies the ~1000 px width cap deterministically and survives reboots. Dashboard-only.
+
+---
+
 ## [0.51.1] — 2026-06-04
 
 ### Fixed — auto-created dashboard not manageable until restart
