@@ -114,7 +114,7 @@ The embedded server tolerates non-standard OCPP frames (empty-`[]` keepalives fr
 
 ### 7. Import the dashboard
 
-**If you left "Create the Solar AI dashboard for me" ticked in step 5, the dashboard already exists** — a **Solar AI** entry in the sidebar (URL `/solar-ai`), in your Home Assistant language. Just make sure the cards from step 4 are installed and skip to step 8. (To recreate or refresh it later, call the service **Developer Tools → Actions → `battery_arbitrage.create_dashboard`** — use `force: true` to overwrite an existing one with the latest bundled layout.)
+**If you left "Create the Solar AI dashboard for me" ticked in step 5, the dashboard already exists** — a **Solar AI** entry in the sidebar (URL `/solar-ai`), in your Home Assistant language. Just make sure the cards from step 4 are installed and skip to step 8. **Restart Home Assistant once** when convenient to finalise it (you'll get a notification reminding you): the dashboard works right away, but until that restart it isn't yet listed under *Settings → Dashboards*, so it can't be edited or removed there. After the restart it behaves like any normal dashboard. (To recreate or refresh it later, call the service **Developer Tools → Actions → `battery_arbitrage.create_dashboard`** — use `force: true` to overwrite an existing one with the latest bundled layout.)
 
 To import it **manually** instead, two ready-made dashboard files are included — pick one by language:
 
@@ -193,6 +193,10 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 ---
 
 ## Recent releases
+
+### v0.51.1 — auto-dashboard finalise-on-restart
+
+- An auto-created dashboard works immediately but isn't listed under *Settings → Dashboards* (so it can't be edited/removed there) until the next Home Assistant restart — a limitation of HA not exposing its live dashboards collection to integrations. The integration now raises a notification telling you to restart once to finalise it; after that it behaves like any normal dashboard.
 
 ### v0.51.0 — automatic dashboard setup + sell-price matrix
 

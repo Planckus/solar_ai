@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.51.1] — 2026-06-04
+
+### Fixed — auto-created dashboard not manageable until restart
+
+- A dashboard created by v0.51.0 (wizard opt-in or the `create_dashboard` service) worked immediately but wasn't tracked by Home Assistant's *live* dashboards collection until the next restart — so it couldn't be edited or removed from Settings → Dashboards, and a manual dashboard reorganisation could drop it. Root cause: HA doesn't expose the live dashboards collection to integrations (it's a local object in lovelace's setup), so an integration can't register the dashboard with it in-process.
+- Fix: on a newly-created dashboard the integration now raises a **persistent notification** explaining that the dashboard is ready to use but a one-time Home Assistant restart finalises it (after which it appears under Settings → Dashboards and behaves normally). The README and the `create_dashboard` service description document this. The dashboard itself is unchanged — usable straight away, and fully managed after the restart.
+
+---
+
 ## [0.51.0] — 2026-06-03
 
 ### Added — automatic dashboard setup
