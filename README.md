@@ -21,7 +21,7 @@ The steps, in order:
 5. Add and configure the integration (the setup wizard).
 6. Connect an EV charger (optional).
 7. Import the dashboard.
-8. Enter your electricity prices.
+8. Set your retailer price components (auto-filled if you use Strømligning).
 9. Run in monitoring mode, then enable control.
 
 ### 1. Install HACS
@@ -86,7 +86,7 @@ After downloading all five, **hard-refresh your browser** so it picks up the new
    | **Electricity price source** *(optional)* | **Leave the spot-price entity blank** to use the automatic Energi Data Service prices from the choices above. Only fill it in if you'd rather read an existing price sensor instead (Strømligning, Tibber, etc.). |
    | **Solar forecast source** | EVCC, Solcast, Forecast.Solar, or Auto — plus the entity overrides. For Solcast see [the two-entity wiring note](#solcast-ha-integration--two-entity-wiring-v0280). |
    | **Battery & trading parameters** | Battery capacity (kWh), round-trip efficiency, starting thresholds and currency. |
-   | **Dashboard link** *(optional)* | Skip for now; you import the dashboard in step 7. |
+   | **Dashboard** | Leave **"Create the Solar AI dashboard for me"** ticked (recommended) and the integration builds the dashboard for you at the URL `/solar-ai` — you skip the manual import in step 7. (It still needs the cards from step 4 to render.) Untick it if you'd rather import the YAML by hand or link an existing dashboard. |
 
 Everything here can be changed later from *Settings → Devices & Services → Solar AI → **Configure*** without re-running the wizard. When the wizard finishes, Solar AI creates its sensors and switches and starts in monitoring mode (control off).
 
@@ -114,18 +114,20 @@ The embedded server tolerates non-standard OCPP frames (empty-`[]` keepalives fr
 
 ### 7. Import the dashboard
 
-Two ready-made dashboard files are included — pick one by language:
+**If you left "Create the Solar AI dashboard for me" ticked in step 5, the dashboard already exists** — a **Solar AI** entry in the sidebar (URL `/solar-ai`), in your Home Assistant language. Just make sure the cards from step 4 are installed and skip to step 8. (To recreate or refresh it later, call the service **Developer Tools → Actions → `battery_arbitrage.create_dashboard`** — use `force: true` to overwrite an existing one with the latest bundled layout.)
+
+To import it **manually** instead, two ready-made dashboard files are included — pick one by language:
 
 | File | Language |
 |---|---|
-| `dashboard/dashboard_en.yaml` | English |
-| `dashboard/dashboard_da.yaml` | Danish |
+| `custom_components/battery_arbitrage/dashboards/dashboard_en.yaml` | English |
+| `custom_components/battery_arbitrage/dashboards/dashboard_da.yaml` | Danish |
 
 Both share the same single-screen layout (the English file is a full translation of the Danish one). Integration-generated text (status reasons, notifications) follows Home Assistant's configured language regardless of which file you pick.
 
 To import it:
 
-1. Open the file you want on GitHub, e.g. <https://github.com/Planckus/solar_ai/blob/main/dashboard/dashboard_en.yaml>, click the **Raw** button, and copy the entire contents (`Ctrl/Cmd+A`, then `Ctrl/Cmd+C`). If you installed manually, the same file is in your downloaded copy.
+1. Open the file you want on GitHub, e.g. <https://github.com/Planckus/solar_ai/blob/main/custom_components/battery_arbitrage/dashboards/dashboard_en.yaml>, click the **Raw** button, and copy the entire contents (`Ctrl/Cmd+A`, then `Ctrl/Cmd+C`). If you installed manually, the same file is in your downloaded copy.
 2. In Home Assistant, go to *Settings → **Dashboards*** → **Add dashboard** (bottom-right) → **New dashboard from scratch**. Give it a title (e.g. "Solar AI"), optionally an icon, and click **Create**.
 3. Open the new (empty) dashboard. Click the pencil **Edit** icon (top-right). If asked, choose to take control / continue.
 4. Click the three-dot menu (⋮, top-right) → **Raw configuration editor**.
@@ -133,9 +135,9 @@ To import it:
 
 The dashboard now renders. If you see "Custom element doesn't exist" messages, a card from step 4 is missing — install it via HACS and hard-refresh.
 
-### 8. Enter your electricity prices
+### 8. Set your retailer price components
 
-The **spot price and network/feed-in tariffs are already fetched automatically** from the country / price area / grid company you chose in step 5 — you don't enter those. What's left are the parts that depend on your specific retailer contract. On the dashboard **Settings / Indstillinger** page, fill in the **Price parameters** card:
+You do **not** enter electricity prices here — the **spot price and the network/feed-in tariffs are already fetched automatically** from the country / price area / grid company you chose in step 5. This step is only for the few values that depend on your specific **retailer contract**, and even those are filled in for you if you picked Strømligning (Denmark). On the dashboard **Settings / Indstillinger** page, check the **Price parameters** card:
 
 - **Elafgift** — electricity duty (from your bill).
 - **Spot markup** — your retailer's per-kWh add-on.
@@ -143,7 +145,7 @@ The **spot price and network/feed-in tariffs are already fetched automatically**
 - **Seller-side fee** — your retailer's per-kWh cut on exports, if any.
 - **Minimum export price** — optional floor below which Solar AI will not export (default 0.00).
 
-If you picked **Strømligning** as your price source (Denmark), even these retailer components are pulled in automatically and the manual fields are greyed out. The grid feed-in tariff (DSO + Energinet production tariff) is always fetched and deducted automatically.
+(In Strømligning mode these fields are greyed out — they're filled automatically.) The grid feed-in tariff (DSO + Energinet production tariff) is always fetched and deducted automatically.
 
 ### 9. Run in monitoring mode, then enable control
 
@@ -160,7 +162,7 @@ Let it run for a day or two and confirm the planned actions look sensible for yo
 |---|---|
 | "Solar AI" not in the Add Integration list | Restart HA (step 3) was skipped, or the browser is cached — hard-refresh (`Ctrl/Cmd+Shift+R`). |
 | Integration loads but values are `unknown` / `unavailable` | A source integration isn't ready. Confirm FoxESS Modbus and your solar-forecast entities have live values; re-check the entity IDs in *Solar AI → Configure*. |
-| Dashboard shows "Custom element doesn't exist: …" | A Lovelace card from step 4 is not installed. Install it in HACS and hard-refresh. |
+| Dashboard shows "Custom element doesn't exist: …" | A Lovelace card from step 4 is not installed. The integration also raises a **Settings → Repairs** issue listing exactly which cards are missing, with links — install them in HACS and hard-refresh; the issue clears on its own. |
 | No charge/export ever happens | Expected if **Arbitrage enabled** is off (step 9), or if prices are too flat to clear your minimum spread — check **Today's plan** and **Decision reason**. |
 | EV charger stays `Unavailable` | Re-check the OCPP backend URL and Charge Point ID (step 6), then power-cycle the charger. |
 | Prices look wrong | Re-check the price parameters (step 8) and your selected grid operator (DSO) in *Configure*. |
@@ -191,6 +193,11 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 ---
 
 ## Recent releases
+
+### v0.51.0 — automatic dashboard setup + sell-price matrix
+
+- The dashboard now ships inside the integration and the setup wizard can **create it for you** (opt-in, on by default) at `/solar-ai` in your HA language — no manual raw-config paste. A `battery_arbitrage.create_dashboard` service does the same for existing installs (`force: true` to refresh). The custom Lovelace cards still need a one-time HACS Frontend install — and the integration now raises a **Repairs** issue naming exactly which cards are missing (clears once installed).
+- A **sell-price matrix** on the Prices page, directly below the buy-price matrix: the hourly export price for today and tomorrow, colour-coded so green = a high (good) sell price and red = low.
 
 ### v0.50.1 — EV page width fix
 

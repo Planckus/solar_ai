@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.51.0] — 2026-06-03
+
+### Added — automatic dashboard setup
+
+- The dashboard YAML now ships **inside** the integration (`custom_components/battery_arbitrage/dashboards/`), so it is included in a HACS install. The setup wizard's Dashboard step has a **"Create the Solar AI dashboard for me"** option (on by default) that registers the dashboard automatically at `/solar-ai`, in your Home Assistant language — no manual raw-config paste. It is created once and never re-creates a dashboard you later delete.
+- New `battery_arbitrage.create_dashboard` service for existing installs (and for refreshing after an update): `force: true` overwrites an existing Solar AI dashboard with the bundled layout.
+- The custom Lovelace cards (Mushroom, ApexCharts, Power Flow Card Plus, card-mod, button-card) still need a one-time HACS Frontend install — HACS does not chain-install frontend plugins from an integration, and bundling third-party cards would be improper. To make that obvious, the integration now raises a **Repairs** issue listing exactly which of those cards are missing (with links), instead of leaving cryptic "Custom element doesn't exist" errors on the dashboard. The issue clears automatically once they're installed. (Only shown for installs using the bundled dashboard.)
+- A **sell-price matrix** card on the Prices page, directly below the buy-price matrix: the hourly export (sell) price for today and tomorrow, from the same `price_forecast` sensor. Colour-coding is inverted versus the buy matrix — green = a high (good) sell price, red = low — so green always means "good for you".
+
+### Changed
+
+- Canonical dashboards moved from the repo-root `dashboard/` folder to `custom_components/battery_arbitrage/dashboards/`. `deploy.py` and the README import paths updated accordingly.
+
+---
+
 ## [0.50.1] — 2026-06-03
 
 ### Fixed — EV page rendering full-width

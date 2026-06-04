@@ -25,3 +25,20 @@ reset_learning:
     Clears all learned charge-rate samples and resets the load history to
     factory defaults. Use after replacing the battery or moving to a new home.
   fields: {}
+
+create_dashboard:
+  name: Create Solar AI dashboard
+  description: >
+    Create the bundled Solar AI dashboard (Danish or English, matching your
+    Home Assistant language). Useful for existing installs that were set up
+    before auto-creation, or to refresh the dashboard after an update.
+  fields:
+    force:
+      name: Overwrite existing
+      description: >
+        If the Solar AI dashboard already exists, overwrite it with the bundled
+        version. Leave off to keep your current dashboard untouched.
+      required: false
+      default: false
+      selector:
+        boolean:
