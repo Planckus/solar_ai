@@ -103,6 +103,8 @@ from .const import (
     DYNAMIC_FLOOR_MARGIN_MAX,
     DYNAMIC_FLOOR_MARGIN_UP,
     DYNAMIC_FLOOR_MARGIN_DOWN,
+    DYNAMIC_FLOOR_MARGIN_UP_PER_PCT,
+    DYNAMIC_FLOOR_RELAX_HEADROOM,
     STORAGE_KEY,
     STORAGE_VERSION,
     DEFAULT_DISK_ALARM_THRESHOLD_PCT,
@@ -849,6 +851,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # next successful daily tariff fetch.
         self._feed_in_tariff_dso = float(self._stored.get("feed_in_tariff_dso", 0.0))
         self._feed_in_tariff_energinet = float(self._stored.get("feed_in_tariff_energinet", 0.0))
+        # v0.52.0 — the dynamic-floor bridge calculation changed (it no longer
+        # treats cheap windows as refills), so the previously-learned reserve
+        # margin (tuned to compensate for the old under-reservation) no longer
+        # applies. Reset it once to the default and let the new proportional
+        # learner re-tune from a clean baseline.
+        if not self._stored.get("discharge_margin_reset_v052"):
+            self._stored["discharge_reserve_margin"] = DYNAMIC_FLOOR_MARGIN_DEFAULT
+            self._stored.pop("dynamic_floor_undershot", None)
+            self._stored["discharge_margin_reset_v052"] = True
 
     # ------------------------------------------------------------------ #
     # Legacy automation management                                          #
@@ -1395,8 +1406,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # v0.47.0 (C) — dynamic self-learning discharge floor. When enabled, the
         # export floor is the SoC needed to bridge the house to the next refill
-        # (sunrise / cheap window) × a learned margin, instead of the fixed
-        # slider value. Bypasses the static floor; clamped to a health band.
+        # (solar covering the house, or a planned grid-charge) × a learned
+        # margin, instead of the fixed slider value. Bypasses the static floor;
+        # clamped to a health band.
         if self._stored.get("dynamic_discharge_floor", False):
             dyn_floor = self._compute_dynamic_floor_soc(
                 now=now, capacity_kwh=capacity_kwh, efficiency=efficiency,
@@ -2594,10 +2606,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         spot_markup: float, elafgift: float, vat_factor: float,
     ) -> float | None:
         """Discharge floor that reserves enough SoC to run the house through the
-        next *dark bridge* — the upcoming stretch where neither solar covers the
-        house nor a cheap grid window is available — until the bridge's refill
-        (sunrise solar or that cheap window), times a learned safety margin.
-        Returns SoC %, clamped to the health band, or None if inputs are thin.
+        next *dark bridge* — the upcoming stretch where solar doesn't cover the
+        house and no grid-charge is scheduled — until the bridge's refill
+        (solar that covers the house, or a planned grid-charge), times a learned
+        safety margin. Returns SoC %, clamped to the health band, or None if
+        inputs are thin.
 
         v0.47.1 fix: the reserve is computed for the *next bridge* (e.g.
         tonight's sunset→sunrise), NOT "from now". Otherwise, during the day or
@@ -2612,27 +2625,22 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         onset = float(DYNAMIC_FLOOR_SOLAR_ONSET_FACTOR)
 
-        # Cheap grid windows: slot starts whose buy price is within 10 % of the
-        # cheapest buy across the horizon (recharge opportunities).
-        cheap_starts: set = set()
-        if grid_slot_data:
-            buys = []
-            for slot_start, dur_h, h, m, spot in grid_slot_data:
-                buy = self._compute_buy_price(
-                    spot=spot, hour=h, slot_start_dt=slot_start,
-                    spot_markup=spot_markup,
-                    tariff_this_hour_dso=tariff_sched[h] if h < len(tariff_sched) else 0.0,
-                    elafgift=elafgift, vat_factor=vat_factor,
-                )
-                buys.append((slot_start, buy))
-            if buys:
-                min_buy = min(b for _, b in buys)
-                thresh = min_buy * 1.10
-                cheap_starts = {st for st, b in buys if b <= thresh}
+        # v0.52.0 — a slot is a "refill" (the battery doesn't need to bridge it)
+        # only when solar actually COVERS the house, OR the optimiser plans a
+        # grid-CHARGE there. A merely cheap price is NOT a refill: the battery
+        # recharges only if a charge is actually scheduled. The old code treated
+        # any cheap window as a refill, so it stopped reserving at the first
+        # cheap overnight hour — and the battery then drained through the rest of
+        # the night on Self Use (this caused a near-full drain to 11%).
+        planned_charge_dts: list = []
+        for ps in (self._optimizer_plan or []):
+            if ps.get("action") == "CHARGE":
+                try:
+                    planned_charge_dts.append(datetime.fromisoformat(ps["iso"]))
+                except (ValueError, KeyError, TypeError):
+                    pass
 
-        # Build future slots: (start, house_kw, dur_h, is_refill). A slot is a
-        # "refill" when solar covers the house OR it's a cheap grid window — the
-        # battery does not need to bridge those.
+        # Build future slots: (start, house_kw, dur_h, is_refill).
         slots: list[tuple] = []
         for s in solar_slot_data:
             slot_start, dur_h = s[0], s[1]
@@ -2642,7 +2650,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             loc = slot_start.astimezone()
             house_kw = self.get_house_load_profile(weekend=loc.weekday() >= 5)[loc.hour]
             solar_covers = house_kw > 0 and (s[4] / 1000.0) >= onset * house_kw
-            is_refill = solar_covers or (slot_start in cheap_starts)
+            slot_end = slot_start + timedelta(hours=float(dur_h))
+            charge_here = any(slot_start <= pc < slot_end for pc in planned_charge_dts)
+            is_refill = solar_covers or charge_here
             slots.append((slot_start, house_kw, float(dur_h), is_refill))
 
         if not slots:
@@ -2677,14 +2687,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         return min(float(DYNAMIC_FLOOR_MAX_SOC), floor_soc)
 
     def _update_discharge_margin(self, now: datetime, battery_soc: float) -> None:
-        """Self-correct the discharge reserve margin once per day (v0.47.0 — C).
+        """Self-correct the discharge reserve margin once per day (v0.52.0).
 
-        If the battery hit the hard floor (reserve ran out) at any point, bump
-        the margin up so more is reserved next time; if a full day passed
-        without coming close, relax it down to recover arbitrage headroom.
+        Tracks the lowest SoC reached each day. On the day rollover: if the SoC
+        dropped BELOW the comfort target, bump the reserve margin in PROPORTION
+        to how far it fell (a deep drain corrects hard — not a fixed +5 %); if
+        the day stayed comfortably above the target, relax the margin a little
+        to recover arbitrage headroom.
         """
-        if battery_soc <= float(DYNAMIC_FLOOR_MIN_SOC) + 2.0:
-            self._stored["dynamic_floor_undershot"] = True
+        comfort = float(DYNAMIC_FLOOR_MIN_SOC)
+        seen = self._stored.get("dynamic_floor_min_seen")
+        if seen is None or float(battery_soc) < float(seen):
+            self._stored["dynamic_floor_min_seen"] = round(float(battery_soc), 1)
         today = now.astimezone().date().isoformat()
         prev = self._stored.get("dynamic_floor_day", "")
         if prev != today:
@@ -2692,15 +2706,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 margin = float(self._stored.get(
                     "discharge_reserve_margin", DYNAMIC_FLOOR_MARGIN_DEFAULT,
                 ))
-                if self._stored.get("dynamic_floor_undershot", False):
-                    margin *= DYNAMIC_FLOOR_MARGIN_UP
-                else:
+                min_seen = float(self._stored.get("dynamic_floor_min_seen", battery_soc))
+                deficit = comfort - min_seen
+                if deficit > 0:
+                    # undershot — bump proportional to how far below comfort.
+                    margin *= 1.0 + DYNAMIC_FLOOR_MARGIN_UP_PER_PCT * deficit
+                elif min_seen > comfort + DYNAMIC_FLOOR_RELAX_HEADROOM:
+                    # stayed well clear all day — relax to recover arbitrage room.
                     margin *= DYNAMIC_FLOOR_MARGIN_DOWN
                 self._stored["discharge_reserve_margin"] = round(
                     max(DYNAMIC_FLOOR_MARGIN_MIN, min(DYNAMIC_FLOOR_MARGIN_MAX, margin)), 3,
                 )
             self._stored["dynamic_floor_day"] = today
-            self._stored["dynamic_floor_undershot"] = False
+            self._stored["dynamic_floor_min_seen"] = round(float(battery_soc), 1)
 
     def _update_daily_solar(self, pv_power_w: float) -> None:
         """Accumulate today's solar production; push to daily log when day rolls over."""
