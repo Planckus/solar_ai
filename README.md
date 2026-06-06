@@ -194,6 +194,10 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ## Recent releases
 
+### v0.52.0 — dynamic discharge floor no longer drains overnight
+
+- The dynamic discharge floor was counting cheap overnight grid-price windows as battery "refills", so its reserve only had to bridge the house to the first cheap hour instead of to the next real energy arrival. On nights without a planned grid-charge, evening export emptied the battery to that too-low floor and Self-Use then drained it close to empty before dawn. Now a slot counts as a refill only when solar actually covers the house load, or the optimiser has planned a grid-charge for that slot — a cheap price alone no longer shortens the bridge. A dawn margin keeps the thin shoulder around sunrise from ending the bridge early, the self-learned safety margin is now raised in proportion to how far below comfort the battery actually fell (with a higher ceiling), and the previously-learned margin is reset once on upgrade. The floor still governs export only.
+
 ### v0.51.2 — dashboard width fix on all pages
 
 - Every dashboard page now wraps its content in a `custom:mod-card` width cap (the EV page already did). This replaces the card-mod `:host`-on-a-bare-stack trick that intermittently failed after a restart and left pages stretched full-width.
@@ -506,7 +510,7 @@ Every setting below is editable from the dashboard (**Indstillinger / Settings**
 | **Maximum SoC (grid charge)**<br>_Maksimum SoC (netopladning)_ | 10–100 % | 100 % | Ceiling that grid-charging will fill the battery to. |
 | **Export power cap**<br>_Eksporteffekt-grænse (0 = ingen)_ | 0–10 kW | 0 (no cap) | Limits how fast the battery discharges to the grid. 0 = use the full available rate. |
 | **Grid import limit**<br>_Net-importgrænse_ | 5–63 kW | 17 kW | Your main breaker rating. Total grid draw is kept under this — grid-charge power is reduced to leave headroom for house + EV load. |
-| **Dynamic discharge floor**<br>_Dynamisk afladningsgulv (selvlærende)_ | on/off | off | When on, replaces the static *Minimum SoC* with a self-learning floor sized to run the house until the next refill (sunrise solar or a cheap grid window), on top of the hardware minimum SoC. Short bridge → lower floor (export more); long winter night → higher floor (hold more). The safety margin self-corrects daily. |
+| **Dynamic discharge floor**<br>_Dynamisk afladningsgulv (selvlærende)_ | on/off | off | When on, replaces the static *Minimum SoC* with a self-learning floor sized to run the house until the next refill — solar that covers the house, or a grid-charge the optimiser has planned — on top of the hardware minimum SoC. A cheap price alone does not count as a refill. Short bridge → lower floor (export more); long winter night → higher floor (hold more). The safety margin self-corrects daily from how far the SoC actually fell. |
 | **Effective discharge floor**<br>_Effektivt afladningsgulv_ | read-only | — | Shows the floor actually in effect right now (the static value, or the computed dynamic reserve) plus the self-learned safety margin. |
 
 #### Price parameters
