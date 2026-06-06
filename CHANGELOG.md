@@ -9,6 +9,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.52.0] — 2026-06-06
+
+### Fixed — dynamic discharge floor under-reserved overnight, letting the battery drain
+
+- The self-learning discharge floor reserves enough SoC to bridge the house through the dark hours until the battery's next refill. It was counting **cheap overnight grid-price windows** as "refills", so the reserve only had to last until the first cheap window (often ~4 h into an ~8–10 h night) instead of until power actually returned. Result: on nights without a planned grid-charge, evening arbitrage export emptied the battery down to the (too-low) floor and Self-Use then drained it close to empty before dawn.
+- A refill is now only counted when energy genuinely arrives: **solar covering the house load**, or a **grid-charge the optimiser has actually planned** for that slot. A cheap price alone no longer shortens the bridge. The reserve therefore spans the whole dark stretch to the next real refill.
+- Added a **dawn margin** (`DYNAMIC_FLOOR_SOLAR_ONSET_FACTOR` 1.0 → 1.3): solar must cover 1.3× the house load before a slot counts as the morning refill, so the thin shoulder around sunrise doesn't end the bridge prematurely.
+- The reserve **margin learner** is now proportional: it raises the margin in proportion to how far below the comfort SoC the battery actually fell (`DYNAMIC_FLOOR_MARGIN_UP_PER_PCT` per % of undershoot) and only relaxes it after a comfortable surplus (`DYNAMIC_FLOOR_RELAX_HEADROOM` 15 %). The margin ceiling was raised (`DYNAMIC_FLOOR_MARGIN_MAX` 1.60 → 2.50) so a persistent shortfall can be fully corrected.
+- The previously-learned margin is reset once on upgrade (the floor's bridge semantics changed, so the old value no longer applies); the learner re-tunes from the default.
+
+> The floor still governs **export** only. Self-Use discharge below the floor is unchanged in this release; a hard inverter Min-SoC backstop is tracked as a follow-up.
+
+---
+
 ## [0.51.2] — 2026-06-04
 
 ### Fixed — dashboard pages rendering full-width after a restart

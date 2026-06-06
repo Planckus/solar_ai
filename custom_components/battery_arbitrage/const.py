@@ -453,12 +453,24 @@ PLAN_REFRESH_SECONDS = 900            # 15 min
 DYNAMIC_FLOOR_MIN_SOC = 20            # never reserve below this (battery health)
 DYNAMIC_FLOOR_MAX_SOC = 85            # never reserve above this (leave room to arbitrage)
 DYNAMIC_FLOOR_REFILL_MAX_H = 18.0     # cap the bridge horizon used for the reserve
-DYNAMIC_FLOOR_SOLAR_ONSET_FACTOR = 1.0  # solar "covers the house" when solar_kw ≥ this × house_kw
+# v0.52.0 — solar must EXCEED house load by this factor to count as a "refill"
+# (covering the house), so the slow dawn ramp where solar ≈ house is still
+# reserved for. Raised from 1.0 → 1.3 after a battery near-drain (the floor
+# released the reserve too early at first light).
+DYNAMIC_FLOOR_SOLAR_ONSET_FACTOR = 1.3
 DYNAMIC_FLOOR_MARGIN_DEFAULT = 1.10   # initial learned safety multiplier on projected load
 DYNAMIC_FLOOR_MARGIN_MIN = 0.80
-DYNAMIC_FLOOR_MARGIN_MAX = 1.60
-DYNAMIC_FLOOR_MARGIN_UP = 1.05        # bump when the reserve ran out overnight
-DYNAMIC_FLOOR_MARGIN_DOWN = 0.98      # relax slowly when it never ran out
+# v0.52.0 — raised cap 1.60 → 2.50 so the learner can reserve enough after a
+# deep drain (the old cap couldn't compensate for a bad bridge estimate).
+DYNAMIC_FLOOR_MARGIN_MAX = 2.50
+DYNAMIC_FLOOR_MARGIN_UP = 1.05        # (legacy) — superseded by proportional learning
+DYNAMIC_FLOOR_MARGIN_DOWN = 0.98      # relax slowly when it stayed well above comfort
+# v0.52.0 — proportional self-learning: per percentage-point the SoC dropped
+# below the comfort target, bump the reserve margin by this much (so an 11%
+# arrival vs a 20% target ≈ +27%). Only relax once the day stayed this far
+# above comfort.
+DYNAMIC_FLOOR_MARGIN_UP_PER_PCT = 0.03
+DYNAMIC_FLOOR_RELAX_HEADROOM = 15.0
 
 # v0.45.0 — E1: when the EV is plugged in and in a forced-draw mode (or actively
 # charging), the optimiser treats the next EV_SESSION_DP_HORIZON_H hours of EV
