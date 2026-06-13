@@ -6,16 +6,40 @@ A Home Assistant integration that schedules a FoxESS battery against Nord Pool d
 
 ## What it does
 
-Solar AI turns a FoxESS battery and solar system into a price-aware energy manager for your home. Every 15 minutes it looks at the day-ahead electricity prices, your solar forecast and your house's consumption, then decides whether to **charge the battery from the grid** while power is cheap, **hold it**, or **export it to the grid** when prices are high — to lower your bill and earn from the price difference. It always reserves enough charge to run the house through the night, so it won't sell what your home needs before the sun returns.
+Solar AI is an automated energy manager for a FoxESS solar-and-battery system. It runs entirely inside Home Assistant and makes the decisions a battery owner would otherwise make by hand — when to store solar, when to buy cheap grid power, when to sell, and when to hold enough back for the house — and it remakes them every 15 minutes, around the clock, adjusting as prices, weather and your consumption change. You set it up once; it runs itself.
 
-It also:
+### The core loop — buy low, sell high, cover your own use first
 
-- **Fetches prices and tariffs for you** — pick your country, price area and grid company during setup; no separate price integration needed (Denmark today, via Energi Data Service / Strømligning).
-- **Charges an EV from solar surplus** through an OCPP 1.6 charger, with optional scheduled charging windows per weekday.
-- **Learns and adapts** — it continuously learns your solar-forecast accuracy, house-load pattern, battery capacity, round-trip efficiency and charge rates, so decisions improve over time and follow the seasons without manual tuning.
-- **Comes with a dashboard** for prices, the plan, the battery, the EV and history.
+Every 15 minutes it builds a plan over the next 48 hours from the day-ahead electricity prices, your solar forecast, your learned house consumption and the battery's state, and acts on it:
 
-Everything runs locally in Home Assistant, on top of your existing FoxESS Modbus and solar-forecast integrations.
+- **Stores your solar.** Surplus production charges the battery instead of being exported for a few øre, so you run the house on your own power in the expensive evening hours rather than buying it back.
+- **Buys low.** When grid power is cheap — or negative, when the grid pays you to consume — it charges the battery from the grid, but only when that genuinely beats waiting for solar.
+- **Sells high.** When prices rise enough to clear the round-trip cost (including battery wear), it exports stored energy to the grid and pockets the difference.
+- **Keeps the house covered.** Before selling, it reserves enough charge to run your home through the dark hours until solar returns — so it never empties the battery and leaves you importing at peak prices overnight.
+
+**The benefit:** your battery does more than store solar for the evening. It actively shifts energy from cheap hours into expensive ones and earns from the daily price swings, while always covering your own consumption first — turning a flat electricity bill into one that follows the cheapest hours.
+
+### Charges your EV from spare solar
+
+With an OCPP 1.6 charger, Solar AI charges the car from **surplus solar** — the power that would otherwise be sold cheaply. You pick the behaviour per session or per schedule: solar-only, solar-plus-battery, full-speed, or charging windows you set per weekday. It won't drain the house battery into the car unless you ask it to, and it won't compete with the charger for the cheap night hours.
+
+**The benefit:** the car charges from your own roof for free where possible, or from the cheapest grid hours when there isn't enough sun — without you touching the charger.
+
+### Handles prices and tariffs for you
+
+No separate price integration (Tibber, Nord Pool, etc.) is needed. Pick your country, price area and grid company during setup, and Solar AI fetches the day-ahead spot price and the network tariffs automatically (Denmark today, via Energi Data Service / Strømligning) and keeps them current.
+
+### Learns your home and adapts
+
+Solar AI tunes itself to your specific system instead of running on fixed assumptions. It continuously learns your solar-forecast accuracy, your weekday and weekend consumption pattern, your true battery capacity, round-trip efficiency, and how fast the battery charges at different temperatures. Its decisions sharpen over the first few days and keep following the seasons — short summer nights, long winter ones — with no re-tuning from you.
+
+### Safe and transparent
+
+- **Respects your main fuse.** Total grid draw (house + battery + EV) is held under your breaker rating, so charging never trips the main.
+- **Protects the battery.** It accounts for cycle wear and temperature and keeps a health floor, so chasing a few øre never costs you battery life.
+- **Show, then trust.** Run it in monitoring mode first — it shows exactly what it *would* do on a built-in dashboard (prices, the plan, battery, EV, earnings and history) — and hand over control only when you're satisfied.
+
+Everything runs locally in Home Assistant, on top of your existing FoxESS Modbus and solar-forecast integrations. No cloud account, and no external service makes the decisions.
 
 ---
 
