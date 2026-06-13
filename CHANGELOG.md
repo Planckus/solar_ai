@@ -9,6 +9,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.53.0] — 2026-06-13
+
+### Fixed — discharge floor dissolved by token grid-charges, draining the battery overnight
+
+A week of live data showed the dynamic discharge floor still letting the battery drain to ~11 % overnight (e.g. June 6→7: a full battery was exported 99 %→43 % in the evening, then Self-Use ran it down to 11 % before dawn). Root cause: the floor sized the overnight reserve as "house load until the next refill", but **treated *any* planned grid-charge as a full refill that ends the bridge — regardless of how much it actually charges.** A token charge (one case ran 10 minutes, ~0.2 kWh) collapsed the whole reserve, dropped the floor to the bare minimum, and let the evening export sell the SoC the house needed for the night.
+
+- **Only solar covering the house now ends the dark bridge.** A planned grid-charge no longer counts as a refill.
+- **A planned charge is credited for the energy it actually returns** (sustained charge rate × planned hours within the bridge), netted off the reserve. A short charge offsets almost nothing — so the floor stays high enough to protect the night — while a genuine multi-hour cheap charge offsets a lot, correctly allowing more to be exported. This matches the intended rule: never sell below what the house needs overnight, unless a cheap top-up will genuinely carry it through.
+- **New continuously-learned sustained charge rate.** The charge credit uses the *mean* of observed force-charge power per temperature bucket — not the p90 *peak* rate (which is right for "can I refill in time?" but over-credits here, since a charge ramps, tapers and is throttled and never holds the peak across a slot). It learns from the samples already collected and rolls with them, so it tracks temperature and seasonal changes.
+- The reserve stays driven entirely by learning inputs — rolling solar forecast, learned weekday/weekend house-load profile, learned capacity, learned efficiency, learned sustained charge rate, and the self-correcting safety margin — with no fixed rate assumptions or discount factors, so it adapts to solar production across days and seasons.
+- The learned safety margin is reset once on upgrade — it had ramped to ~2 while compensating for the old broken bridge, which no longer applies; it re-tunes from the default against the corrected floor.
+
+> The floor governs export only, by design: the reserve is there for the house to *use* overnight, not to be *sold*. A correct floor lets the battery glide down to roughly the comfort level right as the sun returns, instead of being emptied early.
+
+---
+
 ## [0.52.0] — 2026-06-06
 
 ### Fixed — dynamic discharge floor under-reserved overnight, letting the battery drain

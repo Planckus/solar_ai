@@ -4,6 +4,19 @@
 
 A Home Assistant integration that schedules a FoxESS battery against Nord Pool day-ahead prices, drives an OCPP 1.6 EV charger from solar surplus, and learns from observed production and consumption.
 
+## What it does
+
+Solar AI turns a FoxESS battery and solar system into a price-aware energy manager for your home. Every 15 minutes it looks at the day-ahead electricity prices, your solar forecast and your house's consumption, then decides whether to **charge the battery from the grid** while power is cheap, **hold it**, or **export it to the grid** when prices are high — to lower your bill and earn from the price difference. It always reserves enough charge to run the house through the night, so it won't sell what your home needs before the sun returns.
+
+It also:
+
+- **Fetches prices and tariffs for you** — pick your country, price area and grid company during setup; no separate price integration needed (Denmark today, via Energi Data Service / Strømligning).
+- **Charges an EV from solar surplus** through an OCPP 1.6 charger, with optional scheduled charging windows per weekday.
+- **Learns and adapts** — it continuously learns your solar-forecast accuracy, house-load pattern, battery capacity, round-trip efficiency and charge rates, so decisions improve over time and follow the seasons without manual tuning.
+- **Comes with a dashboard** for prices, the plan, the battery, the EV and history.
+
+Everything runs locally in Home Assistant, on top of your existing FoxESS Modbus and solar-forecast integrations.
+
 ---
 
 ## Installation
@@ -193,6 +206,10 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 ---
 
 ## Recent releases
+
+### v0.53.0 — discharge floor no longer dissolved by token grid-charges
+
+- A week of live data showed the discharge floor still letting the battery drain to ~11% overnight: it sized the reserve as "house load until the next refill" but treated *any* planned grid-charge as a full refill, so a token charge (one case ran 10 minutes) collapsed the whole reserve and let the evening export sell the SoC the house needed for the night. Now only solar covering the house ends the dark bridge; a planned charge is credited for the energy it *actually* returns (sustained charge rate × planned hours) and netted off the reserve. A short charge offsets almost nothing (the floor stays high enough to protect the night); a genuine multi-hour cheap charge offsets a lot (more can be exported). The charge credit uses a new continuously-learned *sustained* charge rate (the mean of observed charge power per temperature bucket, rather than the p90 peak, which over-credits). The reserve is driven entirely by learning inputs — solar forecast, house-load profile, capacity, efficiency, sustained charge rate and the self-correcting margin — with no fixed rate assumptions, so it adapts across days and seasons. The learned margin is reset once on upgrade (it had ramped up while fighting the old broken bridge).
 
 ### v0.52.0 — dynamic discharge floor no longer drains overnight
 
@@ -510,7 +527,7 @@ Every setting below is editable from the dashboard (**Indstillinger / Settings**
 | **Maximum SoC (grid charge)**<br>_Maksimum SoC (netopladning)_ | 10–100 % | 100 % | Ceiling that grid-charging will fill the battery to. |
 | **Export power cap**<br>_Eksporteffekt-grænse (0 = ingen)_ | 0–10 kW | 0 (no cap) | Limits how fast the battery discharges to the grid. 0 = use the full available rate. |
 | **Grid import limit**<br>_Net-importgrænse_ | 5–63 kW | 17 kW | Your main breaker rating. Total grid draw is kept under this — grid-charge power is reduced to leave headroom for house + EV load. |
-| **Dynamic discharge floor**<br>_Dynamisk afladningsgulv (selvlærende)_ | on/off | off | When on, replaces the static *Minimum SoC* with a self-learning floor sized to run the house until the next refill — solar that covers the house, or a grid-charge the optimiser has planned — on top of the hardware minimum SoC. A cheap price alone does not count as a refill. Short bridge → lower floor (export more); long winter night → higher floor (hold more). The safety margin self-corrects daily from how far the SoC actually fell. |
+| **Dynamic discharge floor**<br>_Dynamisk afladningsgulv (selvlærende)_ | on/off | off | When on, replaces the static *Minimum SoC* with a self-learning floor sized to run the house from now until solar covers it again, on top of the hardware minimum SoC. A planned grid-charge is netted off the reserve only for the energy it actually returns (so a token charge does not lower the floor; a real cheap multi-hour charge does). Short bright night → lower floor (export more); long winter night → higher floor (hold more). The safety margin self-corrects daily from how far the SoC actually fell. |
 | **Effective discharge floor**<br>_Effektivt afladningsgulv_ | read-only | — | Shows the floor actually in effect right now (the static value, or the computed dynamic reserve) plus the self-learned safety margin. |
 
 #### Price parameters

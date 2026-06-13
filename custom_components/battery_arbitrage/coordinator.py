@@ -527,6 +527,28 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return 0.0
         return self.get_learned_rate(bucket)
 
+    def get_effective_charge_rate(self) -> float:
+        """Continuously-learned *sustained* charge rate (kW) for the current
+        temperature bucket — the mean of the observed force-charge power samples,
+        not the p90 *peak* that get_learned_rate returns.
+
+        A planned grid-charge never holds the peak across a whole slot — it ramps
+        up, tapers near full, and is throttled by grid headroom — so the energy
+        it actually delivers is governed by the sustained mean, not the peak.
+        The floor uses this to credit a planned charge with the energy it will
+        realistically return. It learns continuously from the same samples
+        `_calibrate_charge_rate` already collects, and rolls with them, so it
+        tracks seasonal/temperature changes. Falls back to the learned peak rate
+        until samples exist (the only estimate available; the margin learner
+        backstops the cold start)."""
+        bucket = self.get_current_temp_bucket()
+        if bucket is None:
+            return 0.0
+        samples = self._stored.get("charge_samples", {}).get(bucket, [])
+        if samples:
+            return round(sum(samples) / len(samples), 3)
+        return self.get_learned_rate(bucket)
+
     def get_savings_summary(self) -> dict[str, float]:
         """Aggregate savings_log into today / 7-day / 30-day totals."""
         log: list[dict] = self._stored.get("savings_log", [])
@@ -860,6 +882,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored["discharge_reserve_margin"] = DYNAMIC_FLOOR_MARGIN_DEFAULT
             self._stored.pop("dynamic_floor_undershot", None)
             self._stored["discharge_margin_reset_v052"] = True
+        # v0.53.0 — the bridge calculation changed again (a planned charge is now
+        # credited for the energy it really returns instead of dissolving the
+        # whole bridge), so the margin the learner ramped up to ~2 while fighting
+        # the old broken bridge no longer applies. Reset it once and let the
+        # learner re-tune from the default against the corrected floor.
+        if not self._stored.get("discharge_margin_reset_v053"):
+            self._stored["discharge_reserve_margin"] = DYNAMIC_FLOOR_MARGIN_DEFAULT
+            self._stored["discharge_margin_reset_v053"] = True
 
     # ------------------------------------------------------------------ #
     # Legacy automation management                                          #
@@ -1405,16 +1435,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._learn_capacity(battery_soc, battery_charge_kw)
 
         # v0.47.0 (C) — dynamic self-learning discharge floor. When enabled, the
-        # export floor is the SoC needed to bridge the house to the next refill
-        # (solar covering the house, or a planned grid-charge) × a learned
-        # margin, instead of the fixed slider value. Bypasses the static floor;
-        # clamped to a health band.
+        # export floor is the SoC needed to bridge the house to the next solar
+        # refill (net of any planned grid-charge) × a learned margin, instead of
+        # the fixed slider value. Bypasses the static floor; clamped to a health
+        # band.
         if self._stored.get("dynamic_discharge_floor", False):
             dyn_floor = self._compute_dynamic_floor_soc(
                 now=now, capacity_kwh=capacity_kwh, efficiency=efficiency,
-                solar_slot_data=solar_slot_data_opt, grid_slot_data=grid_slot_data_opt,
-                tariff_sched=tariff_sched, spot_markup=spot_markup,
-                elafgift=elafgift, vat_factor=vat_factor,
+                solar_slot_data=solar_slot_data_opt,
+                grid_charge_kw=self.get_effective_charge_rate(),
             )
             if dyn_floor is not None:
                 self._dynamic_floor_soc = round(dyn_floor, 1)
@@ -2602,13 +2631,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     # ── Dynamic self-learning discharge floor (v0.47.0 — C) ───────────────
     def _compute_dynamic_floor_soc(
         self, *, now: datetime, capacity_kwh: float, efficiency: float,
-        solar_slot_data: list, grid_slot_data: list, tariff_sched: list,
-        spot_markup: float, elafgift: float, vat_factor: float,
+        solar_slot_data: list, grid_charge_kw: float,
     ) -> float | None:
         """Discharge floor that reserves enough SoC to run the house through the
         next *dark bridge* — the upcoming stretch where solar doesn't cover the
-        house and no grid-charge is scheduled — until the bridge's refill
-        (solar that covers the house, or a planned grid-charge), times a learned
+        house — until solar covers it again, *net of* any grid-charge the
+        optimiser has planned to put back during the bridge, times a learned
         safety margin. Returns SoC %, clamped to the health band, or None if
         inputs are thin.
 
@@ -2619,19 +2647,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         over-deplete the battery before the night even starts. The reserve is
         added on top of the hardware minimum SoC (the battery only delivers down
         to that floor), so the returned floor = hardware_floor + reserve%.
+
+        v0.53.0 fix: only *solar covering the house* ends the dark bridge. A
+        planned grid-charge no longer counts as a "refill" that ends it — it is
+        instead credited for the energy it actually puts back (charge power ×
+        planned hours), so a token charge offsets almost nothing and the floor
+        stays high enough to protect the night, while a genuine multi-hour cheap
+        charge offsets a lot and lets more be exported. The old binary treatment
+        let any planned charge — even a 10-minute one — dissolve the whole
+        bridge, dropping the floor to the bare minimum and letting the evening
+        export sell the SoC the house needed overnight (drain to ~11 %).
         """
         if capacity_kwh <= 0 or not solar_slot_data:
             return None
 
         onset = float(DYNAMIC_FLOOR_SOLAR_ONSET_FACTOR)
 
-        # v0.52.0 — a slot is a "refill" (the battery doesn't need to bridge it)
-        # only when solar actually COVERS the house, OR the optimiser plans a
-        # grid-CHARGE there. A merely cheap price is NOT a refill: the battery
-        # recharges only if a charge is actually scheduled. The old code treated
-        # any cheap window as a refill, so it stopped reserving at the first
-        # cheap overnight hour — and the battery then drained through the rest of
-        # the night on Self Use (this caused a near-full drain to 11%).
+        # Planned grid-charge slot start times from the optimiser plan.
         planned_charge_dts: list = []
         for ps in (self._optimizer_plan or []):
             if ps.get("action") == "CHARGE":
@@ -2640,7 +2672,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 except (ValueError, KeyError, TypeError):
                     pass
 
-        # Build future slots: (start, house_kw, dur_h, is_refill).
+        # Build future slots: (start, house_kw, dur_h, solar_covers, charge_here).
+        # solar_covers is the ONLY thing that ends the bridge; charge_here is
+        # tracked separately so the planned-charge energy can be netted off.
         slots: list[tuple] = []
         for s in solar_slot_data:
             slot_start, dur_h = s[0], s[1]
@@ -2652,33 +2686,47 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             solar_covers = house_kw > 0 and (s[4] / 1000.0) >= onset * house_kw
             slot_end = slot_start + timedelta(hours=float(dur_h))
             charge_here = any(slot_start <= pc < slot_end for pc in planned_charge_dts)
-            is_refill = solar_covers or charge_here
-            slots.append((slot_start, house_kw, float(dur_h), is_refill))
+            slots.append((slot_start, house_kw, float(dur_h), solar_covers, charge_here))
 
         if not slots:
             return None
 
-        # Next bridge = first upcoming non-refill slot.
+        # Next bridge = first upcoming slot where solar does NOT cover the house.
         start_idx = next((i for i, x in enumerate(slots) if not x[3]), None)
         if start_idx is None:
-            # Solar/cheap windows cover the whole horizon — no bridge to reserve.
+            # Solar covers the house across the whole horizon — no bridge.
             return float(DYNAMIC_FLOOR_MIN_SOC)
 
-        # Accumulate house energy across the bridge, until the next refill slot
-        # or the horizon cap.
-        bridge_kwh = 0.0
+        # Across the dark bridge (until solar covers the house again, or the
+        # horizon cap): sum the house energy consumed and the grid-charge hours
+        # planned within it.
+        bridge_house_kwh = 0.0
+        bridge_charge_h = 0.0
         bridge_h = 0.0
         for i in range(start_idx, len(slots)):
-            _st, house_kw, dur_h, is_refill = slots[i]
-            if i > start_idx and is_refill:
+            _st, house_kw, dur_h, solar_covers, charge_here = slots[i]
+            if i > start_idx and solar_covers:
                 break
             if bridge_h >= DYNAMIC_FLOOR_REFILL_MAX_H:
                 break
-            bridge_kwh += house_kw * dur_h
+            bridge_house_kwh += house_kw * dur_h
+            if charge_here:
+                bridge_charge_h += dur_h
             bridge_h += dur_h
 
+        eff = max(efficiency, 0.5)
         margin = float(self._stored.get("discharge_reserve_margin", DYNAMIC_FLOOR_MARGIN_DEFAULT))
-        reserve_kwh = bridge_kwh / max(efficiency, 0.5) * margin
+        # Battery energy the house will draw over the bridge (discharge losses in).
+        house_need_kwh = bridge_house_kwh / eff
+        # Energy a planned grid-charge actually returns to the battery over the
+        # bridge (charge losses in). Credited in PROPORTION to how long it runs —
+        # a token charge offsets almost nothing, a real multi-hour cheap charge
+        # offsets a lot. grid_charge_kw is the continuously-learned *sustained*
+        # charge rate (mean of real samples, not the p90 peak), so the credit
+        # reflects what a planned charge realistically delivers. 0 → no credit,
+        # which is the safe/conservative direction.
+        charge_kwh = max(0.0, float(grid_charge_kw)) * bridge_charge_h * eff
+        reserve_kwh = max(0.0, house_need_kwh - charge_kwh) * margin
         # The battery only delivers down to the hardware minimum SoC
         # (DYNAMIC_FLOOR_MIN_SOC), so the reserve must sit ON TOP of it: the
         # export floor = hardware_floor + reserve%. Otherwise only
