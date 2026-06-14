@@ -1172,6 +1172,8 @@ views:
           name: Notifications on mode change
         - entity: switch.solar_ai_15_minutters_prisoplosning
           name: 15-min price resolution
+        - entity: switch.solar_ai_auto_fuld_ved_negativ_pris
+          name: 'EV: Auto-Full on negative price'
       - type: entities
         title: Battery limits
         icon: mdi:battery-charging-50
