@@ -1172,6 +1172,8 @@ views:
           name: Notifikationer ved tilstandsskift
         - entity: switch.solar_ai_15_minutters_prisoplosning
           name: 15-min prisopløsning
+        - entity: switch.solar_ai_auto_fuld_ved_negativ_pris
+          name: 'EV: Auto-Fuld ved negativ pris'
       - type: entities
         title: Batteri-grænser
         icon: mdi:battery-charging-50

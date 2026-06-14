@@ -9,6 +9,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.54.0] — 2026-06-13
+
+### Fixed — solar-only EV charging drained the house battery on weak-sun evenings
+
+In PV (solar-only) mode the EV could keep charging at the charger's 4.14 kW hardware minimum (6 A, 3-phase — it cannot go lower) while solar surplus was well below that, with the **house battery silently covering the shortfall**. Observed live: solar surplus ~1.2 kW, EV drawing 4.1 kW, battery discharging ~3.2 kW into the car, grid import ~0.
+
+Root cause: the battery-full override (which harvests *curtailed* PV into the EV when the battery is full and export is price-blocked) judged "is there spare PV?" using **grid import only**. When the house battery covers the EV draw, grid import stays near zero, so the override never backed off — it kept the car at the minimum and drained the battery until it fell below the near-full threshold and the override released on its own.
+
+- The override now also reads **house-battery discharge**. If the battery is discharging above a small threshold to cover the EV, the override's premise (curtailed PV to harvest) is false, so it **yields immediately** and PV mode's normal "surplus below minimum → stop" takes over.
+- The override ramp backs off on battery discharge as well as grid import, so it can't climb while the battery is covering the draw.
+
+Net effect: solar-only mode no longer pulls from the house battery. On a weak or intermittent-sun evening the EV stops instead of quietly emptying the battery.
+
+### Added
+
+- The **Auto-Full on negative price** switch (`switch.solar_ai_auto_fuld_ved_negativ_pris`) is now on the dashboard Settings page (Main switches), so it can be toggled from the GUI. The feature itself (auto-promote a connected EV to Full while the all-in price is ≤ 0, then revert) is unchanged.
+
+---
+
 ## [0.53.0] — 2026-06-13
 
 ### Fixed — discharge floor dissolved by token grid-charges, draining the battery overnight

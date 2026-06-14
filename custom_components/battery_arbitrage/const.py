@@ -215,6 +215,13 @@ EV_OVERRIDE_SOFT_COOLDOWN_SECONDS = 600       # 10 minutes
 EV_OVERRIDE_RAMP_INTERVAL_SECONDS = 30          # min seconds between up-steps
 EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW = 0.3 # kW grid import that triggers back-off
 EV_OVERRIDE_RAMP_FREEZE_SECONDS = 120           # back-off freeze after over-commit
+# v0.54.0 — the battery-full override harvests *curtailed* PV (battery full,
+# export blocked) into the EV. If the house battery is DISCHARGING above this
+# threshold to cover the EV draw, there is no curtailed PV — the override's
+# premise is false and it must yield, otherwise it silently drains the battery
+# into the car (grid import stays ~0 because the battery, not the grid, covers
+# the gap, so the grid-import back-off above never fires).
+EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW = 0.3
 
 # v0.38.3 — Once the EV stop-window is armed (surplus dipped below min
 # and we're counting down to actually stop), require this many seconds

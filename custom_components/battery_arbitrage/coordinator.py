@@ -197,6 +197,7 @@ from .const import (
     EV_OVERRIDE_RAMP_INTERVAL_SECONDS,
     EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW,
     EV_OVERRIDE_RAMP_FREEZE_SECONDS,
+    EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW,
     EV_STOP_RECOVERY_SECONDS,
     EV_START_DROP_TIMEOUT_SECONDS,
     EV_COOL_ENTRY_SECONDS,
@@ -3766,12 +3767,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # When the battery is below the priority threshold it's actively
         # taking everything left over, so the EV-available surplus is 0
         # even though there's a positive physical surplus.
-        # Battery charge sensor returns kW (positive = charging).
-        # We clamp to 0 if it's negative (i.e. battery discharging — that
-        # case happens in PV+battery mode where battery feeds the EV).
-        from .const import CONF_BATTERY_CHARGE_ENTITY, FOXESS_BATTERY_CHARGE_POWER  # noqa: PLC0415
+        # Charge and discharge are reported on separate sensors (each ≥ 0): the
+        # charge sensor reads 0 while the battery is discharging, and vice versa.
+        from .const import (  # noqa: PLC0415
+            CONF_BATTERY_CHARGE_ENTITY, FOXESS_BATTERY_CHARGE_POWER,
+            CONF_BATTERY_DISCHARGE_ENTITY, FOXESS_BATTERY_DISCHARGE_POWER,
+        )
         battery_charge_kw = max(0.0, float(self._get_float_state(
             self.config.get(CONF_BATTERY_CHARGE_ENTITY, FOXESS_BATTERY_CHARGE_POWER),
+            0.0,
+        ) or 0.0))
+        # Charge and discharge are reported on separate sensors (the charge
+        # sensor sits at 0 while the battery discharges), so read discharge from
+        # its own sensor — not as the negative of charge.
+        battery_discharge_kw = max(0.0, float(self._get_float_state(
+            self.config.get(CONF_BATTERY_DISCHARGE_ENTITY, FOXESS_BATTERY_DISCHARGE_POWER),
             0.0,
         ) or 0.0))
         net_surplus_for_ev_kw = max(0.0, solar_surplus_kw - battery_charge_kw)
@@ -3829,12 +3839,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # keeping up, so keep climbing; when it can't, back off. The ramp
         # value is the floor; if surplus tracking ever returns higher
         # (genuine surplus), the higher value wins and the override yields.
+        # v0.54.0 — if the house battery is discharging to cover the EV, there
+        # is no curtailed PV for the override to harvest (a full battery would
+        # be absorbing, not discharging). The override's premise is false, so
+        # don't fire it — otherwise it silently drains the battery into the car,
+        # which grid-import feedback can't detect (grid stays ~0; the battery,
+        # not the grid, covers the draw). Yield so PV-mode's stop takes over.
+        battery_covering_ev = (
+            battery_discharge_kw > EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW
+        )
+        if battery_full_override and battery_covering_ev:
+            battery_full_override = False
+            self._reset_override_ramp()
         if battery_full_override:
             grid_import_kw = max(0.0, grid_power_w / 1000.0)
             min_amps = self._kw_to_amps(min_kw)
             max_amps = self._kw_to_amps(max_kw)
             ramp_amps = self._update_override_ramp(
-                now_ts, grid_import_kw, min_amps, max_amps,
+                now_ts, grid_import_kw, battery_discharge_kw, min_amps, max_amps,
             )
             ramp_kw = self._amps_to_kw(ramp_amps)
             override_forcing = target_kw <= ramp_kw
@@ -4242,6 +4264,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self,
         now_ts: datetime,
         grid_import_kw: float,
+        battery_discharge_kw: float,
         min_amps: int,
         max_amps: int,
     ) -> int:
@@ -4249,9 +4272,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         Returns the amps the override should command this tick:
           - First override tick of a session → initialise to ``min_amps``.
-          - Grid import above the threshold → MPPT can't cover the current
-            draw, so step down 1 A and freeze further up-steps for
-            ``EV_OVERRIDE_RAMP_FREEZE_SECONDS`` to let things settle.
+          - Grid import OR house-battery discharge above threshold → the EV
+            draw is not being covered by curtailed PV (MPPT isn't keeping up, or
+            the battery is making up the gap), so step down 1 A and freeze
+            further up-steps for ``EV_OVERRIDE_RAMP_FREEZE_SECONDS`` (v0.54.0
+            adds the battery-discharge signal; grid import alone misses the case
+            where the battery silently covers the draw).
           - Otherwise, once the EV is actually charging and the step
             interval has elapsed and we're not frozen and below ``max_amps``
             → step up 1 A.
@@ -4264,8 +4290,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_override_ramp_freeze_until = None
             return self._ev_override_ramp_amps
 
-        # Over-commit: grid is importing → MPPT didn't cover the last step.
-        if grid_import_kw > EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW:
+        # Over-commit: grid importing or battery discharging → the last step
+        # isn't being covered by curtailed PV.
+        if (grid_import_kw > EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW
+                or battery_discharge_kw > EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW):
             if self._ev_override_ramp_amps > min_amps:
                 self._ev_override_ramp_amps -= 1
             self._ev_override_ramp_freeze_until = (
