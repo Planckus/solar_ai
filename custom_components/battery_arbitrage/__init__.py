@@ -388,7 +388,62 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # gate inside _run_ev_controller.
     await coordinator.async_start_ev_control_loop()
 
+    # D — one-time post-setup health summary. After the first refresh, confirm
+    # the key inputs are actually reading so the user knows it works (or sees
+    # exactly what's missing) instead of guessing. Shown once per install.
+    if not coordinator._stored.get("setup_health_notified"):
+        # The summary is a nicety — it must NEVER block entry setup. Any failure
+        # here is logged and swallowed so the integration always finishes loading.
+        try:
+            _notify_setup_health(hass, entry)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Solar AI setup-health summary failed (non-fatal)")
+        else:
+            coordinator._stored["setup_health_notified"] = True
+            hass.async_create_task(coordinator._store.async_save(coordinator._stored))
+
     return True
+
+
+def _notify_setup_health(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Raise a one-time persistent notification summarising whether Solar AI's
+    key data sources are reading, right after setup (D)."""
+    from homeassistant.components import persistent_notification
+    from .const import (
+        CONF_BATTERY_SOC_ENTITY,
+        CONF_FOXESS_PV_POWER_ENTITY,
+        CONF_SPOT_PRICE_ENTITY,
+    )
+
+    def _check(entity_id: str | None) -> str:
+        if not entity_id:
+            return "not configured"
+        st = hass.states.get(entity_id)
+        if st is None or st.state in ("unknown", "unavailable", "none", ""):
+            return f"NOT reading yet ({entity_id})"
+        unit = st.attributes.get("unit_of_measurement") or ""
+        return f"OK — {st.state} {unit}".rstrip() + f" ({entity_id})"
+
+    soc = _check(entry.data.get(CONF_BATTERY_SOC_ENTITY))
+    pv = _check(entry.data.get(CONF_FOXESS_PV_POWER_ENTITY))
+    spot = _check(entry.data.get(CONF_SPOT_PRICE_ENTITY))
+
+    message = (
+        "Solar AI is set up. Quick check of your data sources:\n\n"
+        f"- Battery SoC: {soc}\n"
+        f"- Solar power: {pv}\n"
+        f"- Spot price: {spot}\n\n"
+        "Anything marked \"NOT reading yet\" may just need a minute to populate "
+        "after a restart — re-check under Developer Tools -> States. Prices and "
+        "network tariffs are fetched automatically for your area.\n\n"
+        "Solar AI starts in monitoring mode. When you're happy with what it "
+        "plans, enable control with the **Solar AI on/off** switch in Settings."
+    )
+    persistent_notification.async_create(
+        hass, message,
+        title="Solar AI - setup check",
+        notification_id=f"{DOMAIN}_setup_health",
+    )
 
 
 def _register_services(hass: HomeAssistant) -> None:

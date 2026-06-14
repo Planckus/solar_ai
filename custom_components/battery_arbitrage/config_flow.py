@@ -170,6 +170,14 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Step 1: Live data source — EVCC, Hybrid, or FoxESS only."""
+        # A — prerequisite pre-flight. The FoxESS Modbus integration must be
+        # installed and producing entities (Solar AI reads and controls a
+        # FoxESS inverter in every mode). Without it, discovery finds nothing
+        # and the wizard would show blank entity pickers — abort with guidance
+        # instead.
+        if not discovery.has_foxess_modbus(self.hass):
+            return self.async_abort(reason="no_foxess_modbus")
+
         if user_input is not None:
             source = user_input[CONF_LIVE_DATA_SOURCE]
             self._data[CONF_LIVE_DATA_SOURCE] = source
@@ -219,10 +227,9 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_BATTERY_CAPACITY: capacity,
                     "_evcc_data": evcc_data,
                 })
-                # Hybrid mode also needs FoxESS live entities before continuing
-                if self._data.get(CONF_LIVE_DATA_SOURCE) == LIVE_SOURCE_HYBRID:
-                    return await self.async_step_foxess_live_entities()
-                return await self.async_step_foxess()
+                # Quick setup tries to auto-detect everything; it falls back to
+                # the manual chain (per source) when detection is incomplete.
+                return await self.async_step_quick()
 
         return self.async_show_form(
             step_id="evcc_url",
@@ -249,7 +256,7 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors[CONF_ACKNOWLEDGE_NO_EV] = "must_acknowledge_no_ev"
             else:
                 self._data[CONF_ACKNOWLEDGE_NO_EV] = True
-                return await self.async_step_foxess_live_entities()
+                return await self.async_step_quick()
 
         return self.async_show_form(
             step_id="foxess_live_warning",
@@ -257,6 +264,108 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({
                 vol.Required(CONF_ACKNOWLEDGE_NO_EV, default=False): bool,
             }),
+        )
+
+    async def _goto_manual_chain(self) -> ConfigFlowResult:
+        """Enter the full per-entity wizard (used when auto-detection is
+        incomplete, or when the user picks 'customise'). EVCC mode gets its
+        grid/PV/load from EVCC, so it skips the FoxESS live-entities step."""
+        source = self._data.get(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE)
+        if source == LIVE_SOURCE_EVCC:
+            return await self.async_step_foxess()
+        return await self.async_step_foxess_live_entities()
+
+    async def async_step_quick(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Quick setup (B): when every FoxESS entity is auto-detected, collapse
+        the ~6 entity-picker screens into a single confirm-and-go form that only
+        asks for what can't be detected (battery capacity, grid company,
+        currency). Falls back to the full manual wizard when detection is
+        incomplete or the user ticks 'customise'.
+        """
+        try:
+            detected = discovery.discover_all(self.hass)
+            spot_detected = self._find_entity(STROMLIGNING_SPOTPRICE_EX_VAT)
+            fs_detected = self._find_entity("sensor.energy_production_today")
+        except Exception:  # noqa: BLE001
+            # Detection must never break onboarding — fall back to the manual
+            # wizard, which is unchanged and fully covers every setting.
+            _LOGGER.exception("Quick-setup detection failed; using manual wizard")
+            return await self._goto_manual_chain()
+
+        # Entities that must all be auto-found to offer the quick path.
+        critical = [
+            CONF_BATTERY_SOC_ENTITY, CONF_CELL_TEMP_ENTITY,
+            CONF_BATTERY_CHARGE_ENTITY, CONF_BATTERY_DISCHARGE_ENTITY,
+            CONF_FOXESS_GRID_IMPORT_ENTITY, CONF_FOXESS_GRID_EXPORT_ENTITY,
+            CONF_FOXESS_PV_POWER_ENTITY, CONF_FOXESS_LOAD_POWER_ENTITY,
+            CONF_FOXESS_WORK_MODE_ENTITY, CONF_FOXESS_FORCE_CHARGE_ENTITY,
+            CONF_FOXESS_FORCE_DISCHARGE_ENTITY, CONF_FOXESS_INVERTER_ID,
+        ]
+        if not all(detected.get(k) for k in critical):
+            # Couldn't detect everything — use the full manual wizard.
+            return await self._goto_manual_chain()
+
+        if user_input is not None:
+            if user_input.get("advanced", False):
+                return await self._goto_manual_chain()
+
+            # Build a complete config from discovery + safe defaults + the few
+            # inputs that genuinely can't be auto-detected.
+            self._data.update({k: v for k, v in detected.items() if v})
+            self._data.setdefault(
+                CONF_BATTERY_CHARGE_TOTAL_ENTITY,
+                detected.get(CONF_BATTERY_CHARGE_TOTAL_ENTITY) or FOXESS_BATTERY_CHARGE_TOTAL)
+            self._data.setdefault(
+                CONF_BATTERY_DISCHARGE_TOTAL_ENTITY,
+                detected.get(CONF_BATTERY_DISCHARGE_TOTAL_ENTITY) or FOXESS_BATTERY_DISCHARGE_TOTAL)
+            self._data[CONF_SPOT_PRICE_ENTITY] = spot_detected or STROMLIGNING_SPOTPRICE_EX_VAT
+            # E — default the forecast to Forecast.Solar (built into HA, no
+            # account needed). If a Forecast.Solar entity exists, wire it up.
+            self._data[CONF_SOLAR_FORECAST_SOURCE] = SOLAR_SOURCE_FORECAST_SOLAR
+            if fs_detected:
+                self._data[CONF_FORECAST_SOLAR_ENTITY] = fs_detected
+            self._data[CONF_BATTERY_CAPACITY] = float(user_input[CONF_BATTERY_CAPACITY])
+            self._data[CONF_BATTERY_FLOOR_SOC] = DEFAULT_BATTERY_FLOOR_SOC
+            self._data[CONF_BATTERY_MAX_SOC] = DEFAULT_BATTERY_MAX_SOC
+            self._data[CONF_ROUND_TRIP_EFFICIENCY] = DEFAULT_ROUND_TRIP_EFFICIENCY
+            self._data[CONF_FORECAST_HOURS] = DEFAULT_FORECAST_HOURS
+            self._data[CONF_CURRENCY] = user_input[CONF_CURRENCY]
+            self._data[CONF_FAST_POLL_INTERVAL] = DEFAULT_FAST_POLL_SECONDS
+            self._data[CONF_DSO_GLN] = user_input[CONF_DSO_GLN]
+            self._data[CONF_CREATE_DASHBOARD] = user_input.get(CONF_CREATE_DASHBOARD, True)
+            self._data[CONF_DASHBOARD_URL_PATH] = ""
+            self._data.pop("_evcc_data", None)
+            return self.async_create_entry(title="Solar AI", data=self._data)
+
+        summary = (
+            f"• Battery SoC — {detected[CONF_BATTERY_SOC_ENTITY]}\n"
+            f"• Solar power — {detected[CONF_FOXESS_PV_POWER_ENTITY]}\n"
+            f"• Grid import — {detected[CONF_FOXESS_GRID_IMPORT_ENTITY]}\n"
+            f"• Work mode — {detected[CONF_FOXESS_WORK_MODE_ENTITY]}\n"
+            f"• Spot price — {spot_detected or 'auto-fetched from grid company'}\n"
+            f"• Solar forecast — Forecast.Solar"
+        )
+        capacity_default = self._data.get(CONF_BATTERY_CAPACITY, DEFAULT_BATTERY_CAPACITY)
+        return self.async_show_form(
+            step_id="quick",
+            data_schema=vol.Schema({
+                vol.Required(CONF_BATTERY_CAPACITY, default=capacity_default): vol.Coerce(float),
+                vol.Required(CONF_DSO_GLN, default=DEFAULT_DSO_GLN): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[{"value": dso["value"], "label": dso["label"]} for dso in DSO_OPTIONS],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )),
+                vol.Required(CONF_CURRENCY, default=DEFAULT_CURRENCY): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=["DKK", "EUR", "SEK", "NOK", "GBP", "USD", "AUD"],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )),
+                vol.Optional(CONF_CREATE_DASHBOARD, default=True): bool,
+                vol.Optional("advanced", default=False): bool,
+            }),
+            description_placeholders={"summary": summary},
         )
 
     async def async_step_foxess_live_entities(
@@ -430,7 +539,14 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                 {"value": SOLAR_SOURCE_AUTO,
                  "label": "Auto (EVCC → Forecast.Solar → Solcast)"},
             ]
-            default_source = DEFAULT_SOLAR_FORECAST_SOURCE
+            # E — if neither a Solcast nor a Forecast.Solar entity is present,
+            # steer the user toward Forecast.Solar (built into HA, no account)
+            # rather than defaulting to an EVCC/Solcast source that isn't set up.
+            default_source = (
+                DEFAULT_SOLAR_FORECAST_SOURCE
+                if (fs_detected or sc_detected)
+                else SOLAR_SOURCE_FORECAST_SOLAR
+            )
 
         return self.async_show_form(
             step_id="solar_source",
