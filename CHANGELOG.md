@@ -9,6 +9,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.55.1] — 2026-06-14
+
+### Security — hardening of the embedded OCPP server and HTTP fetches
+
+A security review flagged the embedded OCPP server as the integration's main attack surface: it's an unauthenticated plaintext listener on the LAN (OCPP 1.6 has no built-in auth). This release adds defence-in-depth; none of it is internet-exposed by default.
+
+- **OCPP connection cap.** The server now tracks at most a fixed number of distinct charge points (5). Reconnects from a known charge-point ID are always allowed; only a flood of new IDs is refused, so a connection flood can't grow memory without bound. A normal install has one charger and is unaffected.
+- **HTTP response size limits.** The price/EVCC/forecast fetches now refuse response bodies over 8 MB, so a hostile or runaway endpoint can't exhaust memory. Real payloads are far smaller; timeouts were already in place.
+- **Documentation.** The README now states plainly that port 9000 is a plaintext, unauthenticated OCPP listener and must be kept on a trusted LAN (never port-forwarded).
+
+Not changed here (tracked for later): a charge-point-ID allowlist and optional OCPP Basic-Auth, which would close LAN impersonation as well.
+
+---
+
 ## [0.55.0] — 2026-06-14
 
 ### Added — friendlier onboarding
