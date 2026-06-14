@@ -63,6 +63,13 @@ DISCONNECT_TIMEOUT_SECONDS = 300
 # Spec: tell the charger to heartbeat every 30 s (well under the 5-min timeout)
 HEARTBEAT_INTERVAL_SECONDS = 30
 
+# v0.55.1 — hard cap on distinct charge points tracked, so a flood of
+# connections with unique CPIDs (this is an unauthenticated LAN listener)
+# can't grow the charge_points dict without bound and exhaust memory. A normal
+# install has exactly one charger; reconnects reuse the same CPID and are never
+# blocked by this.
+MAX_OCPP_CHARGE_POINTS = 5
+
 
 class ChargePoint(_Cp if _Cp is not None else object):
     """Per-charger handler.
@@ -838,6 +845,21 @@ class OcppServer:
             _LOGGER.warning("Charger connected with empty CPID — closing")
             try:
                 await connection.close(1008, "CPID required in URL path")
+            except Exception:  # noqa: BLE001
+                pass
+            return
+
+        # v0.55.1 — bound the number of distinct charge points. A reconnect
+        # (same CPID, already tracked) is always allowed; only a NEW CPID beyond
+        # the cap is refused, so a connection flood can't exhaust memory.
+        if cp_id not in self.charge_points and len(self.charge_points) >= MAX_OCPP_CHARGE_POINTS:
+            _LOGGER.warning(
+                "OCPP connection refused: already tracking %d charge points "
+                "(cap %d) — rejecting new CPID %s",
+                len(self.charge_points), MAX_OCPP_CHARGE_POINTS, cp_id,
+            )
+            try:
+                await connection.close(1008, "Too many charge points")
             except Exception:  # noqa: BLE001
                 pass
             return
