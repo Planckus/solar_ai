@@ -18,6 +18,17 @@
           "evcc_url": "Full URL including port, e.g. http://your-ha-ip:7070"
         }
       },
+      "quick": {
+        "title": "Quick setup",
+        "description": "Solar AI auto-detected your FoxESS system:\n\n{summary}\n\nConfirm the few things it can't detect below, or tick **Customise advanced settings** to set every entity by hand.",
+        "data": {
+          "battery_capacity": "Battery capacity (kWh)",
+          "dso_gln": "Electricity grid company (DSO)",
+          "currency": "Currency",
+          "create_dashboard": "Create the Solar AI dashboard for me",
+          "advanced": "Customise advanced settings instead"
+        }
+      },
       "foxess_live_warning": {
         "title": "⚠️ No EV coordination available",
         "description": "You have selected **FoxESS only** as the live data source. Solar AI will NOT be able to detect when your EV is charging.\n\nIf the battery is grid-charging at the same time the EV is drawing power, the combined load can exceed your main breaker.\n\nOnly proceed if:\n• You do NOT have an EV, OR\n• Your EV charger is configured to never draw from the house battery\n\nYou must acknowledge this risk to continue.",
@@ -125,7 +136,8 @@
       "must_acknowledge_no_ev": "You must tick the acknowledgement to continue"
     },
     "abort": {
-      "already_configured": "Solar AI is already configured"
+      "already_configured": "Solar AI is already configured",
+      "no_foxess_modbus": "The FoxESS Modbus integration isn't installed yet (or has no entities). Solar AI reads and controls your FoxESS inverter through it, so install and set up FoxESS Modbus first, confirm its sensors are working, then add Solar AI."
     }
   },
   "options": {

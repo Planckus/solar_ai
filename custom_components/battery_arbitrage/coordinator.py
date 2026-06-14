@@ -152,6 +152,7 @@ from .const import (
     CONF_FOXESS_LOAD_POWER_ENTITY,
     DEFAULT_SOLAR_FORECAST_SOURCE,
     DEFAULT_LIVE_DATA_SOURCE,
+    DEFAULT_EVCC_URL,
     DEFAULT_FOXESS_GRID_IMPORT,
     DEFAULT_FOXESS_GRID_EXPORT,
     DEFAULT_FOXESS_PV_POWER,
@@ -940,7 +941,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict[str, Any]:
         session = async_get_clientsession(self.hass)
-        evcc_url = self.config["evcc_url"]
+        # .get with default: a FoxESS-only entry never sets evcc_url, and this
+        # read runs every cycle before the mode gate in _fetch_live_state. The
+        # default is harmless — FoxESS/hybrid modes don't call the EVCC URL.
+        evcc_url = self.config.get("evcc_url", DEFAULT_EVCC_URL)
         now = datetime.now(timezone.utc)
         forecast_hours = self.config.get("forecast_hours", 24)
 

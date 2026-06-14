@@ -231,6 +231,10 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ## Recent releases
 
+### v0.55.0 — friendlier onboarding
+
+- The setup wizard now offers a **quick setup**: when your FoxESS Modbus entities are all auto-detected, it collapses the entity-picker screens into one confirm-and-go form that only asks for what can't be detected (battery capacity, grid company, currency), with a "Customise advanced settings" toggle for the full per-entity wizard. If something can't be detected, the full wizard is used automatically. Setup also **pre-checks the FoxESS Modbus prerequisite** and aborts with clear guidance if it's missing, **defaults the solar forecast to Forecast.Solar** (no account needed) when nothing else is detected, and shows a **one-time post-setup health summary** confirming SoC / solar / price are reading. Also fixes a latent `KeyError` (`evcc_url`) that would have affected fresh FoxESS-only installs.
+
 ### v0.54.0 — solar-only EV charging no longer drains the house battery
 
 - In PV (solar-only) mode the EV could keep charging at the charger's 4.14 kW hardware minimum (6 A, 3-phase — it can't go lower) while solar surplus was well below that, with the house battery silently covering the gap (observed: ~1.2 kW surplus, EV at 4.1 kW, battery discharging ~3.2 kW). Cause: the battery-full override that harvests curtailed PV into the EV judged spare PV by grid import only, and grid import stays ~0 when the battery covers the draw — so it never backed off. The override now also reads house-battery discharge: if the battery is discharging to cover the EV, it yields and PV mode's normal "surplus below minimum → stop" takes over. Solar-only mode no longer pulls from the house battery.

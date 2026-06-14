@@ -39,6 +39,16 @@ def _foxess_entities(hass: HomeAssistant) -> list:
     ]
 
 
+def has_foxess_modbus(hass: HomeAssistant) -> bool:
+    """True if the FoxESS Modbus integration is installed and has registered
+    entities. This is Solar AI's hard prerequisite — without a FoxESS inverter
+    to read and control there is nothing to configure. The config flow uses
+    this to abort early with a clear message instead of dropping the user into
+    blank entity-picker screens.
+    """
+    return bool(_foxess_entities(hass))
+
+
 def _by_uid_suffix(hass: HomeAssistant, *suffixes: str) -> Optional[str]:
     """Find the first foxess_modbus entity whose `unique_id` ends with any of
     the provided suffixes (tried in order, so the most-preferred match wins).
