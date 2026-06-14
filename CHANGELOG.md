@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.55.0] — 2026-06-14
+
+### Added — friendlier onboarding
+
+- **Quick setup.** When the FoxESS Modbus entities are all auto-detected, the wizard now collapses the ~6 entity-picker screens into a single confirm-and-go form that only asks for what can't be detected (battery capacity, grid company, currency). A "Customise advanced settings" toggle drops to the full per-entity wizard, which is unchanged. If detection is incomplete, the full wizard is used automatically.
+- **Prerequisite pre-flight.** If the FoxESS Modbus integration isn't installed (or has no entities yet), setup now aborts immediately with a clear explanation and what to install first — instead of dropping the user into blank entity pickers.
+- **Post-setup health summary.** A one-time notification after setup reports whether the key inputs (battery SoC, solar power, spot price) are actually reading, and reminds the user it starts in monitoring mode. It is wrapped so it can never block setup.
+- **Forecast.Solar default.** When no Solcast or Forecast.Solar entity is detected, the solar-source step now defaults to Forecast.Solar (built into Home Assistant, no account) rather than an unconfigured source.
+
+### Fixed
+
+- `evcc_url` was read without a default on every update cycle, which would raise `KeyError` on a fresh FoxESS-only install (existing installs were unaffected because the key was already present). It now falls back to the default URL, which FoxESS/hybrid modes never call.
+
+---
+
 ## [0.54.0] — 2026-06-13
 
 ### Fixed — solar-only EV charging drained the house battery on weak-sun evenings
