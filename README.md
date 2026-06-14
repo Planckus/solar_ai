@@ -149,6 +149,8 @@ For an OCPP 1.6 charger driven by the integration's EV controller:
 
 The embedded server tolerates non-standard OCPP frames (empty-`[]` keepalives from the FoxESS L11PMC are silently ignored). Charger metadata is persisted to HA storage and `TriggerMessage` is sent on reconnect so sensors do not blank after an HA restart.
 
+> **Security — keep the OCPP port on your trusted LAN.** OCPP 1.6 is plaintext and unauthenticated, so the embedded server on port `9000` accepts connections from any device that can reach it. Keep it on your home/trusted network only — **do not port-forward `9000` to the internet or expose it across an untrusted VLAN**. The server bounds how many charge points it will track to limit abuse, but it cannot authenticate the charger; treat the port as you would any other internal-only service.
+
 ### 7. Import the dashboard
 
 **If you left "Create the Solar AI dashboard for me" ticked in step 5, the dashboard already exists** — a **Solar AI** entry in the sidebar (URL `/solar-ai`), in your Home Assistant language. Just make sure the cards from step 4 are installed and skip to step 8. **Restart Home Assistant once** when convenient to finalise it (you'll get a notification reminding you): the dashboard works right away, but until that restart it isn't yet listed under *Settings → Dashboards*, so it can't be edited or removed there. After the restart it behaves like any normal dashboard. (To recreate or refresh it later, call the service **Developer Tools → Actions → `battery_arbitrage.create_dashboard`** — use `force: true` to overwrite an existing one with the latest bundled layout.)
@@ -230,6 +232,10 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 ---
 
 ## Recent releases
+
+### v0.55.1 — security hardening
+
+- Defence-in-depth from a security review of the embedded OCPP server (an unauthenticated plaintext LAN listener) and the HTTP fetches: the OCPP server now caps how many distinct charge points it tracks (reconnects from a known charger are always allowed; a flood of new IDs is refused) to bound memory; the price/EVCC/forecast fetches refuse response bodies over 8 MB; and the README documents that port 9000 must stay on a trusted LAN. Nothing is internet-exposed by default. A charge-point-ID allowlist and optional OCPP Basic-Auth remain tracked as follow-ups.
 
 ### v0.55.0 — friendlier onboarding
 

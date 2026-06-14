@@ -6091,7 +6091,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         try:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 resp.raise_for_status()
-                data = await resp.json(content_type=None)
+                # v0.55.1 — size-cap the body (see _fetch_json).
+                _max_bytes = 8_000_000
+                if resp.content_length is not None and resp.content_length > _max_bytes:
+                    raise ValueError(f"EDS response too large (area {price_area})")
+                _raw = await resp.content.read(_max_bytes + 1)
+                if len(_raw) > _max_bytes:
+                    raise ValueError(f"EDS response exceeded size cap (area {price_area})")
+                import json as _json  # noqa: PLC0415
+                data = _json.loads(_raw) if _raw else {}
         except Exception as err:
             _LOGGER.warning("EDS DayAheadPrices fetch failed (area %s): %s", price_area, err)
             return {}
@@ -6571,7 +6579,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     async def _fetch_json(session: aiohttp.ClientSession, url: str) -> dict:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
             resp.raise_for_status()
-            return await resp.json()
+            # v0.55.1 — cap the body so a hostile/runaway endpoint can't exhaust
+            # memory. Real price/EVCC payloads are well under 8 MB.
+            max_bytes = 8_000_000
+            if resp.content_length is not None and resp.content_length > max_bytes:
+                raise ValueError(f"Response too large ({resp.content_length} B) from {url}")
+            raw = await resp.content.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                raise ValueError(f"Response exceeded {max_bytes} B from {url}")
+            import json as _json  # noqa: PLC0415
+            return _json.loads(raw) if raw else {}
 
     @staticmethod
     def _make_result(mode: str = MODE_NORMAL, reason: str = "", **kwargs: Any) -> dict[str, Any]:
