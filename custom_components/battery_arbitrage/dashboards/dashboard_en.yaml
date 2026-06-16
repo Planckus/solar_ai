@@ -287,6 +287,84 @@ views:
           tap_action:
             action: navigate
             navigation_path: /battery-arbitrage/logs
+      - type: vertical-stack
+        cards:
+        - type: custom:mushroom-title-card
+          title: Solar forecast
+        - type: markdown
+          content: '{% set today = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_kwh'') | float(0) %}{% set today_raw = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_raw_kwh'') | float(0) %}{% set tom = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_kwh'') | float(0) %}{% set tom_raw = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_raw_kwh'') | float(0) %}<!-- 🌞 Solar forecast — totals -->
+
+            | | | |
+
+            |---|---:|---:|
+
+            | ☀️ **Rest of today** | Adjusted forecast: **{{ ''%.1f'' | format(today) }} kWh** | _Raw forecast: {{ ''%.1f'' | format(today_raw) }} kWh_ |
+
+            | 📅 **I morgen** | Adjusted forecast: **{{ ''%.1f'' | format(tom) }} kWh** | _Raw forecast: {{ ''%.1f'' | format(tom_raw) }} kWh_ |
+
+            '
+        - type: custom:mushroom-template-card
+          primary: Live solar correction
+          secondary: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}Waiting for first 15-min slot…{% else %}{{ ''%+.0f'' | format(p) }}%  ·  {{ n }} slot{{ ''s'' if n != 1 else '''' }}  ·  damping over 2 h{% endif %}'
+          icon: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}mdi:timer-sand{% elif p > 10 %}mdi:weather-sunny{% elif p < -10 %}mdi:weather-cloudy{% else %}mdi:chart-bell-curve{% endif %}'
+          icon_color: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}grey{% elif p > 10 %}green{% elif p > -10 %}grey{% elif p > -25 %}amber{% else %}red{% endif %}'
+          entity: sensor.solar_ai_solcelleprognose_fejl_nu
+          tap_action:
+            action: more-info
+        - type: custom:apexcharts-card
+          header:
+            show: true
+            title: Solar forecast (48 h)
+            show_states: false
+          graph_span: 48h
+          span:
+            start: hour
+            offset: -0h
+          now:
+            show: true
+            label: Nu
+            color: '#9aa0a6'
+          yaxis:
+          - min: 0
+            decimals: 1
+            apex_config:
+              title:
+                text: kW
+              forceNiceScale: true
+          apex_config:
+            chart:
+              height: 280
+            legend:
+              show: true
+              position: top
+            xaxis:
+              labels:
+                datetimeUTC: false
+                format: ddd HH
+            stroke:
+              curve: smooth
+              width:
+              - 0
+              - 3
+          series:
+          - entity: sensor.solar_ai_solcelleprognose_48t_graf
+            name: Raw forecast (Solcast)
+            type: column
+            color: '#b0bec5'
+            opacity: 0.55
+            show:
+              in_header: false
+              legend_value: false
+            data_generator: return (entity.attributes.slots || []).map(s => [new Date(s.start).getTime(), s.raw_kw]);
+          - entity: sensor.solar_ai_solcelleprognose_48t_graf
+            name: Adjusted (solar forecast)
+            type: line
+            color: '#f9a825'
+            stroke_width: 3
+            show:
+              in_header: false
+              legend_value: false
+            data_generator: return (entity.attributes.slots || []).map(s => [new Date(s.start).getTime(), s.adj_kw]);
 - title: EV / OCPP
   path: ev
   icon: mdi:car-electric
