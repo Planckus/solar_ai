@@ -233,6 +233,10 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ## Recent releases
 
+### v0.55.2 — solar forecast on the home page
+
+- The solar-forecast section (today/tomorrow expected production, the live forecast-correction card, and the 48-hour forecast chart) now also shows on the home dashboard view, not just the EV page. Dashboard-only.
+
 ### v0.55.1 — security hardening
 
 - Defence-in-depth from a security review of the embedded OCPP server (an unauthenticated plaintext LAN listener) and the HTTP fetches: the OCPP server now caps how many distinct charge points it tracks (reconnects from a known charger are always allowed; a flood of new IDs is refused) to bound memory; the price/EVCC/forecast fetches refuse response bodies over 8 MB; and the README documents that port 9000 must stay on a trusted LAN. Nothing is internet-exposed by default. A charge-point-ID allowlist and optional OCPP Basic-Auth remain tracked as follow-ups.
