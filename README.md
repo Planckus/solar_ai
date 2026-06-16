@@ -233,6 +233,10 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ## Recent releases
 
+### v0.55.3 — home-page navigation fix + polish
+
+- Fixes a v0.55.2 regression where the home-page solar-forecast section pushed the page-navigation links off the bottom; the links are back at the bottom. The nav links are also larger and colour-coded per page for visibility. Dashboard-only.
+
 ### v0.55.2 — solar forecast on the home page
 
 - The solar-forecast section (today/tomorrow expected production, the live forecast-correction card, and the 48-hour forecast chart) now also shows on the home dashboard view, not just the EV page. Dashboard-only.
