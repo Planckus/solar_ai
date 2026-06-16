@@ -8,8 +8,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
+from homeassistant.helpers.entity import EntityCategory
 
-from .const import DOMAIN, EV_SCHEDULE_DAYS, EV_SCHEDULE_DEFAULT_DAYS, EV_SCHEDULES_MAX
+from .const import (
+    DOMAIN, EV_SCHEDULE_DAYS, EV_SCHEDULE_DEFAULT_DAYS, EV_SCHEDULES_MAX,
+    CONF_OCPP_EMBEDDED, DEFAULT_OCPP_EMBEDDED,
+)
 from .coordinator import BatteryArbitrageCoordinator
 from .sensor import _device_info
 
@@ -69,6 +73,8 @@ async def async_setup_entry(
     entities.append(BatteryArbitrageAutoFullSwitch(coordinator, entry))
     # v0.47.0 — opt-in dynamic self-learning discharge floor.
     entities.append(BatteryArbitrageDynamicFloorSwitch(coordinator, entry))
+    # v0.57.0 — embedded OCPP server on/off (Advanced pane). Reloads on change.
+    entities.append(BatteryArbitrageOcppServerSwitch(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -190,6 +196,57 @@ class BatteryArbitragePriceResolutionSwitch(
         self.coordinator._stored["price_resolution_15min"] = False
         await self.coordinator._store.async_save(self.coordinator._stored)
         self.async_write_ha_state()
+
+
+class BatteryArbitrageOcppServerSwitch(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SwitchEntity
+):
+    """Enable/disable the embedded OCPP server (v0.57.0).
+
+    The server is the generic, multi-brand charger path (Easee, Zaptec,
+    Wallbox, any OCPP 1.6 unit) and binds a port at setup, so toggling it
+    isn't a per-cycle setting — changing it reloads the integration, which
+    starts or stops the server via the normal setup/unload path. Backed by
+    `_stored[CONF_OCPP_EMBEDDED]` (overrides the config-entry value), read at
+    setup via `coordinator._setting`.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "ocpp_embedded"
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:server-network"
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_ocpp_embedded"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.coordinator._setting(CONF_OCPP_EMBEDDED, DEFAULT_OCPP_EMBEDDED))
+
+    async def _set(self, value: bool) -> None:
+        self.coordinator._stored[CONF_OCPP_EMBEDDED] = value
+        await self.coordinator._store.async_save(self.coordinator._stored)
+        self.async_write_ha_state()
+        # Start/stop the server via a full reload. Scheduled as a task so this
+        # service call finishes before the entry (and this entity) is torn down.
+        if self.hass:
+            self.hass.async_create_task(
+                self.hass.config_entries.async_reload(self._entry.entry_id)
+            )
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        await self._set(True)
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        await self._set(False)
 
 
 class BatteryArbitrageNotifyEventSwitch(

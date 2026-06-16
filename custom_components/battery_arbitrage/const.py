@@ -167,6 +167,56 @@ EV_HYSTERESIS_STOP_TICKS  = 2     # legacy — ticks below stop threshold before
 EV_MAX_AMP_STEP_PER_TICK  = 2     # max ramp rate (A) per control-loop tick
 EV_MIN_AMP_CHANGE         = 1     # don't bother sending OCPP write below this delta
 
+# ── EV charger backend selector (v0.57.0) ─────────────────────────────────
+# The EV controller can drive the charger through one of two backends.
+# OCPP and Modbus are mutually exclusive at the charger (the mode is set in
+# the FoxESS app), so this is a structural choice that requires a reload.
+#   "ocpp"          — embedded OCPP server (default, unchanged behaviour)
+#   "foxess_modbus" — direct Modbus TCP to a FoxESS L11PMC charger
+# The Modbus backend can throttle the car to single-phase (~1.4 kW min),
+# which the 3-phase OCPP path cannot — the point of the feature is to follow
+# small solar surpluses without the 4.14 kW three-phase floor.
+CONF_EV_CHARGER_BACKEND = "ev_charger_backend"
+EV_BACKEND_OCPP = "ocpp"
+EV_BACKEND_FOXESS_MODBUS = "foxess_modbus"
+DEFAULT_EV_CHARGER_BACKEND = EV_BACKEND_OCPP
+
+# FoxESS Modbus charger connection (only used when backend == foxess_modbus).
+CONF_FOXESS_CHARGER_HOST = "foxess_charger_host"
+CONF_FOXESS_CHARGER_PORT = "foxess_charger_port"
+CONF_FOXESS_CHARGER_UNIT = "foxess_charger_unit"
+DEFAULT_FOXESS_CHARGER_PORT = 502
+DEFAULT_FOXESS_CHARGER_UNIT = 1
+
+# Phase-1 single-phase envelope for the Modbus backend.
+# 0x3002 (max power cap) acts as the phase selector with auto-switching on:
+# a value in the 1.4-4.2 kW band keeps the charger in single-phase. We write
+# 3.0 kW every heartbeat to hold single-phase; the actual current is set via
+# 0x3001 (6-16 A → ~1.4-3.7 kW on one phase at 230 V).
+EV_MODBUS_SINGLE_PHASE_CAP_KW = 3.0
+EV_MODBUS_MIN_AMPS = 6
+EV_MODBUS_MAX_AMPS = 16
+# Setpoints (0x3001/0x3002) expire after ~180 s (Time Validity, reg 0x3005),
+# after which the charger reverts to full three-phase. The control loop must
+# re-assert them well within that window — this is the heartbeat cadence.
+EV_MODBUS_HEARTBEAT_SECONDS = 45
+
+# ── Phase 2 — 3-phase + hysteresis ────────────────────────────────────────
+# The power cap selects the phase count (auto-switching on): a cap >= 4.2 kW
+# runs three-phase, 1.4-4.2 kW runs single-phase. We hold 11 kW for 3-phase.
+EV_MODBUS_THREE_PHASE_CAP_KW = 11.0
+# Hysteresis on the EV-available surplus. Single-phase tops out at ~3.68 kW
+# (16 A) and three-phase starts at 4.14 kW (6 A × 3), so switch up only when
+# surplus comfortably clears the three-phase floor, and back down with a 0.5 kW
+# gap so a surplus hovering in the dead zone doesn't flap.
+EV_MODBUS_UPSHIFT_KW = 4.5     # sustained surplus above this → three-phase
+EV_MODBUS_DOWNSHIFT_KW = 4.0   # sustained surplus below this → single-phase
+# The charger only permits a phase switch once this interval (0x300B, minutes,
+# hardware minimum 5) has elapsed since the last change; a too-early downshift
+# pauses the session instead of switching. This also serves as the anti-thrash
+# gate between phase changes.
+EV_MODBUS_SUSPEND_INTERVAL_MIN = 5
+
 # v0.36.2 — Curtailment-probe parameters.
 # When the inverter reports PV curtailment (reg 49251 = 1) and the house
 # battery is at/near its max SoC, the EV controller starts a probe: it

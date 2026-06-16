@@ -78,6 +78,20 @@ Auto-detected; override only if the inverter setup differs.
 | `foxess_force_charge_entity` | `number.foxessmodbus_force_charge_power`. Sets Force Charge wattage. |
 | `foxess_force_discharge_entity` | `number.foxessmodbus_force_discharge_power`. Sets Force Discharge wattage (export power cap). |
 
+### EV charger backend
+
+Set in *Configure → OCPP Settings*, also on the dashboard's **Advanced setup** page. The EV controller is opt-in (`ev_controller_enabled`, default off).
+
+| Field | Description |
+|---|---|
+| `ev_charger_backend` | `ocpp` (default) or `foxess_modbus`. Which transport the EV controller uses to drive the charger. OCPP and Modbus are mutually exclusive at the charger — the mode is set in the FoxESS app. |
+| `foxess_charger_host` | FoxESS charger IP/hostname (Modbus backend only), e.g. `192.168.x.x`. |
+| `foxess_charger_port` | Modbus TCP port. Default `502`. |
+| `foxess_charger_unit` | Modbus unit id. Default `1`. |
+| `ocpp_embedded` | Whether the embedded OCPP server runs. Default on. It is the path for OCPP 1.6 chargers of any brand and stays available regardless of `ev_charger_backend`; toggling it reloads the integration. |
+
+**Phases.** The OCPP backend is three-phase only, with a 4.14 kW minimum (6 A × 3) — the charger does not expose phase switching over OCPP. **Single-phase charging (down to ~1.4 kW) is only available on the `foxess_modbus` backend**, which selects single vs three-phase from the solar surplus by hysteresis (up ≥ 4.5 kW, down < 4.0 kW), gated by the charger's 5-minute suspend interval. The `ev_min_charge_kw` / `ev_max_charge_kw` dropdowns bound the per-phase current (6–16 A) within whichever phase is active.
+
 ### Battery sensors
 
 | Field | Used for |

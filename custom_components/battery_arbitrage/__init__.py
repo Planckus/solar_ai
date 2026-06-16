@@ -109,6 +109,7 @@ PLATFORMS = [
     Platform.SWITCH,
     Platform.SELECT,
     Platform.TIME,        # v0.38.0 — per-schedule-slot start/end time pickers
+    Platform.TEXT,        # v0.57.0 — FoxESS Modbus charger host
 ]
 
 
@@ -324,7 +325,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Start the embedded OCPP server BEFORE forwarding to platforms so the
     # sensor entities can immediately read from `coordinator.ocpp_server`.
     # (v0.27.0). Skipped cleanly if user opted out via embedded=False.
-    if entry.data.get(CONF_OCPP_EMBEDDED, DEFAULT_OCPP_EMBEDDED):
+    # Read via _setting so the Advanced-pane switch (stored override) decides
+    # whether the server starts; storage is already loaded by this point.
+    if coordinator._setting(CONF_OCPP_EMBEDDED, DEFAULT_OCPP_EMBEDDED):
         from .ocpp_server import OcppServer
         port = int(entry.data.get(CONF_OCPP_PORT, DEFAULT_OCPP_PORT))
         # Share the persisted_metadata dict by reference (v0.27.3) — so the
@@ -624,6 +627,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Stop the EV control loop first (so it doesn't keep firing while we
     # restore the inverter and tear platforms down).
     await coordinator.async_stop_ev_control_loop()
+
+    # Close the FoxESS Modbus charger connection if one was opened (v0.57.0).
+    await coordinator.async_close_ev_backend()
 
     # Release the house-battery lock if it's currently engaged (v0.27.2).
     # Otherwise a restart mid-FULL-mode-charge would leave the battery
