@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.55.2] — 2026-06-14
+
+### Changed — solar forecast on the home page
+
+- The solar-forecast section (today/tomorrow expected production, the live forecast-correction card, and the 48-hour forecast chart) now also appears on the **home** dashboard view, not just the EV page. Dashboard-only; same cards and sensors.
+
+---
+
 ## [0.55.1] — 2026-06-14
 
 ### Security — hardening of the embedded OCPP server and HTTP fetches
