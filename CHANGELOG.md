@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.55.3] — 2026-06-16
+
+### Fixed / Changed — home-page navigation
+
+- **Fixed:** in v0.55.2 the new home-page solar-forecast section was placed *below* the page-navigation links, pushing them off the bottom. The forecast now sits above the nav links, so the EV / Prices / History / Settings / Logs links are back at the bottom where they were.
+- **Changed:** the home-page navigation links are larger (taller chips, bigger text and icons) and colour-coded per page (EV blue, Prices amber, History purple, Settings cyan, Logs green) for visibility. Dashboard-only.
+
+---
+
 ## [0.55.2] — 2026-06-14
 
 ### Changed — solar forecast on the home page
