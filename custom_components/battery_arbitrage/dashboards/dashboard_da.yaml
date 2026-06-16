@@ -254,39 +254,6 @@ views:
           color: '#5995e6'
           stroke_width: 2
           opacity: 0.12
-      - type: custom:mushroom-chips-card
-        alignment: center
-        chips:
-        - type: template
-          icon: mdi:car-electric
-          content: EV
-          tap_action:
-            action: navigate
-            navigation_path: /battery-arbitrage/ev
-        - type: template
-          icon: mdi:currency-eur
-          content: Priser
-          tap_action:
-            action: navigate
-            navigation_path: /battery-arbitrage/priser
-        - type: template
-          icon: mdi:chart-timeline-variant
-          content: Historik
-          tap_action:
-            action: navigate
-            navigation_path: /battery-arbitrage/historik
-        - type: template
-          icon: mdi:cog
-          content: Indstillinger
-          tap_action:
-            action: navigate
-            navigation_path: /battery-arbitrage/indstillinger
-        - type: template
-          icon: mdi:format-list-bulleted-square
-          content: Logs
-          tap_action:
-            action: navigate
-            navigation_path: /battery-arbitrage/logs
       - type: vertical-stack
         cards:
         - type: custom:mushroom-title-card
@@ -365,6 +332,51 @@ views:
               in_header: false
               legend_value: false
             data_generator: return (entity.attributes.slots || []).map(s => [new Date(s.start).getTime(), s.adj_kw]);
+      - type: custom:mushroom-chips-card
+        alignment: center
+        card_mod:
+          style: |
+            ha-card {
+              --chip-height: 46px;
+              --chip-font-size: 1.05rem;
+              --chip-icon-size: 1.2rem;
+            }
+        chips:
+        - type: template
+          icon: mdi:car-electric
+          icon_color: blue
+          content: EV
+          tap_action:
+            action: navigate
+            navigation_path: /battery-arbitrage/ev
+        - type: template
+          icon: mdi:currency-eur
+          icon_color: amber
+          content: Priser
+          tap_action:
+            action: navigate
+            navigation_path: /battery-arbitrage/priser
+        - type: template
+          icon: mdi:chart-timeline-variant
+          icon_color: purple
+          content: Historik
+          tap_action:
+            action: navigate
+            navigation_path: /battery-arbitrage/historik
+        - type: template
+          icon: mdi:cog
+          icon_color: cyan
+          content: Indstillinger
+          tap_action:
+            action: navigate
+            navigation_path: /battery-arbitrage/indstillinger
+        - type: template
+          icon: mdi:format-list-bulleted-square
+          icon_color: green
+          content: Logs
+          tap_action:
+            action: navigate
+            navigation_path: /battery-arbitrage/logs
 - title: EV / OCPP
   path: ev
   icon: mdi:car-electric
