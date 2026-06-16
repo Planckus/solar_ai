@@ -823,6 +823,12 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         value_fn=lambda d: d.get("charger_power_kw", 0.0),
         attrs_fn=lambda d: {
             "voltage_v": d.get("charger_voltage_v"),
+            # Modbus backend only: per-phase currents + inferred phase count let
+            # the dashboard show single-phase (L2/L3 ≈ 0). None on the OCPP path.
+            "phase_currents_a": d.get("charger_phase_currents"),
+            "live_phases": d.get("charger_live_phases"),
+            "target_phases": d.get("charger_target_phases"),
+            "charger_status": d.get("charger_status"),
         },
     ),
     BatteryArbitrageSensorDescription(

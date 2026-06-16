@@ -23,6 +23,8 @@ Every 15 minutes it builds a plan over the next 48 hours from the day-ahead elec
 
 With an OCPP 1.6 charger, Solar AI charges the car from **surplus solar** — the power that would otherwise be sold cheaply. You pick the behaviour per session or per schedule: solar-only, solar-plus-battery, full-speed, or charging windows you set per weekday. It won't drain the house battery into the car unless you ask it to, and it won't compete with the charger for the cheap night hours.
 
+With a **FoxESS charger in Modbus TCP mode**, it can additionally drop to **single-phase charging (down to ~1.4 kW)** to follow small surpluses on weak-sun days — below the 4.14 kW floor a three-phase OCPP charger is stuck at — and switch back up to three-phase (up to 11 kW) automatically when there's plenty of sun. Single-phase is only available on the Modbus backend.
+
 **The benefit:** the car charges from your own roof for free where possible, or from the cheapest grid hours when there isn't enough sun — without you touching the charger.
 
 ### Handles prices and tariffs for you
@@ -149,6 +151,14 @@ For an OCPP 1.6 charger driven by the integration's EV controller:
 
 The embedded server tolerates non-standard OCPP frames (empty-`[]` keepalives from the FoxESS L11PMC are silently ignored). Charger metadata is persisted to HA storage and `TriggerMessage` is sent on reconnect so sensors do not blank after an HA restart.
 
+**Alternative: FoxESS Modbus TCP backend (single-phase capable).** A FoxESS L11PMC can instead be driven directly over Modbus TCP, which unlocks single-phase charging (~1.4–3.7 kW) for following small solar surpluses — something the OCPP path cannot do, as it is three-phase only with a 4.14 kW minimum.
+
+1. In the FoxESS app, switch the charger to **Modbus TCP mode** (this drops its OCPP connection — the two are mutually exclusive).
+2. In *Solar AI → Configure → OCPP Settings* (or on the dashboard's **Advanced setup** page): set **Charger backend** to **FoxESS Modbus TCP**, and enter the charger's **host/IP** (e.g. `192.168.x.x`), port (`502`), and unit id (`1`).
+3. The controller then charges single-phase on small surpluses and switches up to three-phase automatically when the surplus is large enough; the min/max charge-rate dropdowns bound the current within whichever phase is active.
+
+The embedded OCPP server stays available regardless of this setting — it is the path for OCPP 1.6 chargers of any brand (Easee, Zaptec, Wallbox, etc.). You can turn it off from the Advanced setup page if you don't use it.
+
 > **Security — keep the OCPP port on your trusted LAN.** OCPP 1.6 is plaintext and unauthenticated, so the embedded server on port `9000` accepts connections from any device that can reach it. Keep it on your home/trusted network only — **do not port-forward `9000` to the internet or expose it across an untrusted VLAN**. The server bounds how many charge points it will track to limit abuse, but it cannot authenticate the charger; treat the port as you would any other internal-only service.
 
 ### 7. Import the dashboard
@@ -232,6 +242,16 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 ---
 
 ## Recent releases
+
+### v0.57.0 — FoxESS Modbus charger backend (single- and three-phase solar following)
+
+- A FoxESS L11PMC can now be driven directly over **Modbus TCP** as an alternative to OCPP, which unlocks **single-phase charging** (~1.4–3.7 kW) for following small solar surpluses — below the 4.14 kW floor the three-phase OCPP path is stuck at. It switches up to three-phase (up to 11 kW) automatically when the surplus is large, by hysteresis (up ≥ 4.5 kW, down < 4.0 kW) gated by the charger's 5-minute suspend interval. **Single-phase is only available on the Modbus backend; OCPP is three-phase only.**
+- The backend selector, charger IP, and an embedded-OCPP-server on/off switch are on the dashboard's Advanced setup page (and in Configure). The embedded OCPP server stays the generic path for OCPP chargers of any brand regardless of the selected backend.
+- `sensor.solar_ai_lader_effekt` reports live Modbus power, per-phase currents, and the live vs target phase count. The solar-only battery-drain guard (0.54.0) applies to the Modbus backend too.
+
+### v0.56.0 — more setup options in the dashboard
+
+- Live data source, solar forecast source, buy-price mode, price area, and electricity product/provider are now dashboard selects (previously config-only), applied without a reload. A new **Advanced setup** dashboard page groups these plus diagnostics and a deep link to Configure.
 
 ### v0.55.3 — home-page navigation fix + polish
 
@@ -495,27 +515,36 @@ EV-aware features run in EVCC and Hybrid live-data modes. In FoxESS-only mode th
 | Battery-bypass model | EVCC's setting "battery does not feed the EV" is honoured. Solar allocated to the EV is subtracted from battery-available kWh, not from battery discharge. |
 | EVCC battery mode | Set to `hold` during arbitrage actions. Restored to `normal` when done. If EVCC has independently taken control, the integration backs off. |
 
-### EV charge controller (OCPP, opt-in)
+### EV charge controller (opt-in)
 
-Optional active control of an OCPP 1.6 charger via the integration's embedded server. Disabled by default. Enable in *Settings → Solar AI → Configure → OCPP Settings*.
+Optional active control of a connected charger, disabled by default. Enable in *Settings → Solar AI → Configure → OCPP Settings*. Two backends, selectable there or on the dashboard's Advanced setup page:
 
-Four modes selectable from the dashboard:
+| Backend | Charger | Phases |
+|---|---|---|
+| **OCPP** (default) | Any OCPP 1.6 charger (Easee, Zaptec, Wallbox, FoxESS, …) via the embedded server | Three-phase only; 4.14 kW (6 A) minimum |
+| **FoxESS Modbus TCP** | FoxESS L11PMC over direct Modbus | Single- **and** three-phase; ~1.4 kW (6 A, 1φ) minimum |
+
+**Single-phase charging is only available on the Modbus backend.** Over OCPP the charger does not expose phase switching, so it is three-phase only and cannot go below 4.14 kW. The Modbus backend can hold single-phase to follow small surpluses and switch up to three-phase when the surplus is large.
+
+Four modes selectable from the dashboard (both backends):
 
 | Mode | Behaviour |
 |---|---|
 | Locked | No charging. |
-| Solar-only | Charge only from real-time PV surplus. Stops when surplus drops below the minimum amp setting. |
-| Solar+Battery-to-minimum | Solar surplus first; house battery tops up to the minimum amp setting when surplus is insufficient. Stops at the battery floor. |
-| Full power | Maximum charge rate from any source. House battery discharge is locked at 0 A while in this mode, so the EV's grid demand cannot be supplemented from the house battery. |
+| Solar-only | Charge only from real-time PV surplus. Stops when surplus drops below the minimum. If the house battery starts discharging to cover the car, charging stops. |
+| Solar+Battery-to-minimum | Solar surplus first; house battery tops up to the minimum when surplus is insufficient. Stops at the battery floor. |
+| Full power | Maximum charge rate from any source. House battery discharge is locked at 0 A while in this mode, so the EV's grid demand cannot be supplemented from the house battery. On the Modbus backend, full mode always uses three-phase. |
 
 Control loop properties:
 
 - Decoupled asyncio task at a configurable cadence (5–60 s, default 10 s), independent of the main coordinator fast-poll.
-- Ramps the OCPP current setpoint between 6 A (4.14 kW) and 16 A (11 kW) at a maximum of 2 A per tick.
+- Ramps the current setpoint between 6 A and 16 A at a maximum of 2 A per tick. The resulting power depends on the active phase count (3-phase: 4.14–11 kW; single-phase: ~1.4–3.7 kW).
 - Subtracts the EV's own current draw from house load when measuring surplus.
 - Anti-flap windows: start window (default 60 s, range 10–600 s) and stop window (default 180 s, range 30–1800 s). After a stop, the start counter resets.
+- **Modbus phase switching** (Modbus backend only): single ↔ three-phase by hysteresis on the available surplus — up at a sustained ≥ 4.5 kW, down at < 4.0 kW — gated by the charger's 5-minute suspend interval so it never flaps or pauses the session. Phase count is read back from the per-phase currents.
+- **Modbus setpoint heartbeat:** the charger's limits expire ~180 s after the last command (reverting to full three-phase), so the controller re-asserts them every cycle.
 - Smart OCPP writes: `SetChargingProfile` is only sent on start, stop, or ≥ 1 A change.
-- `sensor.solar_ai_ev_status` exposes the controller state machine (`IDLE` / `ARMING` / `CHARGING` / `COOLING`) and `arming_until` / `cooling_until` ISO timestamps for live per-second countdowns.
+- `sensor.solar_ai_ev_status` exposes the controller state machine (`IDLE` / `ARMING` / `CHARGING` / `COOLING`) and `arming_until` / `cooling_until` ISO timestamps for live per-second countdowns. On the Modbus backend, `sensor.solar_ai_lader_effekt` reports live power, per-phase currents, and the live vs target phase count.
 
 ### Battery model
 

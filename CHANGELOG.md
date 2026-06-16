@@ -9,6 +9,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.57.0] — 2026-06-16
+
+### Added — FoxESS Modbus charger backend (single- and three-phase solar following)
+
+- **New EV charger backend.** The EV controller can now drive a FoxESS L11PMC charger directly over Modbus TCP instead of OCPP. Select it under Configure → OCPP / EV settings ("Charger backend" → FoxESS Modbus TCP) and enter the charger's host, port (default 502), and unit id (default 1). OCPP remains the default; existing installs are unchanged.
+- **Single- and three-phase charging.** The Modbus backend charges single-phase from ~1.4 kW (6 A) to 3.7 kW (16 A) — following small solar surpluses the three-phase OCPP path could not (its floor is 4.14 kW) — and switches up to three-phase (up to 11 kW) when the surplus is large enough. The power cap selects the phase count; the current modulates the rate within it.
+- **Automatic phase switching with hysteresis.** Switches up to three-phase when the available surplus is sustained above 4.5 kW and back down below 4.0 kW, gated by the charger's suspend interval (held at its 5-minute minimum) so it never flaps or pauses the session. Full mode always uses three-phase. The min/max charge-rate dropdowns bound the current within whichever phase is active.
+- **Setpoint heartbeat.** The charger's current and power limits expire about 180 seconds after the last command, after which it reverts to full three-phase. The controller re-asserts the setpoint every cycle so this never happens during a managed session.
+- **Battery-drain guard.** In solar-only mode, if the house battery starts discharging to cover the car, charging stops — the same protection added for the OCPP path in 0.54.0.
+- **Embedded OCPP server toggle on the dashboard.** The Advanced setup page now has a switch to enable/disable the embedded OCPP server (previously only in the Configure dialog). The server stays available regardless of the EV charger backend, since it is the path for OCPP chargers of any brand; toggling it reloads the integration.
+
+### Notes
+
+- **Single-phase charging is only available on the Modbus backend.** The OCPP path is three-phase only and cannot go below its 4.14 kW minimum (6 A × 3 phases) — the charger does not expose phase switching over OCPP. To follow small solar surpluses single-phase (down to ~1.4 kW), use the FoxESS Modbus backend.
+- OCPP and Modbus are mutually exclusive at the charger; the mode is set in the FoxESS app. Selecting the Modbus backend requires the charger to be in Modbus TCP mode.
+- The Modbus backend currently targets the FoxESS L11PMC. The embedded OCPP server remains the path for OCPP 1.6 chargers of any brand and stays available regardless of this setting.
+
+---
+
+## [0.56.0] — 2026-06-16
+
+### Added — more setup options in the dashboard
+
+- **Data-source and pricing selects.** Live data source, solar forecast source, buy-price mode, price area, and electricity product/provider are now dashboard selects (previously config-only), applied on the next control cycle without a reload.
+- **Advanced setup page.** A new "Advanced setup" dashboard page groups the data-source and pricing selects, a deep link to the integration's Configure dialog, and read-only diagnostics (learned battery capacity, auto-detected efficiency, learned charge rate, forecast accuracy, effective discharge floor).
+
+---
+
 ## [0.55.3] — 2026-06-16
 
 ### Fixed / Changed — home-page navigation

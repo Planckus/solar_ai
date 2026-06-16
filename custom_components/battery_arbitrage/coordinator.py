@@ -480,6 +480,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Embedded OCPP server (v0.27.0). Started in __init__.py's
         # async_setup_entry, stopped in async_unload_entry. None until then.
         self.ocpp_server = None  # type: ignore[assignment]
+        # FoxESS Modbus charger backend (v0.57.0). Lazily built by
+        # `_get_modbus_backend` when the charger backend is foxess_modbus.
+        self._ev_modbus_backend = None  # type: ignore[assignment]
+        self._ev_modbus_backend_key = None  # (host, port, unit) the backend was built for
+        # Phase 2: commanded phase mode (1 or 3) and when it last changed, for
+        # hysteresis + the hardware suspend-interval gate.
+        self._ev_modbus_phase = 1
+        self._ev_modbus_phase_since_ts = None
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -504,6 +512,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     @property
     def mode_reason(self) -> str:
         return self._mode_reason
+
+    def _setting(self, key: str, default):
+        """Read a parameter-like structural setting, allowing a live dashboard
+        override via `_stored` (falls back to the config entry, then the
+        default). v0.56.0 — backs the config `select` entities (data source,
+        solar source, buy-price mode, price area). These are read per coordinator
+        cycle, so a change takes effect on the next update with no reconfigure.
+        """
+        return self._stored.get(key, self.config.get(key, default))
 
     def get_learned_rate(self, bucket_key: str) -> float:
         """Return the learned max charge rate (kW) for a temperature bucket."""
@@ -960,7 +977,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             or (now - self._last_tariff_refresh).total_seconds() >= TARIFF_REFRESH_INTERVAL_SECONDS
         )
         if tariff_stale:
-            price_area = self.config.get(CONF_PRICE_AREA, DEFAULT_PRICE_AREA)
+            price_area = self._setting(CONF_PRICE_AREA, DEFAULT_PRICE_AREA)
 
             # Solar forecast — dispatches on configured source (EVCC / forecast_solar / auto).
             # Best-effort: a failure here must not block startup or the price fetch below.
@@ -1971,8 +1988,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Snapshot charger metadata for restart recovery (v0.27.3)
         self._persist_charger_metadata()
         # Merge the embedded OCPP server's per-charger telemetry into the
-        # result dict so the new charger_* sensors can read it (v0.27.0)
-        ev_telemetry = {**ev_telemetry, **self.get_charger_telemetry()}
+        # result dict so the new charger_* sensors can read it (v0.27.0).
+        # OCPP telemetry is the BASE and the EV telemetry goes on top: in
+        # Modbus mode the EV telemetry carries the live charger_power_kw /
+        # status / phase currents, which must not be clobbered by the dead
+        # OCPP source (which reports 0). In OCPP mode the EV telemetry doesn't
+        # set those keys, so the OCPP values come through unchanged (v0.57.0).
+        ev_telemetry = {**self.get_charger_telemetry(), **ev_telemetry}
 
         # ---- save storage (learning tick only — avoids flash wear on fast ticks) ----
         if is_learning_tick:
@@ -2199,7 +2221,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Only coordinate battery mode with EVCC when EVCC is the live-state source
         # (EVCC-only or hybrid mode). In FoxESS-only mode we own the battery and
         # there is no EVCC to coordinate with.
-        live_source = self.config.get(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE)
+        live_source = self._setting(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE)
         coordinate_with_evcc = live_source in (LIVE_SOURCE_EVCC, LIVE_SOURCE_HYBRID) and evcc_url
 
         if new_mode == MODE_EXPORTING:
@@ -3647,6 +3669,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if not self.config.get(CONF_EV_CONTROLLER_ENABLED, DEFAULT_EV_CONTROLLER_ENABLED):
             return {"ev_enabled": False, "ev_reason": "EV controller disabled"}
 
+        # Backend dispatch (v0.57.0). The FoxESS Modbus backend has its own
+        # simpler control path (single-phase solar following); the OCPP path
+        # below is unchanged.
+        from .const import (  # noqa: PLC0415
+            CONF_EV_CHARGER_BACKEND, DEFAULT_EV_CHARGER_BACKEND, EV_BACKEND_FOXESS_MODBUS,
+        )
+        # Read via _setting so the dashboard select (Advanced pane) overrides
+        # the config-entry value and applies on the next cycle without a reload.
+        if (self._setting(CONF_EV_CHARGER_BACKEND, DEFAULT_EV_CHARGER_BACKEND)
+                == EV_BACKEND_FOXESS_MODBUS):
+            return await self._run_ev_controller_modbus(
+                evcc_state, battery_soc, floor_soc,
+            )
+
         charger_id = self.config.get(CONF_EV_OCPP_CHARGE_POINT_ID, "")
         if not charger_id:
             return {"ev_enabled": False, "ev_reason": "No OCPP charge point ID configured"}
@@ -4090,6 +4126,254 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # consuming everything.
         return self._ev_telemetry(reported_target_kw, final_amps, net_surplus_for_ev_kw, reason)
 
+    async def _get_modbus_backend(self):
+        """Lazily build (and cache) the FoxESS Modbus charger backend.
+
+        Returns None when no charger host is configured. The backend is rebuilt
+        if the configured host/port/unit changes (config changes trigger an
+        entry reload, which recreates the coordinator, so in practice this is
+        created once per backend selection).
+        """
+        from .const import (  # noqa: PLC0415
+            CONF_FOXESS_CHARGER_HOST, CONF_FOXESS_CHARGER_PORT, CONF_FOXESS_CHARGER_UNIT,
+            DEFAULT_FOXESS_CHARGER_PORT, DEFAULT_FOXESS_CHARGER_UNIT,
+            EV_MODBUS_SINGLE_PHASE_CAP_KW, EV_MODBUS_THREE_PHASE_CAP_KW,
+            EV_MODBUS_MIN_AMPS, EV_MODBUS_MAX_AMPS, EV_MODBUS_SUSPEND_INTERVAL_MIN,
+        )
+        # Read via _setting so the dashboard host text + port/unit override the
+        # config-entry values; rebuild the connection if any of them change.
+        host = (self._setting(CONF_FOXESS_CHARGER_HOST, "") or "").strip()
+        if not host:
+            return None
+        port = int(self._setting(CONF_FOXESS_CHARGER_PORT, DEFAULT_FOXESS_CHARGER_PORT))
+        unit = int(self._setting(CONF_FOXESS_CHARGER_UNIT, DEFAULT_FOXESS_CHARGER_UNIT))
+        key = (host, port, unit)
+        if self._ev_modbus_backend is not None and self._ev_modbus_backend_key != key:
+            await self.async_close_ev_backend()  # connection params changed
+        if self._ev_modbus_backend is None:
+            from .foxess_charger import FoxessModbusCharger  # noqa: PLC0415
+            self._ev_modbus_backend = FoxessModbusCharger(
+                host, port, unit,
+                single_phase_cap_kw=EV_MODBUS_SINGLE_PHASE_CAP_KW,
+                three_phase_cap_kw=EV_MODBUS_THREE_PHASE_CAP_KW,
+                min_amps=EV_MODBUS_MIN_AMPS,
+                max_amps=EV_MODBUS_MAX_AMPS,
+                suspend_interval_min=EV_MODBUS_SUSPEND_INTERVAL_MIN,
+            )
+            self._ev_modbus_backend_key = key
+        return self._ev_modbus_backend
+
+    async def async_close_ev_backend(self) -> None:
+        """Close the Modbus charger connection on unload (best-effort)."""
+        if self._ev_modbus_backend is not None:
+            try:
+                await self._ev_modbus_backend.async_close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._ev_modbus_backend = None
+            self._ev_modbus_backend_key = None
+
+    async def _run_ev_controller_modbus(
+        self, evcc_state: dict, battery_soc: float, floor_soc: float,
+    ) -> dict:
+        """EV controller for the FoxESS Modbus backend — single-phase (v0.57.0).
+
+        A simpler sibling of `_run_ev_controller`. Reuses the shared mode→target
+        math, the anti-flap window, and the telemetry builder, but drives the
+        charger over Modbus in single-phase: the power cap holds the charger in
+        single-phase and the current modulates the rate (~1.4-3.7 kW), so the
+        car follows much smaller solar surpluses than the 3-phase OCPP path.
+
+        The setpoint is re-asserted every tick (heartbeat) because the charger
+        reverts to full three-phase ~180 s after its last command. On a Modbus
+        comms error the tick reports the charger unreachable and commands
+        nothing — note this is the one drain risk the wire cannot cover: a dead
+        link means we also cannot stop the charger before it self-reverts.
+        """
+        from .const import (  # noqa: PLC0415
+            CONF_BATTERY_CHARGE_ENTITY, FOXESS_BATTERY_CHARGE_POWER,
+            CONF_BATTERY_DISCHARGE_ENTITY, FOXESS_BATTERY_DISCHARGE_POWER,
+            EV_MODBUS_MIN_AMPS, EV_MODBUS_MAX_AMPS,
+            EV_MODBUS_UPSHIFT_KW, EV_MODBUS_DOWNSHIFT_KW, EV_MODBUS_SUSPEND_INTERVAL_MIN,
+        )
+
+        backend = await self._get_modbus_backend()
+        if backend is None:
+            return {"ev_enabled": False, "ev_reason": "FoxESS Modbus charger host not configured"}
+
+        # Read live charger state. Fail-safe: on comms error, command nothing.
+        try:
+            state = await backend.read_state()
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("FoxESS Modbus charger unreachable: %s", err)
+            self._ev_last_amps = 0
+            self._ev_last_reason = self._msg(
+                f"Modbus charger unreachable: {err}",
+                f"Modbus-lader ikke tilgængelig: {err}",
+            )
+            return {**self._ev_telemetry(0.0, 0, 0.0, self._ev_last_reason),
+                    "ev_backend": "foxess_modbus", "ev_charger_online": False,
+                    "charger_power_kw": 0.0}
+
+        ev_connected = state["connected"]
+
+        # Plug-in detection → reset to the default-on-connect mode (mirror OCPP).
+        if ev_connected and not self._ev_prev_connected:
+            default_mode = self._stored.get(
+                "ev_default_mode",
+                self.config.get(CONF_EV_DEFAULT_MODE, DEFAULT_EV_DEFAULT_MODE),
+            )
+            self._ev_active_mode = default_mode
+            self._stored["ev_active_mode"] = default_mode
+            self._ev_surplus_above_min_since_ts = None
+            self._ev_surplus_below_min_since_ts = None
+            self._ev_arm_drop_since_ts = None
+            self._ev_cool_entry_ts = None
+            # Fresh session starts single-phase; let hysteresis upshift later.
+            self._ev_modbus_phase = 1
+            self._ev_modbus_phase_since_ts = None
+            _LOGGER.info("EV plugged in (Modbus) — resetting mode to %s", default_mode)
+        self._ev_prev_connected = ev_connected
+
+        if not ev_connected:
+            self._ev_last_amps = 0
+            self._ev_last_reason = self._msg(
+                f"EV not connected (status: {state['status_label']})",
+                f"EV ikke tilsluttet (status: {state['status_label']})",
+            )
+            return {**self._ev_telemetry(0.0, 0, 0.0, self._ev_last_reason),
+                    "ev_backend": "foxess_modbus", "ev_charger_online": True,
+                    "ev_status_label": state["status_label"],
+                    "charger_power_kw": 0.0, "charger_status": state["status_label"]}
+
+        # ── Surplus (identical derivation to the OCPP path) ────────────────
+        home_power_w = evcc_state.get("homePower", 0) or 0
+        pv_power_w   = evcc_state.get("pvPower", 0) or 0
+        grid_power_w = evcc_state.get("gridPower", 0) or 0
+        grid_export_kw = max(0.0, -grid_power_w / 1000.0)
+        grid_import_kw = max(0.0, grid_power_w / 1000.0)
+        ev_current_kw  = state["power_kw"]
+        house_load_kw  = home_power_w / 1000.0
+        solar_kw       = pv_power_w / 1000.0
+        non_ev_load_kw = max(0.0, house_load_kw - ev_current_kw)
+        solar_surplus_kw = max(0.0, solar_kw - non_ev_load_kw)
+        battery_charge_kw = max(0.0, float(self._get_float_state(
+            self.config.get(CONF_BATTERY_CHARGE_ENTITY, FOXESS_BATTERY_CHARGE_POWER), 0.0,
+        ) or 0.0))
+        battery_discharge_kw = max(0.0, float(self._get_float_state(
+            self.config.get(CONF_BATTERY_DISCHARGE_ENTITY, FOXESS_BATTERY_DISCHARGE_POWER), 0.0,
+        ) or 0.0))
+        net_surplus_for_ev_kw = max(0.0, solar_surplus_kw - battery_charge_kw)
+
+        # Resolve the active mode first — both the phase decision and the
+        # anti-flap window need it.
+        effective_mode, active_link = self._resolve_effective_ev_mode(self._ev_active_mode)
+        self._ev_effective_mode = effective_mode
+        self._ev_active_schedule_link = active_link
+
+        # ── Phase decision (Phase 2): single vs three-phase ──────────────────
+        # Hysteresis on the EV-available surplus, gated by the hardware suspend
+        # interval (the charger pauses on a too-early downshift, so we must not
+        # change the cap band until that interval has elapsed since the last
+        # switch). Full mode prefers three-phase for max throughput.
+        now_ts = datetime.now(timezone.utc)
+        interval_s = EV_MODBUS_SUSPEND_INTERVAL_MIN * 60
+        since_switch = (
+            (now_ts - self._ev_modbus_phase_since_ts).total_seconds()
+            if self._ev_modbus_phase_since_ts is not None else interval_s + 1
+        )
+        if effective_mode == EV_MODE_FULL:
+            phase_pref = 3
+        elif net_surplus_for_ev_kw >= EV_MODBUS_UPSHIFT_KW:
+            phase_pref = 3
+        elif net_surplus_for_ev_kw < EV_MODBUS_DOWNSHIFT_KW:
+            phase_pref = 1
+        else:
+            phase_pref = self._ev_modbus_phase   # in the hysteresis band — hold
+        if phase_pref != self._ev_modbus_phase and since_switch >= interval_s:
+            _LOGGER.info(
+                "EV Modbus phase switch %dφ → %dφ (surplus %.2f kW)",
+                self._ev_modbus_phase, phase_pref, net_surplus_for_ev_kw,
+            )
+            self._ev_modbus_phase = phase_pref
+            self._ev_modbus_phase_since_ts = now_ts
+        PHASES = self._ev_modbus_phase
+
+        # Per-phase amp bounds from the min/max dropdowns (which store kW on a
+        # 3-phase basis): recover the amps the user picked and apply them to the
+        # ACTIVE phase. 1φ defaults 6-16 A → ~1.38-3.68 kW; 3φ → ~4.14-11.0 kW.
+        sel_min_amps = self._kw_to_amps(
+            float(self._stored.get("ev_min_charge_kw", DEFAULT_EV_MIN_CHARGE_KW)))
+        sel_max_amps = self._kw_to_amps(
+            float(self._stored.get("ev_max_charge_kw", DEFAULT_EV_MAX_CHARGE_KW)))
+        min_amps_sel = max(EV_MODBUS_MIN_AMPS, min(EV_MODBUS_MAX_AMPS, sel_min_amps))
+        max_amps_sel = max(min_amps_sel, min(EV_MODBUS_MAX_AMPS, sel_max_amps))
+        min_kw = self._amps_to_kw(min_amps_sel, PHASES)
+        max_kw = self._amps_to_kw(max_amps_sel, PHASES)
+        priority_soc = float(self._stored.get(
+            "ev_battery_priority_soc",
+            self.config.get(CONF_EV_BATTERY_PRIORITY_SOC, DEFAULT_EV_BATTERY_PRIORITY_SOC),
+        ))
+
+        target_kw, reason = self._compute_ev_target_kw(
+            effective_mode, solar_surplus_kw, battery_soc, floor_soc,
+            min_kw, max_kw, priority_soc,
+            grid_export_kw=grid_export_kw, ev_last_amps=self._ev_last_amps,
+            phases=PHASES,
+        )
+        target_amps = self._kw_to_amps(target_kw, PHASES)
+
+        # Fail-safe (PV mode): if the house battery is discharging to cover the
+        # car, the "surplus" is really battery power — route to a stop via the
+        # anti-flap window (mirrors the v0.54.0 OCPP drain fix).
+        if (effective_mode == EV_MODE_PV
+                and battery_discharge_kw > EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW
+                and target_amps > 0):
+            target_amps = 0
+            reason = self._msg(
+                f"PV: house battery discharging {battery_discharge_kw:.2f} kW to cover EV — stopping",
+                f"PV: husbatteri aflader {battery_discharge_kw:.2f} kW for at dække EV — stopper",
+            )
+
+        final_amps = self._apply_ev_time_window(target_amps)
+
+        # Smooth ramp (same rate limit as the OCPP path).
+        if final_amps > 0 and self._ev_last_amps > 0:
+            step = EV_MAX_AMP_STEP_PER_TICK
+            if final_amps > self._ev_last_amps + step:
+                final_amps = self._ev_last_amps + step
+            elif final_amps < self._ev_last_amps - step:
+                final_amps = self._ev_last_amps - step
+
+        # Heartbeat: ALWAYS apply (unlike OCPP's dedup) so the setpoint never
+        # expires. amps<=0 stops; amps>0 holds the chosen phase + sets current.
+        try:
+            await backend.async_apply(final_amps, phases=PHASES, status=state["status"])
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("FoxESS Modbus apply failed: %s", err)
+        self._ev_last_amps = final_amps
+        self._ev_last_rate_assert_ts = now_ts
+
+        # Honest COOLING telemetry: holding at minimum while target is 0.
+        reported_target_kw = target_kw
+        if final_amps > 0 and target_kw <= 0.0:
+            reported_target_kw = round(self._amps_to_kw(final_amps, PHASES), 2)
+
+        self._ev_last_reason = reason
+        return {
+            **self._ev_telemetry(reported_target_kw, final_amps, net_surplus_for_ev_kw, reason),
+            "ev_backend": "foxess_modbus",
+            "ev_charger_online": True,
+            "ev_status_label": state["status_label"],
+            # Surface to the existing charger sensors so they reflect Modbus —
+            # the OCPP power/status sources are dead in Modbus mode.
+            "charger_power_kw": ev_current_kw,
+            "charger_status": state["status_label"],
+            "charger_phase_currents": [state["l1"], state["l2"], state["l3"]],
+            "charger_live_phases": state["live_phases"],
+            "charger_target_phases": PHASES,
+        }
+
     def _msg(self, en: str, da: str) -> str:
         """Return a user-facing string in the integration's resolved language (v0.41.0).
 
@@ -4130,6 +4414,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         priority_soc: float = 80.0,
         grid_export_kw: float = 0.0,
         ev_last_amps: int = 0,
+        phases: int = EV_PHASES,
     ) -> tuple[float, str]:
         """Pure mode→target translation. Returns (target_kw, human-readable reason).
 
@@ -4189,7 +4474,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 # waste-exported or pulled from grid. Example: 5.4 kW surplus
                 # → 7 A (4.83 kW to EV), 0.57 kW to battery.
                 import math
-                line_voltage_kw = EV_VOLTAGE * EV_PHASES / 1000.0  # 0.69 kW per amp
+                line_voltage_kw = EV_VOLTAGE * phases / 1000.0  # 0.69 kW/A (3φ), 0.23 (1φ)
                 raw_amps = math.floor(solar_surplus / line_voltage_kw)
                 max_amps = max(EV_OCPP_MIN_AMPS, int(round(max_kw / line_voltage_kw)))
                 amps = max(EV_OCPP_MIN_AMPS, min(max_amps, raw_amps))
@@ -4234,25 +4519,26 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         return 0.0, self._msg(f"Unknown mode: {mode}", f"Ukendt mode: {mode}")
 
     @staticmethod
-    def _kw_to_amps(kw: float) -> int:
-        """Convert target kW to 3-phase line current (A), clamped to OCPP limits.
+    def _kw_to_amps(kw: float, phases: int = EV_PHASES) -> int:
+        """Convert target kW to per-phase line current (A), clamped to limits.
 
-        Danish 3-phase wye system: P = 3 × V_phase × I (cos φ ≈ 1 for EVs).
-        With V_phase = 230 V → P = 690 × I W → I = P / 690.
-        Equivalently P = √3 × V_LL × I with V_LL = 400 V.
+        Danish wye system: P = phases × V_phase × I (cos φ ≈ 1 for EVs), with
+        V_phase = 230 V. Defaults to 3-phase (the OCPP path); the Modbus
+        single-phase backend passes `phases=1`.
 
-        Verification: 6 A → 4.14 kW (matches DEFAULT_EV_MIN_CHARGE_KW),
-                     16 A → 11.04 kW (matches DEFAULT_EV_MAX_CHARGE_KW).
+        Verification (3-phase): 6 A → 4.14 kW (DEFAULT_EV_MIN_CHARGE_KW),
+                     16 A → 11.04 kW (DEFAULT_EV_MAX_CHARGE_KW).
+        Single-phase: 6 A → 1.38 kW, 16 A → 3.68 kW.
         """
         if kw <= 0:
             return 0
-        amps = int(round(kw * 1000.0 / (EV_VOLTAGE * EV_PHASES)))
+        amps = int(round(kw * 1000.0 / (EV_VOLTAGE * phases)))
         return max(EV_OCPP_MIN_AMPS, min(EV_OCPP_MAX_AMPS, amps))
 
     @staticmethod
-    def _amps_to_kw(amps: int) -> float:
-        """Convert 3-phase line current (A) back to kW. Inverse of _kw_to_amps."""
-        return amps * EV_VOLTAGE * EV_PHASES / 1000.0
+    def _amps_to_kw(amps: int, phases: int = EV_PHASES) -> float:
+        """Convert per-phase line current (A) back to kW. Inverse of _kw_to_amps."""
+        return amps * EV_VOLTAGE * phases / 1000.0
 
     def _reset_override_ramp(self) -> None:
         """Clear the active-ramp state (v0.39.21).
@@ -4394,7 +4680,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     mechanisms_failed.append(f"max_discharge_current ({err})")
 
             # Mechanism 2: EVCC battery mode → hold (if on EVCC live-data)
-            if self.config.get(CONF_LIVE_DATA_SOURCE, "evcc") in ("evcc", "hybrid"):
+            if self._setting(CONF_LIVE_DATA_SOURCE, "evcc") in ("evcc", "hybrid"):
                 try:
                     evcc_url = self.config.get("evcc_url", "")
                     if not evcc_url:
@@ -4441,7 +4727,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 except Exception as err:  # noqa: BLE001
                     mechanisms_failed.append(f"max_discharge_current ({err})")
 
-            if (self.config.get(CONF_LIVE_DATA_SOURCE, "evcc") in ("evcc", "hybrid")
+            if (self._setting(CONF_LIVE_DATA_SOURCE, "evcc") in ("evcc", "hybrid")
                 and self._we_set_evcc_mode):
                 try:
                     evcc_url = self.config.get("evcc_url", "")
@@ -5526,10 +5812,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         """Refresh the Strømligning per-slot price cache if the mode is
         enabled and the cache is stale. No-op in manual mode.
         """
-        if self.config.get(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE) != BUY_PRICE_MODE_STROMLIGNING:
+        if self._setting(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE) != BUY_PRICE_MODE_STROMLIGNING:
             return
-        product_id = self.config.get(CONF_STROMLIGNING_PRODUCT_ID, "")
-        supplier_id = self.config.get(CONF_STROMLIGNING_SUPPLIER_ID, "")
+        product_id = self._setting(CONF_STROMLIGNING_PRODUCT_ID, "")
+        supplier_id = self._setting(CONF_STROMLIGNING_SUPPLIER_ID, "")
         if not product_id or not supplier_id:
             return
         # Cache freshness check (24 h by default)
@@ -5607,7 +5893,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         spot/distribution/transmission components but the user's markup,
         elafgift, and VAT.
         """
-        mode = self.config.get(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE)
+        mode = self._setting(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE)
 
         # ── Octopus Energy mode (v0.30.0, UK) ────────────────────────────
         if mode == BUY_PRICE_MODE_OCTOPUS and slot_start_dt is not None:
@@ -5706,7 +5992,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         prices for tomorrow around 16:00 UK time; the daily refresh window
         guarantees we have today + tomorrow.
         """
-        if self.config.get(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE) != BUY_PRICE_MODE_OCTOPUS:
+        if self._setting(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE) != BUY_PRICE_MODE_OCTOPUS:
             return
         product_code = self.config.get(CONF_OCTOPUS_PRODUCT_CODE, "")
         region = self.config.get(CONF_OCTOPUS_REGION, DEFAULT_OCTOPUS_REGION)
@@ -5763,7 +6049,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                        Soft-fails on EVCC unreachability (empties loadpoints, keeps going).
           - "foxess" — FoxESS only; no EVCC calls at all; empty loadpoints.
         """
-        source = self.config.get(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE)
+        source = self._setting(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE)
 
         if source == LIVE_SOURCE_EVCC:
             try:
@@ -5842,7 +6128,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
           - "solcast"        → user-picked Solcast HA integration entity's `detailedForecast`
           - "auto"           → try EVCC → Forecast.Solar → Solcast in order until one returns data
         """
-        source = self.config.get(CONF_SOLAR_FORECAST_SOURCE, DEFAULT_SOLAR_FORECAST_SOURCE)
+        source = self._setting(CONF_SOLAR_FORECAST_SOURCE, DEFAULT_SOLAR_FORECAST_SOURCE)
         fs_entity = self.config.get(CONF_FORECAST_SOLAR_ENTITY)
         solcast_entity = self.config.get(CONF_SOLCAST_ENTITY)
         solcast_tomorrow_entity = self.config.get(CONF_SOLCAST_TOMORROW_ENTITY)
