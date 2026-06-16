@@ -45,6 +45,15 @@ from .const import (
     CONF_FOXESS_LOAD_POWER_ENTITY,
     CONF_ACKNOWLEDGE_NO_EV,
     CONF_EV_CONTROLLER_ENABLED,
+    CONF_EV_CHARGER_BACKEND,
+    DEFAULT_EV_CHARGER_BACKEND,
+    EV_BACKEND_OCPP,
+    EV_BACKEND_FOXESS_MODBUS,
+    CONF_FOXESS_CHARGER_HOST,
+    CONF_FOXESS_CHARGER_PORT,
+    CONF_FOXESS_CHARGER_UNIT,
+    DEFAULT_FOXESS_CHARGER_PORT,
+    DEFAULT_FOXESS_CHARGER_UNIT,
     CONF_EV_OCPP_CHARGE_POINT_ID,
     CONF_EV_OCPP_STATUS_ENTITY,
     CONF_EV_OCPP_POWER_ENTITY,
@@ -1018,6 +1027,35 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                              default=data.get(CONF_EV_CONTROLLER_ENABLED,
                                               DEFAULT_EV_CONTROLLER_ENABLED)):
                     bool,
+                # ── Charger backend (v0.57.0) ───────────────────────────
+                # OCPP and Modbus are mutually exclusive at the charger; the
+                # mode is set in the FoxESS app. Selecting "FoxESS Modbus TCP"
+                # here requires the charger to be in Modbus TCP mode. The
+                # Modbus backend can charge single-phase (~1.4 kW min), which
+                # the 3-phase OCPP path cannot.
+                vol.Required(CONF_EV_CHARGER_BACKEND,
+                             default=data.get(CONF_EV_CHARGER_BACKEND,
+                                              DEFAULT_EV_CHARGER_BACKEND)):
+                    selector.SelectSelector(selector.SelectSelectorConfig(
+                        options=[
+                            {"value": EV_BACKEND_OCPP,
+                             "label": "OCPP (indlejret server)"},
+                            {"value": EV_BACKEND_FOXESS_MODBUS,
+                             "label": "FoxESS Modbus TCP (enfaset solfølge)"},
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )),
+                vol.Optional(CONF_FOXESS_CHARGER_HOST,
+                             default=data.get(CONF_FOXESS_CHARGER_HOST, "")):
+                    str,
+                vol.Required(CONF_FOXESS_CHARGER_PORT,
+                             default=data.get(CONF_FOXESS_CHARGER_PORT,
+                                              DEFAULT_FOXESS_CHARGER_PORT)):
+                    vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
+                vol.Required(CONF_FOXESS_CHARGER_UNIT,
+                             default=data.get(CONF_FOXESS_CHARGER_UNIT,
+                                              DEFAULT_FOXESS_CHARGER_UNIT)):
+                    vol.All(vol.Coerce(int), vol.Range(min=1, max=255)),
                 vol.Optional(CONF_EV_OCPP_CHARGE_POINT_ID,
                              default=current_id):
                     str,

@@ -6,9 +6,18 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.entity import EntityCategory
 
 from .const import (
     DOMAIN,
+    CONF_PRICE_AREA, DEFAULT_PRICE_AREA, PRICE_AREA_OPTIONS,
+    CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE,
+    LIVE_SOURCE_EVCC, LIVE_SOURCE_HYBRID, LIVE_SOURCE_FOXESS,
+    CONF_SOLAR_FORECAST_SOURCE, DEFAULT_SOLAR_FORECAST_SOURCE,
+    SOLAR_SOURCE_EVCC, SOLAR_SOURCE_SOLCAST, SOLAR_SOURCE_FORECAST_SOLAR, SOLAR_SOURCE_AUTO,
+    CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE,
+    BUY_PRICE_MODE_MANUAL, BUY_PRICE_MODE_STROMLIGNING, BUY_PRICE_MODE_OCTOPUS,
+    CONF_STROMLIGNING_PRODUCT_ID,
     EV_MODE_LOCKED,
     EV_MODE_PV,
     EV_MODE_PV_BATTERY,
@@ -28,6 +37,10 @@ from .const import (
     EV_SCHEDULE_LINK_MODE_STORAGE_PREFIX,
     EV_SCHEDULES_MAX,
     EV_SCHEDULE_DEFAULT_MODE,
+    CONF_EV_CHARGER_BACKEND,
+    DEFAULT_EV_CHARGER_BACKEND,
+    EV_BACKEND_OCPP,
+    EV_BACKEND_FOXESS_MODBUS,
 )
 from .coordinator import BatteryArbitrageCoordinator
 from .sensor import _device_info
@@ -60,11 +73,33 @@ async def async_setup_entry(
 ) -> None:
     """Set up EV-related select entities."""
     coordinator: BatteryArbitrageCoordinator = hass.data[DOMAIN][entry.entry_id]
+    # v0.56.0 — build the Strømligning product (electricity-provider) options
+    # from the bundled catalogue (label "Company — Product", value = product id).
+    # Loaded in the executor to avoid blocking the event loop on the file read.
+    from .stromligning import load_bundled_companies
+    companies = await hass.async_add_executor_job(load_bundled_companies)
+    sl_products: list[tuple[str, str]] = []
+    for c in companies or []:
+        cname = c.get("name", "?")
+        for p in c.get("products", []):
+            if p.get("id"):
+                sl_products.append((p["id"], f"{cname} — {p.get('name', p['id'])}"))
+
     entities: list[SelectEntity] = [
         BatteryArbitrageEvModeSelect(coordinator, entry),
         BatteryArbitrageEvMinAmpsSelect(coordinator, entry),
         BatteryArbitrageEvMaxAmpsSelect(coordinator, entry),
         BatteryArbitrageEvDefaultModeSelect(coordinator, entry),
+        # v0.56.0 — structural settings as live selects (read per-cycle via
+        # coordinator._setting(), so changes apply on the next update).
+        BatteryArbitrageLiveSourceSelect(coordinator, entry),
+        BatteryArbitrageSolarSourceSelect(coordinator, entry),
+        BatteryArbitrageBuyPriceModeSelect(coordinator, entry),
+        BatteryArbitragePriceAreaSelect(coordinator, entry),
+        BatteryArbitrageProviderSelect(coordinator, entry, sl_products),
+        # v0.57.0 — EV charger backend (OCPP vs FoxESS Modbus). Read live via
+        # _setting, so flipping it on the Advanced pane applies next cycle.
+        BatteryArbitrageChargerBackendSelect(coordinator, entry),
     ]
     # v0.38.0 — always create 4 per-slot mode selects (one per maximum
     # slot index). The select reads/writes `_stored["ev_schedules"]`
@@ -297,4 +332,140 @@ class BatteryArbitrageEvScheduleSlotModeSelect(
         if option not in EV_SCHEDULE_LINK_MODE_OPTIONS:
             return
         self.coordinator.set_schedule_slot_mode(self._slot_idx, option)
+        self.async_write_ha_state()
+
+
+class _ConfigSelectBase(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SelectEntity
+):
+    """Base for parameter-like structural settings exposed as live selects
+    (v0.56.0). Backed by `coordinator._stored[key]`, falling back to the config
+    entry then a default. The coordinator reads these per cycle via
+    `_setting()`, so changing the select applies on the next update with no
+    reconfigure. Subclasses set `_key`, `_default`, `_attr_options`,
+    `_attr_translation_key`, `_attr_icon`.
+    """
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.CONFIG
+    _key: str = ""
+    _default: str = ""
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{self._key}"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def current_option(self) -> str | None:
+        return self.coordinator._stored.get(
+            self._key, self._entry.data.get(self._key, self._default),
+        )
+
+    async def async_select_option(self, option: str) -> None:
+        if option not in self._attr_options:
+            return
+        self.coordinator._stored[self._key] = option
+        if self.coordinator.hass:
+            await self.coordinator._store.async_save(self.coordinator._stored)
+            await self.coordinator.async_request_refresh()
+        self.async_write_ha_state()
+
+
+class BatteryArbitrageLiveSourceSelect(_ConfigSelectBase):
+    _attr_translation_key = "live_data_source"
+    _attr_icon = "mdi:transmission-tower"
+    _attr_options = [LIVE_SOURCE_EVCC, LIVE_SOURCE_HYBRID, LIVE_SOURCE_FOXESS]
+    _key = CONF_LIVE_DATA_SOURCE
+    _default = DEFAULT_LIVE_DATA_SOURCE
+
+
+class BatteryArbitrageSolarSourceSelect(_ConfigSelectBase):
+    _attr_translation_key = "solar_forecast_source"
+    _attr_icon = "mdi:weather-sunny"
+    _attr_options = [
+        SOLAR_SOURCE_EVCC, SOLAR_SOURCE_SOLCAST,
+        SOLAR_SOURCE_FORECAST_SOLAR, SOLAR_SOURCE_AUTO,
+    ]
+    _key = CONF_SOLAR_FORECAST_SOURCE
+    _default = DEFAULT_SOLAR_FORECAST_SOURCE
+
+
+class BatteryArbitrageBuyPriceModeSelect(_ConfigSelectBase):
+    _attr_translation_key = "buy_price_mode"
+    _attr_icon = "mdi:cash-multiple"
+    _attr_options = [
+        BUY_PRICE_MODE_MANUAL, BUY_PRICE_MODE_STROMLIGNING, BUY_PRICE_MODE_OCTOPUS,
+    ]
+    _key = CONF_BUY_PRICE_MODE
+    _default = DEFAULT_BUY_PRICE_MODE
+
+
+class BatteryArbitragePriceAreaSelect(_ConfigSelectBase):
+    _attr_translation_key = "price_area"
+    _attr_icon = "mdi:map-marker"
+    _attr_options = [o["value"] for o in PRICE_AREA_OPTIONS]
+    _key = CONF_PRICE_AREA
+    _default = DEFAULT_PRICE_AREA
+
+
+class BatteryArbitrageChargerBackendSelect(_ConfigSelectBase):
+    _attr_translation_key = "ev_charger_backend"
+    _attr_icon = "mdi:ev-station"
+    _attr_options = [EV_BACKEND_OCPP, EV_BACKEND_FOXESS_MODBUS]
+    _key = CONF_EV_CHARGER_BACKEND
+    _default = DEFAULT_EV_CHARGER_BACKEND
+
+
+class BatteryArbitrageProviderSelect(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SelectEntity
+):
+    """Electricity provider/product (Strømligning) as a live dashboard select
+    (v0.56.0). Options are the bundled "Company — Product" catalogue; the
+    human-readable label is shown while the opaque product id is stored under
+    `_stored[CONF_STROMLIGNING_PRODUCT_ID]` (read per-cycle via _setting). Only
+    has an effect while buy-price mode is "stromligning".
+    """
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_translation_key = "stromligning_product"
+    _attr_icon = "mdi:store-outline"
+    _NONE = "—"
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+        products: list[tuple[str, str]],
+    ) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_stromligning_product"
+        self._attr_device_info = _device_info(entry)
+        self._id_to_label = {pid: label for pid, label in products}
+        self._label_to_id = {label: pid for pid, label in products}
+        self._attr_options = [self._NONE] + [label for _, label in products]
+
+    @property
+    def current_option(self) -> str | None:
+        pid = self.coordinator._stored.get(
+            CONF_STROMLIGNING_PRODUCT_ID,
+            self._entry.data.get(CONF_STROMLIGNING_PRODUCT_ID, ""),
+        )
+        return self._id_to_label.get(pid, self._NONE)
+
+    async def async_select_option(self, option: str) -> None:
+        if option not in self._attr_options:
+            return
+        pid = "" if option == self._NONE else self._label_to_id.get(option, "")
+        self.coordinator._stored[CONF_STROMLIGNING_PRODUCT_ID] = pid
+        if self.coordinator.hass:
+            await self.coordinator._store.async_save(self.coordinator._stored)
+            await self.coordinator.async_request_refresh()
         self.async_write_ha_state()

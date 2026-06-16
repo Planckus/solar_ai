@@ -377,7 +377,14 @@ views:
           tap_action:
             action: navigate
             navigation_path: /battery-arbitrage/logs
-- title: EV / OCPP
+        - type: template
+          icon: mdi:tune-variant
+          icon_color: blue-grey
+          content: Avanceret
+          tap_action:
+            action: navigate
+            navigation_path: /battery-arbitrage/avanceret
+- title: EV
   path: ev
   icon: mdi:car-electric
   subview: true
@@ -1451,6 +1458,71 @@ views:
           name: Eksporteffekt
         - entity: sensor.foxessmodbus_load_power
           name: Husforbrug
+- title: Avanceret opsætning
+  path: avanceret
+  icon: mdi:tune-variant
+  subview: true
+  panel: true
+  cards:
+  - type: custom:mod-card
+    card_mod:
+      style: |
+        :host { max-width: 1000px; margin: 0 auto; display: block; }
+    card:
+      type: vertical-stack
+      cards:
+      - type: custom:mushroom-title-card
+        title: Avanceret opsætning
+        subtitle: Strukturel konfiguration — datakilder, prismodel og prisområde
+      - type: custom:mushroom-template-card
+        primary: Åbn integrationsopsætning (Konfigurer)
+        secondary: FoxESS-sensorer, kilder & OCPP — felter der ikke kan vises som dashboard-kontroller
+        icon: mdi:cog-outline
+        icon_color: blue
+        tap_action:
+          action: navigate
+          navigation_path: /config/integrations/integration/battery_arbitrage
+      - type: entities
+        title: Datakilder & prismodel
+        icon: mdi:database-cog
+        show_header_toggle: false
+        entities:
+        - entity: select.solar_ai_live_data_source
+          name: Live datakilde
+        - entity: select.solar_ai_solar_forecast_source
+          name: Solcelleprognose-kilde
+        - entity: select.solar_ai_buy_price_mode
+          name: Købspris-tilstand
+        - entity: select.solar_ai_elprodukt_udbyder
+          name: Elprodukt (udbyder)
+        - entity: select.solar_ai_price_area
+          name: Prisområde
+      - type: entities
+        title: EV-lader
+        icon: mdi:ev-station
+        show_header_toggle: false
+        entities:
+        - entity: select.solar_ai_ev_lader_backend
+          name: Lader-backend
+        - entity: text.solar_ai_foxess_lader_vaert_ip
+          name: FoxESS-lader IP (kun Modbus)
+        - entity: switch.solar_ai_indbygget_ocpp_server
+          name: Indbygget OCPP-server (andre mærker)
+      - type: entities
+        title: Diagnostik & lærte modeller
+        icon: mdi:chart-bell-curve
+        show_header_toggle: false
+        entities:
+        - entity: sensor.solar_ai_laert_batterikapacitet
+          name: Lært batterikapacitet
+        - entity: sensor.solar_ai_auto_detekteret_effektivitet
+          name: Auto-detekteret effektivitet
+        - entity: sensor.battery_arbitrage_laert_opladningshastighed_aktuel_temp
+          name: Lært opladningshastighed (nu)
+        - entity: sensor.battery_arbitrage_solcelle_prognose_nojagtighed
+          name: Solcelleprognose-nøjagtighed
+        - entity: sensor.solar_ai_effektivt_afladningsgulv
+          name: Effektivt afladningsgulv
 - title: Logs
   path: logs
   icon: mdi:format-list-bulleted-square

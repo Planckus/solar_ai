@@ -377,7 +377,14 @@ views:
           tap_action:
             action: navigate
             navigation_path: /battery-arbitrage/logs
-- title: EV / OCPP
+        - type: template
+          icon: mdi:tune-variant
+          icon_color: blue-grey
+          content: Advanced
+          tap_action:
+            action: navigate
+            navigation_path: /battery-arbitrage/advanced
+- title: EV
   path: ev
   icon: mdi:car-electric
   subview: true
@@ -1451,6 +1458,71 @@ views:
           name: Export power
         - entity: sensor.foxessmodbus_load_power
           name: House load
+- title: Advanced setup
+  path: advanced
+  icon: mdi:tune-variant
+  subview: true
+  panel: true
+  cards:
+  - type: custom:mod-card
+    card_mod:
+      style: |
+        :host { max-width: 1000px; margin: 0 auto; display: block; }
+    card:
+      type: vertical-stack
+      cards:
+      - type: custom:mushroom-title-card
+        title: Advanced setup
+        subtitle: Structural configuration — data sources, price model and price area
+      - type: custom:mushroom-template-card
+        primary: Open integration setup (Configure)
+        secondary: FoxESS sensors, sources & OCPP — fields that can't be dashboard controls
+        icon: mdi:cog-outline
+        icon_color: blue
+        tap_action:
+          action: navigate
+          navigation_path: /config/integrations/integration/battery_arbitrage
+      - type: entities
+        title: Data sources & price model
+        icon: mdi:database-cog
+        show_header_toggle: false
+        entities:
+        - entity: select.solar_ai_live_data_source
+          name: Live data source
+        - entity: select.solar_ai_solar_forecast_source
+          name: Solar forecast source
+        - entity: select.solar_ai_buy_price_mode
+          name: Buy-price mode
+        - entity: select.solar_ai_electricity_product_provider
+          name: Electricity product (provider)
+        - entity: select.solar_ai_price_area
+          name: Price area
+      - type: entities
+        title: EV charger
+        icon: mdi:ev-station
+        show_header_toggle: false
+        entities:
+        - entity: select.solar_ai_ev_charger_backend
+          name: Charger backend
+        - entity: text.solar_ai_foxess_charger_host_ip
+          name: FoxESS charger IP (Modbus only)
+        - entity: switch.solar_ai_embedded_ocpp_server
+          name: Embedded OCPP server (other brands)
+      - type: entities
+        title: Diagnostics & learned models
+        icon: mdi:chart-bell-curve
+        show_header_toggle: false
+        entities:
+        - entity: sensor.solar_ai_laert_batterikapacitet
+          name: Learned battery capacity
+        - entity: sensor.solar_ai_auto_detekteret_effektivitet
+          name: Auto-detected efficiency
+        - entity: sensor.battery_arbitrage_laert_opladningshastighed_aktuel_temp
+          name: Learned charge rate (now)
+        - entity: sensor.battery_arbitrage_solcelle_prognose_nojagtighed
+          name: Solar forecast accuracy
+        - entity: sensor.solar_ai_effektivt_afladningsgulv
+          name: Effective discharge floor
 - title: Logs
   path: logs
   icon: mdi:format-list-bulleted-square
