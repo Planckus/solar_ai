@@ -306,6 +306,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # alongside the tariff schedule. Empty in manual mode.
         self._cached_stromligning_prices: dict[str, dict] = {}
         self._last_stromligning_refresh: datetime | None = None
+        # EDS day-ahead spot-price cache (v0.59.4). Last good rate list, so a
+        # restart — or a failed/garbled/rate-limited fetch right after one —
+        # falls back to the last known prices instead of blanking the plan.
+        self._cached_eds_rates: list[dict] = []
+        self._last_eds_refresh: datetime | None = None
         # Octopus Energy cache (v0.30.0). Keyed by valid_from ISO timestamp →
         # per-30-min rate entry from /standard-unit-rates. Empty when the
         # buy-price mode is not "octopus".
@@ -894,6 +899,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # next successful daily tariff fetch.
         self._feed_in_tariff_dso = float(self._stored.get("feed_in_tariff_dso", 0.0))
         self._feed_in_tariff_energinet = float(self._stored.get("feed_in_tariff_energinet", 0.0))
+        # v0.59.4 — restore last-good price caches so a restart (or a failed /
+        # rate-limited fetch right after one) keeps the plan running on known
+        # prices instead of blanking until the next successful fetch.
+        try:
+            self._cached_stromligning_prices = self._stored.get("stromligning_prices_cache", {}) or {}
+            _sl_iso = self._stored.get("stromligning_refresh_iso")
+            self._last_stromligning_refresh = datetime.fromisoformat(_sl_iso) if _sl_iso else None
+            _ts = self._stored.get("tariff_schedule_cache")
+            if isinstance(_ts, list) and len(_ts) == 24:
+                self._tariff_schedule = [float(x) for x in _ts]
+            _tsr_iso = self._stored.get("tariff_schedule_refresh_iso")
+            self._last_tariff_schedule_refresh = datetime.fromisoformat(_tsr_iso) if _tsr_iso else None
+            self._cached_eds_rates = self._stored.get("eds_rates_cache", []) or []
+            _eds_iso = self._stored.get("eds_refresh_iso")
+            self._last_eds_refresh = datetime.fromisoformat(_eds_iso) if _eds_iso else None
+        except Exception as err:  # noqa: BLE001 — never let a bad cached value block startup
+            _LOGGER.warning("Could not restore cached prices from storage: %s", err)
         # v0.52.0 — the dynamic-floor bridge calculation changed (it no longer
         # treats cheap windows as refills), so the previously-learned reserve
         # margin (tuned to compensate for the old under-reservation) no longer
@@ -1088,6 +1110,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     self._tariff_schedule = [
                         round(d + e, 4) for d, e in zip(dso_sched, energinet_sched)
                     ]
+                    # v0.59.4 — persist the schedule + its refresh time so a
+                    # restart reuses it and skips the daily Datahub re-fetch
+                    # while still fresh (avoids the repeated-restart rate-limit).
+                    self._stored["tariff_schedule_cache"] = self._tariff_schedule
+                    self._stored["tariff_schedule_refresh_iso"] = now.isoformat()
                     # v0.49.1 — fetch_feed_in_tariff now returns None (not 0.0)
                     # when the lookup failed (e.g. an EDS 429 on the feed-in
                     # queries while the consumption queries succeeded). Only
@@ -1885,6 +1912,36 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             charge_hours = export_hours = []
             plan_text = "No price data"
 
+        # v0.59.3 — day-split plan hours for the dashboard, so tomorrow's actions
+        # aren't drawn on today's grid (the flat charge/export hours are just
+        # hour-of-day and can't tell today from tomorrow). Default: treat the
+        # flat hours as today; override with date-aware splits when the optimizer
+        # produced an iso-stamped plan.
+        charge_hours_today = list(charge_hours)
+        charge_hours_tomorrow: list = []
+        export_hours_today = list(export_hours)
+        export_hours_tomorrow: list = []
+        if self._optimizer_plan:
+            _plan_today = now.astimezone().date()
+
+            def _split_day(action: str, delta: int) -> list:
+                out: set = set()
+                for s in self._optimizer_plan:
+                    if s["action"] != action:
+                        continue
+                    try:
+                        d = datetime.fromisoformat(s["iso"]).astimezone().date()
+                    except Exception:  # noqa: BLE001
+                        d = _plan_today
+                    if (d - _plan_today).days == delta:
+                        out.add(s["hour"])
+                return sorted(out)
+
+            charge_hours_today = _split_day("CHARGE", 0)
+            charge_hours_tomorrow = _split_day("CHARGE", 1)
+            export_hours_today = _split_day("EXPORT", 0)
+            export_hours_tomorrow = _split_day("EXPORT", 1)
+
         # ---- execute action (skipped when disabled — data still reported) ----
         prev_mode = self._current_mode
         if self._enabled:
@@ -2097,6 +2154,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             plan_text=plan_text,
             plan_charge_hours=charge_hours,
             plan_export_hours=export_hours,
+            plan_charge_hours_today=charge_hours_today,
+            plan_charge_hours_tomorrow=charge_hours_tomorrow,
+            plan_export_hours_today=export_hours_today,
+            plan_export_hours_tomorrow=export_hours_tomorrow,
             house_load_hourly=self.get_house_load_profile(),
             ev_max_kw=float(self._stored.get("ev_max_kw", 0.0)),
             action_log=self.get_action_log(20),
@@ -5935,6 +5996,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         self._cached_stromligning_prices = prices
         self._last_stromligning_refresh = now
+        # v0.59.4 — persist so a restart reuses these (and skips the daily
+        # re-fetch while still fresh, which also avoids hammering the API).
+        self._stored["stromligning_prices_cache"] = prices
+        self._stored["stromligning_refresh_iso"] = now.isoformat()
+        await self._store.async_save(self._stored)
         _LOGGER.debug(
             "Strømligning prices refreshed: %d slots for product=%s, supplier=%s, area=%s",
             len(prices), product_id, supplier_id, price_area,
@@ -6457,13 +6523,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 import json as _json  # noqa: PLC0415
                 data = _json.loads(_raw) if _raw else {}
         except Exception as err:
-            _LOGGER.warning("EDS DayAheadPrices fetch failed (area %s): %s", price_area, err)
-            return {}
+            _LOGGER.warning(
+                "EDS DayAheadPrices fetch failed (area %s): %s — using cached prices", price_area, err)
+            return self._eds_fallback(reference_dt)
 
         records = data.get("records", [])
         if not records:
-            _LOGGER.warning("EDS DayAheadPrices: no records returned for area %s", price_area)
-            return {}
+            _LOGGER.warning(
+                "EDS DayAheadPrices: no records returned for area %s — using cached prices", price_area)
+            return self._eds_fallback(reference_dt)
 
         rates: list[dict] = []
         for rec in records:
@@ -6485,6 +6553,37 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "EDS DayAheadPrices: area %s — %d records, %d valid rates",
             price_area, len(records), len(rates),
         )
+        if rates:
+            # v0.59.4 — cache the good rates (set _stored every cycle but DON'T
+            # async_save here — EDS is fetched on every fast tick, and the
+            # periodic learning-tick save persists it without flash-wear).
+            self._cached_eds_rates = rates
+            self._last_eds_refresh = reference_dt
+            self._stored["eds_rates_cache"] = rates
+            self._stored["eds_refresh_iso"] = reference_dt.isoformat()
+            return {"rates": rates}
+        return self._eds_fallback(reference_dt)
+
+    def _eds_fallback(self, now: datetime) -> dict:
+        """Return cached EDS rates whose slots are still current/future (v0.59.4).
+
+        Lets a failed, garbled, or rate-limited fetch — or the window right
+        after a restart — keep the plan running on the last known spot prices
+        instead of returning nothing. Past slots are dropped so the optimiser
+        only sees still-relevant prices; if nothing usable remains, returns {}.
+        """
+        if not self._cached_eds_rates:
+            return {}
+        cutoff = now - timedelta(hours=1)
+        rates = []
+        for r in self._cached_eds_rates:
+            try:
+                if datetime.fromisoformat(r["start"]) >= cutoff:
+                    rates.append(r)
+            except (ValueError, TypeError, KeyError):
+                continue
+        if rates:
+            _LOGGER.info("EDS: falling back to %d cached spot rates", len(rates))
         return {"rates": rates} if rates else {}
 
     # ------------------------------------------------------------------ #
