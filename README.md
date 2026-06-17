@@ -537,7 +537,7 @@ Four modes selectable from the dashboard (both backends):
 
 Control loop properties:
 
-- Decoupled asyncio task at a configurable cadence (5–60 s, default 10 s), independent of the main coordinator fast-poll.
+- Decoupled asyncio task at a configurable cadence (5–60 s, default 10 s), independent of the main coordinator fast-poll. Editable live from the Advanced setup page; on the Modbus backend this is the setpoint write/heartbeat cadence (kept well under the charger's ~180 s expiry window).
 - Ramps the current setpoint between 6 A and 16 A at a maximum of 2 A per tick. The resulting power depends on the active phase count (3-phase: 4.14–11 kW; single-phase: ~1.4–3.7 kW).
 - Subtracts the EV's own current draw from house load when measuring surplus.
 - Anti-flap windows: start window (default 60 s, range 10–600 s) and stop window (default 180 s, range 30–1800 s). After a stop, the start counter resets.
