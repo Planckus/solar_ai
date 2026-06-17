@@ -92,6 +92,8 @@ Set in *Configure → OCPP Settings*, also on the dashboard's **Advanced setup**
 
 **Phases.** The OCPP backend is three-phase only, with a 4.14 kW minimum (6 A × 3) — the charger does not expose phase switching over OCPP. **Single-phase charging (down to ~1.4 kW) is only available on the `foxess_modbus` backend**, which selects single vs three-phase from the solar surplus by hysteresis (up ≥ 4.5 kW, down < 4.0 kW), gated by the charger's 5-minute suspend interval. The `ev_min_charge_kw` / `ev_max_charge_kw` dropdowns bound the per-phase current (6–16 A) within whichever phase is active.
 
+**Control interval.** `ev_control_interval_seconds` (5–60 s, default 10) sets how often the controller re-evaluates and writes the charger setpoint. It is editable live from the Advanced setup page. On the Modbus backend it is the effective write/heartbeat cadence and must stay well under the charger's ~180 s setpoint-expiry window — any value in range is safe; lower is more responsive, higher means fewer Modbus writes.
+
 ### Battery sensors
 
 | Field | Used for |

@@ -5778,7 +5778,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         """
         _LOGGER.debug("EV control loop entering")
         while True:
-            interval = int(self.config.get(
+            # Read via _setting so the dashboard "EV control interval" number
+            # (stored override) applies on the next iteration without a reload.
+            interval = int(self._setting(
                 CONF_EV_CONTROL_INTERVAL_SECONDS,
                 DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
             ))

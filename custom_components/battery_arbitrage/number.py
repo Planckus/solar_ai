@@ -9,7 +9,7 @@ from homeassistant.components.number import (
     NumberMode,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfPower
+from homeassistant.const import PERCENTAGE, UnitOfPower, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -28,6 +28,8 @@ from .const import (
     DEFAULT_EV_MIN_CHARGE_KW,
     DEFAULT_EV_MAX_CHARGE_KW,
     DEFAULT_EV_BATTERY_PRIORITY_SOC,
+    CONF_EV_CONTROL_INTERVAL_SECONDS,
+    DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
     DEFAULT_EXPORT_FEE,
     DEFAULT_MAX_EXPORT_KW,
     DEFAULT_MIN_EXPORT_PRICE,
@@ -57,6 +59,23 @@ async def async_setup_entry(
         for key, _, _, default in TEMP_BUCKETS
     ]
     entities += [
+        # v0.58.0 — EV control-loop interval: how often the controller
+        # re-evaluates and writes the charger setpoint (both backends). On the
+        # Modbus backend this is the effective write/heartbeat cadence; keep it
+        # well under the charger's 180 s setpoint-expiry window.
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="ev_control_interval_seconds",
+            translation_key="ev_control_interval",
+            default=int(entry.data.get(
+                CONF_EV_CONTROL_INTERVAL_SECONDS, DEFAULT_EV_CONTROL_INTERVAL_SECONDS)),
+            icon="mdi:timer-sync-outline",
+            unit=UnitOfTime.SECONDS,
+            min_val=5,
+            max_val=60,
+            step=5,
+            mode=NumberMode.BOX,
+        ),
         BatteryArbitrageConfigNumber(
             coordinator, entry,
             storage_key="disk_alarm_threshold_pct",
