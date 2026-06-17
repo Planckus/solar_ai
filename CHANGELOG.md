@@ -9,6 +9,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.2] — 2026-06-17
+
+### Changed — faster solar tracking on the Modbus backend
+
+- Removed the 2 A-per-cycle current ramp on the Modbus charger path. The control target is already the median-smoothed true solar surplus, so the current now goes straight to it instead of crawling up 2 A at a time. The slow ramp lagged behind rising PV and exported the difference while it climbed; the charger and car ramp their own draw smoothly regardless, and the export-aware signal corrects any momentary overshoot on the next cycle.
+
+---
+
+## [0.59.1] — 2026-06-17
+
+### Fixed — no false stops during Modbus phase switches
+
+- Added a median-of-3 spike filter to the available-surplus signal. During a single/three-phase switch or a fast ramp, the grid-export, car-draw and battery sensors can disagree for a single tick (one read briefly shows near-zero while the car is actually pulling kW). That spike could trigger a false stop and a re-arm cycle, leaving the car flapping between charging and idle (and exporting) for a few minutes before settling. The filter rejects a single bad reading without lagging genuine changes, so single↔three-phase transitions are smooth.
+
+---
+
 ## [0.59.0] — 2026-06-17
 
 ### Fixed — Modbus solar charging no longer dumps surplus to the grid

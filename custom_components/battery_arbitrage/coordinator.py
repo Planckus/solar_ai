@@ -489,6 +489,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._ev_modbus_phase = 1
         self._ev_modbus_phase_since_ts = None
         self._ev_modbus_upshift_since_ts = None  # when available first crossed the upshift threshold
+        self._ev_modbus_avail_hist: list[float] = []  # last few available-surplus reads (median filter)
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -4262,6 +4263,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_modbus_phase = 1
             self._ev_modbus_phase_since_ts = None
             self._ev_modbus_upshift_since_ts = None
+            self._ev_modbus_avail_hist = []
             _LOGGER.info("EV plugged in (Modbus) — resetting mode to %s", default_mode)
         self._ev_prev_connected = ev_connected
 
@@ -4316,6 +4318,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if available_kw <= 0.0 and grid_export_kw <= 0.0 and grid_import_kw <= 0.0:
             non_ev_load_kw = max(0.0, house_load_kw - ev_current_kw)
             available_kw = max(0.0, solar_kw - non_ev_load_kw)
+        # Median-of-3 spike filter: the export/draw/discharge sensors briefly
+        # disagree during a phase switch or ramp (one tick can read near-zero
+        # while the car is actually pulling kW), which would otherwise trigger a
+        # false stop → re-arm thrash. The median rejects a single bad tick
+        # without lagging genuine trend changes.
+        self._ev_modbus_avail_hist.append(available_kw)
+        self._ev_modbus_avail_hist = self._ev_modbus_avail_hist[-3:]
+        available_kw = sorted(self._ev_modbus_avail_hist)[len(self._ev_modbus_avail_hist) // 2]
 
         # Resolve the active mode (needed by the phase decision + anti-flap).
         effective_mode, active_link = self._resolve_effective_ev_mode(self._ev_active_mode)
@@ -4396,13 +4406,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if PHASES == 3 and target_amps == 0 and final_amps > 0:
             final_amps = 0
 
-        # Smooth ramp (same rate limit as the OCPP path).
-        if final_amps > 0 and self._ev_last_amps > 0:
-            step = EV_MAX_AMP_STEP_PER_TICK
-            if final_amps > self._ev_last_amps + step:
-                final_amps = self._ev_last_amps + step
-            elif final_amps < self._ev_last_amps - step:
-                final_amps = self._ev_last_amps - step
+        # No 2 A/tick ramp clamp on the Modbus path (v0.59.2): the target is
+        # already the median-smoothed true solar surplus, so let the current go
+        # straight to it. The old slow ramp lagged behind rising PV and exported
+        # the difference during the climb; the charger/EV ramp their own draw
+        # smoothly regardless, and the export-aware signal self-corrects any
+        # momentary overshoot on the next tick.
 
         # Heartbeat: ALWAYS apply (unlike OCPP's dedup) so the setpoint never
         # expires. amps<=0 stops; amps>0 holds the chosen phase + sets current.
