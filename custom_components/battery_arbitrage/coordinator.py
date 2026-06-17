@@ -488,6 +488,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # hysteresis + the hardware suspend-interval gate.
         self._ev_modbus_phase = 1
         self._ev_modbus_phase_since_ts = None
+        self._ev_modbus_upshift_since_ts = None  # when available first crossed the upshift threshold
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -4173,6 +4174,33 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_modbus_backend = None
             self._ev_modbus_backend_key = None
 
+    @staticmethod
+    def _ev_available_surplus_kw(
+        ev_draw_kw: float, grid_export_kw: float, grid_import_kw: float,
+        battery_charge_kw: float, battery_discharge_kw: float,
+        battery_soc: float, priority_soc: float,
+    ) -> float:
+        """Export-aware available surplus for the EV (v0.59.0).
+
+        The *solar* power the car could use right now:
+          car draw + grid export − grid import − battery discharge
+          (+ battery charge when the battery is at/above the EV priority SoC).
+
+        - Subtracting battery discharge is essential: when the battery is
+          covering part of the car's draw, that part is NOT solar, so without
+          this the signal over-reads and the car over-commits (e.g. upshifts to
+          three-phase on insufficient sun and drains the battery).
+        - Adding battery charge above the priority SoC lets the car claim the
+          surplus that would otherwise top off an already-high battery.
+        Conserved as the car ramps (draw up, export down), so it doesn't
+        oscillate. Clamped at >= 0.
+        """
+        extra = battery_charge_kw if battery_soc >= priority_soc else 0.0
+        return max(
+            0.0,
+            ev_draw_kw + grid_export_kw - grid_import_kw - battery_discharge_kw + extra,
+        )
+
     async def _run_ev_controller_modbus(
         self, evcc_state: dict, battery_soc: float, floor_soc: float,
     ) -> dict:
@@ -4195,6 +4223,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             CONF_BATTERY_DISCHARGE_ENTITY, FOXESS_BATTERY_DISCHARGE_POWER,
             EV_MODBUS_MIN_AMPS, EV_MODBUS_MAX_AMPS,
             EV_MODBUS_UPSHIFT_KW, EV_MODBUS_DOWNSHIFT_KW, EV_MODBUS_SUSPEND_INTERVAL_MIN,
+            EV_MODBUS_UPSHIFT_DWELL_SECONDS,
         )
 
         backend = await self._get_modbus_backend()
@@ -4232,6 +4261,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # Fresh session starts single-phase; let hysteresis upshift later.
             self._ev_modbus_phase = 1
             self._ev_modbus_phase_since_ts = None
+            self._ev_modbus_upshift_since_ts = None
             _LOGGER.info("EV plugged in (Modbus) — resetting mode to %s", default_mode)
         self._ev_prev_connected = ev_connected
 
@@ -4246,7 +4276,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     "ev_status_label": state["status_label"],
                     "charger_power_kw": 0.0, "charger_status": state["status_label"]}
 
-        # ── Surplus (identical derivation to the OCPP path) ────────────────
+        # ── Available surplus for the EV (export-aware, stable) — v0.59.0 ────
+        # Drive the target off actual grid flow, not solar-minus-load: the
+        # FoxESS load CT includes the car, so solar−load oscillates as the car
+        # ramps (the estimate chased itself across the phase thresholds and the
+        # car ended up stopping while solar was exported). The car's true
+        # headroom is what it already draws PLUS what is spilling to grid, minus
+        # any grid import — a quantity conserved as the car ramps (draw up,
+        # export down by the same amount), so it doesn't thrash, and it credits
+        # exported power so a full battery feeds the car instead of the grid.
         home_power_w = evcc_state.get("homePower", 0) or 0
         pv_power_w   = evcc_state.get("pvPower", 0) or 0
         grid_power_w = evcc_state.get("gridPower", 0) or 0
@@ -4255,53 +4293,77 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ev_current_kw  = state["power_kw"]
         house_load_kw  = home_power_w / 1000.0
         solar_kw       = pv_power_w / 1000.0
-        non_ev_load_kw = max(0.0, house_load_kw - ev_current_kw)
-        solar_surplus_kw = max(0.0, solar_kw - non_ev_load_kw)
         battery_charge_kw = max(0.0, float(self._get_float_state(
             self.config.get(CONF_BATTERY_CHARGE_ENTITY, FOXESS_BATTERY_CHARGE_POWER), 0.0,
         ) or 0.0))
         battery_discharge_kw = max(0.0, float(self._get_float_state(
             self.config.get(CONF_BATTERY_DISCHARGE_ENTITY, FOXESS_BATTERY_DISCHARGE_POWER), 0.0,
         ) or 0.0))
-        net_surplus_for_ev_kw = max(0.0, solar_surplus_kw - battery_charge_kw)
+        priority_soc = float(self._stored.get(
+            "ev_battery_priority_soc",
+            self.config.get(CONF_EV_BATTERY_PRIORITY_SOC, DEFAULT_EV_BATTERY_PRIORITY_SOC),
+        ))
+        # Above the EV battery-priority SoC, power going INTO the house battery
+        # also counts as available, so the car takes priority over topping the
+        # battery past that point (your "prioritise the car above 80%").
+        available_kw = self._ev_available_surplus_kw(
+            ev_current_kw, grid_export_kw, grid_import_kw,
+            battery_charge_kw, battery_discharge_kw, battery_soc, priority_soc,
+        )
+        # Fallback to the solar-minus-load estimate only if the grid-flow signal
+        # is unusable (no draw, no export and no import — e.g. grid sensors
+        # missing), so the controller still works without grid sensors.
+        if available_kw <= 0.0 and grid_export_kw <= 0.0 and grid_import_kw <= 0.0:
+            non_ev_load_kw = max(0.0, house_load_kw - ev_current_kw)
+            available_kw = max(0.0, solar_kw - non_ev_load_kw)
 
-        # Resolve the active mode first — both the phase decision and the
-        # anti-flap window need it.
+        # Resolve the active mode (needed by the phase decision + anti-flap).
         effective_mode, active_link = self._resolve_effective_ev_mode(self._ev_active_mode)
         self._ev_effective_mode = effective_mode
         self._ev_active_schedule_link = active_link
 
-        # ── Phase decision (Phase 2): single vs three-phase ──────────────────
-        # Hysteresis on the EV-available surplus, gated by the hardware suspend
-        # interval (the charger pauses on a too-early downshift, so we must not
-        # change the cap band until that interval has elapsed since the last
-        # switch). Full mode prefers three-phase for max throughput.
+        # ── Phase decision: single vs three-phase ────────────────────────────
+        # Hysteresis on the (stable) available surplus, gated by the hardware
+        # suspend interval (a too-early downshift pauses the session). The
+        # stable signal means switches track real PV changes, not noise.
         now_ts = datetime.now(timezone.utc)
         interval_s = EV_MODBUS_SUSPEND_INTERVAL_MIN * 60
         since_switch = (
             (now_ts - self._ev_modbus_phase_since_ts).total_seconds()
             if self._ev_modbus_phase_since_ts is not None else interval_s + 1
         )
+        # Upshift dwell: require the surplus to stay above the threshold for a
+        # sustained window before going three-phase, so a brief peak can't strand
+        # us in 3φ below the 4.14 kW floor for the suspend interval.
+        if available_kw >= EV_MODBUS_UPSHIFT_KW:
+            if self._ev_modbus_upshift_since_ts is None:
+                self._ev_modbus_upshift_since_ts = now_ts
+            upshift_sustained = (
+                (now_ts - self._ev_modbus_upshift_since_ts).total_seconds()
+                >= EV_MODBUS_UPSHIFT_DWELL_SECONDS
+            )
+        else:
+            self._ev_modbus_upshift_since_ts = None
+            upshift_sustained = False
         if effective_mode == EV_MODE_FULL:
             phase_pref = 3
-        elif net_surplus_for_ev_kw >= EV_MODBUS_UPSHIFT_KW:
+        elif available_kw >= EV_MODBUS_UPSHIFT_KW and upshift_sustained:
             phase_pref = 3
-        elif net_surplus_for_ev_kw < EV_MODBUS_DOWNSHIFT_KW:
+        elif available_kw < EV_MODBUS_DOWNSHIFT_KW:
             phase_pref = 1
         else:
             phase_pref = self._ev_modbus_phase   # in the hysteresis band — hold
         if phase_pref != self._ev_modbus_phase and since_switch >= interval_s:
             _LOGGER.info(
-                "EV Modbus phase switch %dφ → %dφ (surplus %.2f kW)",
-                self._ev_modbus_phase, phase_pref, net_surplus_for_ev_kw,
+                "EV Modbus phase switch %dφ → %dφ (available %.2f kW)",
+                self._ev_modbus_phase, phase_pref, available_kw,
             )
             self._ev_modbus_phase = phase_pref
             self._ev_modbus_phase_since_ts = now_ts
         PHASES = self._ev_modbus_phase
 
-        # Per-phase amp bounds from the min/max dropdowns (which store kW on a
-        # 3-phase basis): recover the amps the user picked and apply them to the
-        # ACTIVE phase. 1φ defaults 6-16 A → ~1.38-3.68 kW; 3φ → ~4.14-11.0 kW.
+        # Per-phase amp bounds from the min/max dropdowns (stored on a 3-phase
+        # basis): recover the amps the user picked and apply to the ACTIVE phase.
         sel_min_amps = self._kw_to_amps(
             float(self._stored.get("ev_min_charge_kw", DEFAULT_EV_MIN_CHARGE_KW)))
         sel_max_amps = self._kw_to_amps(
@@ -4310,32 +4372,29 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         max_amps_sel = max(min_amps_sel, min(EV_MODBUS_MAX_AMPS, sel_max_amps))
         min_kw = self._amps_to_kw(min_amps_sel, PHASES)
         max_kw = self._amps_to_kw(max_amps_sel, PHASES)
-        priority_soc = float(self._stored.get(
-            "ev_battery_priority_soc",
-            self.config.get(CONF_EV_BATTERY_PRIORITY_SOC, DEFAULT_EV_BATTERY_PRIORITY_SOC),
-        ))
 
         target_kw, reason = self._compute_ev_target_kw(
-            effective_mode, solar_surplus_kw, battery_soc, floor_soc,
+            effective_mode, available_kw, battery_soc, floor_soc,
             min_kw, max_kw, priority_soc,
             grid_export_kw=grid_export_kw, ev_last_amps=self._ev_last_amps,
             phases=PHASES,
         )
         target_amps = self._kw_to_amps(target_kw, PHASES)
 
-        # Fail-safe (PV mode): if the house battery is discharging to cover the
-        # car, the "surplus" is really battery power — route to a stop via the
-        # anti-flap window (mirrors the v0.54.0 OCPP drain fix).
-        if (effective_mode == EV_MODE_PV
-                and battery_discharge_kw > EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW
-                and target_amps > 0):
-            target_amps = 0
-            reason = self._msg(
-                f"PV: house battery discharging {battery_discharge_kw:.2f} kW to cover EV — stopping",
-                f"PV: husbatteri aflader {battery_discharge_kw:.2f} kW for at dække EV — stopper",
-            )
+        # No separate battery-discharge hard-stop here (unlike the v0.54.0 OCPP
+        # fix): `available_kw` already subtracts battery discharge, so by energy
+        # balance it equals the true solar surplus. The target therefore tracks
+        # the solar exactly and the car ramps down to match rather than draining
+        # the battery — a hard stop would just cause stop/export/restart cycling.
 
         final_amps = self._apply_ev_time_window(target_amps)
+
+        # Stuck-in-3φ guard: if we're three-phase but the surplus is below the
+        # 3φ floor (target 0) and the suspend interval hasn't let us downshift
+        # yet, stop cleanly instead of letting the anti-flap window hold at the
+        # 4.14 kW three-phase minimum — holding there would drain the battery.
+        if PHASES == 3 and target_amps == 0 and final_amps > 0:
+            final_amps = 0
 
         # Smooth ramp (same rate limit as the OCPP path).
         if final_amps > 0 and self._ev_last_amps > 0:
@@ -4361,7 +4420,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         self._ev_last_reason = reason
         return {
-            **self._ev_telemetry(reported_target_kw, final_amps, net_surplus_for_ev_kw, reason),
+            **self._ev_telemetry(reported_target_kw, final_amps, available_kw, reason),
             "ev_backend": "foxess_modbus",
             "ev_charger_online": True,
             "ev_status_label": state["status_label"],

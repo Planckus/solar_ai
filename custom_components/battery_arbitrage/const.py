@@ -209,8 +209,12 @@ EV_MODBUS_THREE_PHASE_CAP_KW = 11.0
 # (16 A) and three-phase starts at 4.14 kW (6 A × 3), so switch up only when
 # surplus comfortably clears the three-phase floor, and back down with a 0.5 kW
 # gap so a surplus hovering in the dead zone doesn't flap.
-EV_MODBUS_UPSHIFT_KW = 4.5     # sustained surplus above this → three-phase
-EV_MODBUS_DOWNSHIFT_KW = 4.0   # sustained surplus below this → single-phase
+EV_MODBUS_UPSHIFT_KW = 4.3     # available above this → three-phase (just over the 4.14 kW 3φ floor)
+EV_MODBUS_DOWNSHIFT_KW = 4.0   # available below this → single-phase
+# Upshift to three-phase only when the surplus stays above the threshold for
+# this long, so a brief sun peak doesn't commit to 3φ and then get stranded
+# below the 4.14 kW floor for the (hardware-minimum 5 min) suspend interval.
+EV_MODBUS_UPSHIFT_DWELL_SECONDS = 180
 # The charger only permits a phase switch once this interval (0x300B, minutes,
 # hardware minimum 5) has elapsed since the last change; a too-early downshift
 # pauses the session instead of switching. This also serves as the anti-thrash
