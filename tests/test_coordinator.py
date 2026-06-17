@@ -6,12 +6,47 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from custom_components.battery_arbitrage.coordinator import (
+    BatteryArbitrageCoordinator,
     _forecast_slots,
     _forecast_values,
     _rolling_mean,
     _sum_forecast,
     _temp_bucket,
 )
+
+
+class TestEvAvailableSurplus:
+    """Export-aware available-surplus signal (v0.59.0)."""
+
+    # args: ev_draw, export, import, batt_charge, batt_discharge, soc, priority
+    f = staticmethod(BatteryArbitrageCoordinator._ev_available_surplus_kw)
+
+    def test_idle_while_exporting_makes_power_available(self):
+        # Battery full, car idle, 4.4 kW exporting → ~4.4 kW available (restart).
+        assert self.f(0.0, 4.4, 0.0, 0.0, 0.0, 100, 80) == pytest.approx(4.4)
+
+    def test_conserved_while_charging(self):
+        # Car 2.8 kW + 0.7 kW export = 3.5 kW; conserved as the car ramps.
+        assert self.f(2.8, 0.7, 0.0, 0.0, 0.0, 100, 80) == pytest.approx(3.5)
+
+    def test_battery_charge_counts_above_priority_soc(self):
+        # 99% >= 80% priority → power into the battery is available to the car.
+        assert self.f(2.8, 0.0, 0.0, 1.46, 0.0, 99, 80) == pytest.approx(4.26)
+
+    def test_battery_has_priority_below_threshold(self):
+        # 70% < 80% → battery charging is NOT available; car waits.
+        assert self.f(0.0, 0.0, 0.0, 4.5, 0.0, 70, 80) == 0.0
+
+    def test_battery_discharge_subtracted(self):
+        # Car drawing 4.5 kW but 1.7 kW of it is from the battery → only 2.8 kW
+        # is solar. Without this the car over-commits (3-phase, drains battery).
+        assert self.f(4.5, 0.0, 0.0, 0.0, 1.7, 100, 80) == pytest.approx(2.8)
+
+    def test_grid_import_reduces_available(self):
+        assert self.f(3.0, 0.0, 1.0, 0.0, 0.0, 100, 80) == pytest.approx(2.0)
+
+    def test_clamped_non_negative(self):
+        assert self.f(0.0, 0.0, 2.0, 0.0, 0.0, 100, 80) == 0.0
 
 
 # ------------------------------------------------------------------ #

@@ -9,6 +9,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.0] — 2026-06-17
+
+### Fixed — Modbus solar charging no longer dumps surplus to the grid
+
+- **Export-aware surplus.** The Modbus EV controller now measures available solar from actual grid flow (`car draw + grid export − grid import − battery discharge`) instead of `solar − house-load`. Subtracting battery discharge keeps the car from counting battery-sourced power as solar (which would make it over-commit to three-phase and drain the battery). The old estimate oscillated — the house-load meter includes the car, so as the car ramped the figure chased itself across the phase thresholds, and the car could end up **stopped while several kW were exported to the grid**. The new signal is stable (it's conserved as the car ramps) and credits exported power, so a full battery exporting to grid now feeds the car instead.
+- **Car priority above the battery-priority SoC.** When the house battery is at/above the EV battery-priority SoC, the power that would otherwise top off the battery now counts as available to the car — so above that threshold the car genuinely takes the surplus (previously it could sit single-phase while the battery kept absorbing solar at 99%). Below the threshold the battery still has priority.
+- **Smoother phase switching.** The single/three-phase decision runs on the stable signal, so it tracks real sun changes instead of measurement noise; the three-phase upshift threshold was lowered to 4.3 kW (just above the 4.14 kW three-phase floor) to reduce the export dead-band. Upshifting to three-phase now requires the surplus to stay high for a few minutes (so a brief sun peak doesn't strand the car in three-phase below its 4.14 kW floor), and if it does end up stranded there it stops cleanly rather than holding at 4.14 kW and draining the battery.
+- **Graceful tracking instead of hard stops.** Because the surplus signal now equals the true solar surplus by energy balance, the car ramps down to match a dip in the sun rather than being hard-stopped the moment the battery briefly covers it — which previously caused stop/export/restart cycling.
+
+These changes affect the FoxESS Modbus backend only; the OCPP path is unchanged.
+
+---
+
 ## [0.58.0] — 2026-06-17
 
 ### Added — EV control interval on the dashboard
