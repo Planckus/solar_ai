@@ -9,6 +9,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.4] — 2026-06-17
+
+### Added — prices survive restarts and failed fetches
+
+- The day-ahead spot prices, the DSO tariff schedule, and the Strømligning retailer prices are now **persisted to storage** and restored on startup, and a failed/garbled/rate-limited fetch **falls back to the last known prices** (using only still-current/future slots) instead of blanking the plan. Previously these caches were in-memory only: a restart wiped them, and if the next fetch failed (e.g. Energi Data Service returning truncated data, or the DSO tariff endpoint rate-limiting after repeated restarts) the plan showed "No price data" until a fetch finally succeeded.
+- Because the tariff and Strømligning caches now persist, a restart no longer re-hits those APIs while the cache is still fresh — which also avoids the rate-limiting that repeated restarts could trigger.
+
+---
+
+## [0.59.3] — 2026-06-17
+
+### Fixed — "Plan for today" showed tomorrow's export on today's timeline
+
+- The plan card drew its charge/export markers from bare hour-of-day numbers with no date, so an export the optimiser scheduled for *tomorrow* 20:00 appeared on *today's* 0–23 grid — looking like it would sell tonight. The plan sensor now also exposes the charge/export hours split by day (`charge_hours_today`/`_tomorrow`, `export_hours_today`/`_tomorrow`), and the card shows the date-correct summary at the top, draws the grid for **today only** (labelled as such), and lists tomorrow's actions on their own line. No behaviour change — display only.
+
+---
+
 ## [0.59.2] — 2026-06-17
 
 ### Changed — faster solar tracking on the Modbus backend
