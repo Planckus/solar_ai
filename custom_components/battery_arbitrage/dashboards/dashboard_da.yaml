@@ -1508,6 +1508,8 @@ views:
           name: FoxESS-lader IP (kun Modbus)
         - entity: switch.solar_ai_indbygget_ocpp_server
           name: Indbygget OCPP-server (andre mærker)
+        - entity: number.solar_ai_ev_styringsinterval
+          name: Styringsinterval (sek)
       - type: entities
         title: Diagnostik & lærte modeller
         icon: mdi:chart-bell-curve

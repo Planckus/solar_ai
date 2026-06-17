@@ -1508,6 +1508,8 @@ views:
           name: FoxESS charger IP (Modbus only)
         - entity: switch.solar_ai_embedded_ocpp_server
           name: Embedded OCPP server (other brands)
+        - entity: number.solar_ai_ev_control_interval
+          name: Control interval (sec)
       - type: entities
         title: Diagnostics & learned models
         icon: mdi:chart-bell-curve

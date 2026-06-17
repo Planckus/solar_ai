@@ -9,6 +9,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.58.0] — 2026-06-17
+
+### Added — EV control interval on the dashboard
+
+- The **EV control-loop interval** (how often the controller re-evaluates and writes the charger setpoint, 5–60 s) is now an editable number on the Advanced setup page, applied live without a reload. Previously it was only in the Configure dialog.
+- On the Modbus backend this interval is the effective setpoint write/heartbeat cadence. It is re-asserted every tick and stays well under the charger's ~180 s setpoint-expiry window, so any value in range is safe; lower is more responsive, higher means fewer Modbus writes.
+
+### Removed
+
+- Dropped an unused `EV_MODBUS_HEARTBEAT_SECONDS` constant that was never wired up; the control-loop interval is the single source of the write cadence.
+
+---
+
 ## [0.57.0] — 2026-06-16
 
 ### Added — FoxESS Modbus charger backend (single- and three-phase solar following)

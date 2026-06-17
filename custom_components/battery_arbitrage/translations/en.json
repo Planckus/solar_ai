@@ -460,6 +460,7 @@
       "disk_low": { "name": "Low disk space" }
     },
     "number": {
+      "ev_control_interval": { "name": "EV control interval" },
       "charge_rate_below_0": { "name": "Max charge rate — under 0°C" },
       "charge_rate_0_to_5": { "name": "Max charge rate — 0–5°C" },
       "charge_rate_6_to_15": { "name": "Max charge rate — 6–15°C" },

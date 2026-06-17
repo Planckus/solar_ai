@@ -197,9 +197,9 @@ EV_MODBUS_SINGLE_PHASE_CAP_KW = 3.0
 EV_MODBUS_MIN_AMPS = 6
 EV_MODBUS_MAX_AMPS = 16
 # Setpoints (0x3001/0x3002) expire after ~180 s (Time Validity, reg 0x3005),
-# after which the charger reverts to full three-phase. The control loop must
-# re-assert them well within that window — this is the heartbeat cadence.
-EV_MODBUS_HEARTBEAT_SECONDS = 45
+# after which the charger reverts to full three-phase. The control loop
+# re-asserts them every tick (cadence = CONF_EV_CONTROL_INTERVAL_SECONDS),
+# which must stay well under that window.
 
 # ── Phase 2 — 3-phase + hysteresis ────────────────────────────────────────
 # The power cap selects the phase count (auto-switching on): a cap >= 4.2 kW
