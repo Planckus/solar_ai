@@ -988,9 +988,16 @@ views:
           name: Net arbitrage spread
       - type: markdown
         title: Plan for today
-        content: '{% set charge_hrs = state_attr(''sensor.solar_ai_dagens_plan'', ''charge_hours'') | default([]) %}
+        content: '**{{ states(''sensor.solar_ai_dagens_plan'') }}**
 
-          {% set export_hrs = state_attr(''sensor.solar_ai_dagens_plan'', ''export_hours'') | default([]) %}
+
+          {% set charge_hrs = state_attr(''sensor.solar_ai_dagens_plan'', ''charge_hours_today'') | default([]) %}
+
+          {% set export_hrs = state_attr(''sensor.solar_ai_dagens_plan'', ''export_hours_today'') | default([]) %}
+
+          {% set ex_m = state_attr(''sensor.solar_ai_dagens_plan'', ''export_hours_tomorrow'') | default([]) %}
+
+          {% set ch_m = state_attr(''sensor.solar_ai_dagens_plan'', ''charge_hours_tomorrow'') | default([]) %}
 
           {% set cur_h = now().hour %}
 
@@ -1018,7 +1025,9 @@ views:
           {% set ns = namespace(r='''') %}{% for h in range(12, 24) %}{% set sym = ''⚡'' if h in charge_hrs else (''💰'' if h in export_hrs else (''◀'' if h == cur_h else ''·'')) %}{% set ns.r = ns.r + ''| '' + sym + '' '' %}{% endfor %}{{ ns.r }}|
 
 
-          *⚡ charging · 💰 export · ◀ now*
+          *Timeline shows **today** · ⚡ charging · 💰 export · ◀ now*
+
+          {% if ch_m or ex_m %}**Tomorrow:**{% if ch_m %} ⚡ {{ ch_m | join(''h, '') }}h{% endif %}{% if ex_m %} 💰 {{ ex_m | join(''h, '') }}h{% endif %}{% endif %}
 
           {% else %}
 

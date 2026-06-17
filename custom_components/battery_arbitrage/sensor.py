@@ -512,6 +512,12 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         attrs_fn=lambda d: {
             "charge_hours": d.get("plan_charge_hours", []),
             "export_hours": d.get("plan_export_hours", []),
+            # Day-split (v0.59.3) so the dashboard can place tomorrow's actions
+            # on tomorrow's row instead of today's.
+            "charge_hours_today": d.get("plan_charge_hours_today", []),
+            "charge_hours_tomorrow": d.get("plan_charge_hours_tomorrow", []),
+            "export_hours_today": d.get("plan_export_hours_today", []),
+            "export_hours_tomorrow": d.get("plan_export_hours_tomorrow", []),
         },
     ),
     # ── Action log (export / charge session history) ──────────────────────
