@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.7] — 2026-06-18
+
+### Changed
+
+- Point the manifest `documentation` and `issue_tracker` links at the current repository name (`Planckus/solar_ai`) instead of the former `ha-battery-arbitrage` name. The old links only worked through GitHub's rename redirect.
+
+---
+
 ## [0.59.6] — 2026-06-18
 
 ### Fixed — Modbus solar charging on partly cloudy days
