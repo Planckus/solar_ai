@@ -291,7 +291,14 @@ class FoxessModbusCharger:
         }
 
     async def async_start(self) -> None:
-        await self._client.write_single(REG_CHARGING_CTRL, 1)
+        # The charger rejects a start (exception 3) when it's in a state where
+        # one is invalid — e.g. already charging, or "finished" and not yet
+        # ready to resume. That's expected, not an error worth surfacing, so
+        # swallow it (debug-only) instead of failing the whole heartbeat.
+        try:
+            await self._client.write_single(REG_CHARGING_CTRL, 1)
+        except ModbusError as err:
+            _LOGGER.debug("FoxESS charger declined start (%s) — will retry when idle", err)
 
     async def async_stop(self) -> None:
         await self._client.write_single(REG_CHARGING_CTRL, 2)
@@ -301,7 +308,9 @@ class FoxessModbusCharger:
         clamped = max(self._min_amps, min(self._max_amps, amps))
         await self._client.write_multi(REG_MAX_CURRENT, [clamped * 10])
 
-    async def async_apply(self, amps: int, *, phases: int = 1, status: int | None = None) -> None:
+    async def async_apply(
+        self, amps: int, *, phases: int = 1, status: int | None = None, drawing: bool = False,
+    ) -> None:
         """Heartbeat: hold the requested phase mode and assert the current.
 
         Must be called every control cycle. `amps <= 0` stops charging;
@@ -309,6 +318,11 @@ class FoxessModbusCharger:
         cap (which selects single- vs three-phase) and current so the setpoint
         never expires. `phases` is 1 or 3 — the controller decides it with
         hysteresis and respects the suspend interval before changing it.
+
+        `drawing` is whether the charger is actually pulling current right now.
+        The start command is only sent when it is NOT drawing — the L11PMC
+        occasionally blips to "finished" mid-charge, and firing start then just
+        gets rejected (exception 3) and adds churn while it's already charging.
 
         Pass `status` from a prior `read_state` to avoid an extra read; when
         omitted it is fetched.
@@ -338,6 +352,8 @@ class FoxessModbusCharger:
         await self._client.write_multi(REG_MAX_POWER, [cap_raw])
         await self.async_set_current(amps)
 
-        # Start the session if a car is connected but not yet drawing.
-        if status in (EVC_STATUS_CONNECTED, EVC_STATUS_FINISH, EVC_STATUS_PAUSE):
+        # Start the session only if a car is connected AND not already drawing
+        # current — so a momentary "finished" blip during an active charge
+        # doesn't trigger a futile (rejected) start.
+        if not drawing and status in (EVC_STATUS_CONNECTED, EVC_STATUS_FINISH, EVC_STATUS_PAUSE):
             await self.async_start()

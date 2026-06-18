@@ -9,6 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.6] — 2026-06-18
+
+### Fixed — Modbus solar charging on partly cloudy days
+
+- **Stuck stopped on three-phase.** On a partly cloudy day the available surplus oscillates across the phase threshold every few seconds. The phase decision now uses a **rolling average** of the surplus rather than an instantaneous reading, so once a brief sun peak pushes the charger to three-phase it no longer gets stranded there below the 4.14 kW three-phase floor — sitting **stopped** — for the rest of the cloudy spell. The averaging window is itself the dwell: it rides out brief clouds and brief peaks, and no single sample can flip the decision.
+- **Eager upshift.** Three-phase is now engaged only when the average surplus clears the 4.14 kW floor with margin (≥ 5.0 kW), so a brief peak no longer commits to three-phase and then gets stranded below the floor.
+- **Hold instead of stop on brief dips.** While on three-phase, a momentary dip below the 4.14 kW floor now holds at the three-phase minimum (a small, temporary battery top-up) rather than stopping the car — so a passing cloud doesn't interrupt a genuinely sunny session. This is bounded: a sustained dip drops the average below the downshift line and the charger falls back to single-phase, which charges from solar only.
+- **Spurious "start" churn.** The L11PMC occasionally reports "finished" for a moment mid-charge; the controller treated that as "needs starting" and fired a start command, which the charger rejected (Modbus exception 3) — harmless, but it caused a brief 0 kW blip and log spam. The start command is now sent only when the charger is genuinely **not drawing current**, and a declined start is logged at debug instead of as a failure.
+- Net effect: sunny → fast three-phase; cloudy/choppy → continuous single-phase charging instead of repeated stalls; smooth transitions between them.
+
+---
+
 ## [0.59.4] — 2026-06-17
 
 ### Added — prices survive restarts and failed fetches

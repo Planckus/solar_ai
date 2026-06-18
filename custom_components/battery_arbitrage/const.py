@@ -205,16 +205,25 @@ EV_MODBUS_MAX_AMPS = 16
 # The power cap selects the phase count (auto-switching on): a cap >= 4.2 kW
 # runs three-phase, 1.4-4.2 kW runs single-phase. We hold 11 kW for 3-phase.
 EV_MODBUS_THREE_PHASE_CAP_KW = 11.0
-# Hysteresis on the EV-available surplus. Single-phase tops out at ~3.68 kW
-# (16 A) and three-phase starts at 4.14 kW (6 A × 3), so switch up only when
-# surplus comfortably clears the three-phase floor, and back down with a 0.5 kW
-# gap so a surplus hovering in the dead zone doesn't flap.
-EV_MODBUS_UPSHIFT_KW = 4.3     # available above this → three-phase (just over the 4.14 kW 3φ floor)
-EV_MODBUS_DOWNSHIFT_KW = 4.0   # available below this → single-phase
-# Upshift to three-phase only when the surplus stays above the threshold for
-# this long, so a brief sun peak doesn't commit to 3φ and then get stranded
-# below the 4.14 kW floor for the (hardware-minimum 5 min) suspend interval.
-EV_MODBUS_UPSHIFT_DWELL_SECONDS = 180
+# Phase decision (v0.59.6): hysteresis on a ROLLING AVERAGE of the EV-available
+# surplus, not the instantaneous value. The averaging window is the dwell — it
+# rides out both brief clouds (won't downshift) and brief sun peaks (won't
+# upshift), and unlike a countdown timer it can't be reset by a single noisy
+# sample. On a choppy day where the instantaneous surplus oscillates across the
+# threshold every few seconds, a reset-on-blip timer never completes its
+# countdown and the charger stays stranded; an average does not have that flaw.
+#
+# Single-phase tops out at ~3.68 kW (16 A) and three-phase starts at 4.14 kW
+# (6 A × 3). Upshift only when the average clears the 3φ floor with comfortable
+# margin (so a normal dip doesn't immediately strand us below the floor), and
+# downshift with a gap below that so a surplus hovering in the dead zone between
+# 1φ-max and 3φ-min doesn't flap.
+EV_MODBUS_UPSHIFT_KW = 5.0     # avg surplus above this → three-phase (margin over the 4.14 kW 3φ floor)
+EV_MODBUS_DOWNSHIFT_KW = 4.2   # avg surplus below this → single-phase
+# Window over which the available surplus is averaged for the phase decision.
+# Longer = more stable / slower to engage 3φ; long enough that a brief sun peak
+# on an otherwise choppy day does not pull the average over the upshift line.
+EV_MODBUS_PHASE_AVG_WINDOW_SECONDS = 300
 # The charger only permits a phase switch once this interval (0x300B, minutes,
 # hardware minimum 5) has elapsed since the last change; a too-early downshift
 # pauses the session instead of switching. This also serves as the anti-thrash
