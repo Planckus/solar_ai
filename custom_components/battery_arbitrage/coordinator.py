@@ -493,8 +493,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # hysteresis + the hardware suspend-interval gate.
         self._ev_modbus_phase = 1
         self._ev_modbus_phase_since_ts = None
-        self._ev_modbus_upshift_since_ts = None  # when available first crossed the upshift threshold
         self._ev_modbus_avail_hist: list[float] = []  # last few available-surplus reads (median filter)
+        # Phase decision (v0.59.6): rolling window of (timestamp, surplus) over
+        # EV_MODBUS_PHASE_AVG_WINDOW_SECONDS — the average drives the 1φ/3φ
+        # choice, replacing the reset-on-blip dwell timers.
+        self._ev_modbus_phase_avg_hist: list[tuple] = []
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -4285,7 +4288,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             CONF_BATTERY_DISCHARGE_ENTITY, FOXESS_BATTERY_DISCHARGE_POWER,
             EV_MODBUS_MIN_AMPS, EV_MODBUS_MAX_AMPS,
             EV_MODBUS_UPSHIFT_KW, EV_MODBUS_DOWNSHIFT_KW, EV_MODBUS_SUSPEND_INTERVAL_MIN,
-            EV_MODBUS_UPSHIFT_DWELL_SECONDS,
+            EV_MODBUS_PHASE_AVG_WINDOW_SECONDS,
         )
 
         backend = await self._get_modbus_backend()
@@ -4323,8 +4326,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # Fresh session starts single-phase; let hysteresis upshift later.
             self._ev_modbus_phase = 1
             self._ev_modbus_phase_since_ts = None
-            self._ev_modbus_upshift_since_ts = None
             self._ev_modbus_avail_hist = []
+            self._ev_modbus_phase_avg_hist = []
             _LOGGER.info("EV plugged in (Modbus) — resetting mode to %s", default_mode)
         self._ev_prev_connected = ev_connected
 
@@ -4394,40 +4397,41 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._ev_active_schedule_link = active_link
 
         # ── Phase decision: single vs three-phase ────────────────────────────
-        # Hysteresis on the (stable) available surplus, gated by the hardware
-        # suspend interval (a too-early downshift pauses the session). The
-        # stable signal means switches track real PV changes, not noise.
+        # Hysteresis on a ROLLING AVERAGE of the available surplus (v0.59.6),
+        # gated by the hardware suspend interval. The averaging window is the
+        # dwell: it rides out brief clouds (no spurious downshift) and brief sun
+        # peaks (no spurious upshift). Crucially — unlike the v0.59.5 countdown
+        # timers — a single sample above/below the threshold cannot reset it, so
+        # a choppy day whose instantaneous surplus oscillates across the line no
+        # longer strands the charger on three-phase below its 4.14 kW floor.
         now_ts = datetime.now(timezone.utc)
         interval_s = EV_MODBUS_SUSPEND_INTERVAL_MIN * 60
         since_switch = (
             (now_ts - self._ev_modbus_phase_since_ts).total_seconds()
             if self._ev_modbus_phase_since_ts is not None else interval_s + 1
         )
-        # Upshift dwell: require the surplus to stay above the threshold for a
-        # sustained window before going three-phase, so a brief peak can't strand
-        # us in 3φ below the 4.14 kW floor for the suspend interval.
-        if available_kw >= EV_MODBUS_UPSHIFT_KW:
-            if self._ev_modbus_upshift_since_ts is None:
-                self._ev_modbus_upshift_since_ts = now_ts
-            upshift_sustained = (
-                (now_ts - self._ev_modbus_upshift_since_ts).total_seconds()
-                >= EV_MODBUS_UPSHIFT_DWELL_SECONDS
-            )
-        else:
-            self._ev_modbus_upshift_since_ts = None
-            upshift_sustained = False
+        # Append this tick's surplus and drop samples older than the window.
+        self._ev_modbus_phase_avg_hist.append((now_ts, available_kw))
+        cutoff = now_ts - timedelta(seconds=EV_MODBUS_PHASE_AVG_WINDOW_SECONDS)
+        self._ev_modbus_phase_avg_hist = [
+            (t, v) for (t, v) in self._ev_modbus_phase_avg_hist if t >= cutoff
+        ]
+        avg_avail_kw = (
+            sum(v for _, v in self._ev_modbus_phase_avg_hist)
+            / len(self._ev_modbus_phase_avg_hist)
+        )
         if effective_mode == EV_MODE_FULL:
             phase_pref = 3
-        elif available_kw >= EV_MODBUS_UPSHIFT_KW and upshift_sustained:
+        elif avg_avail_kw >= EV_MODBUS_UPSHIFT_KW:
             phase_pref = 3
-        elif available_kw < EV_MODBUS_DOWNSHIFT_KW:
+        elif avg_avail_kw < EV_MODBUS_DOWNSHIFT_KW:
             phase_pref = 1
         else:
-            phase_pref = self._ev_modbus_phase   # in the hysteresis band — hold
+            phase_pref = self._ev_modbus_phase   # within the hysteresis band — hold
         if phase_pref != self._ev_modbus_phase and since_switch >= interval_s:
             _LOGGER.info(
-                "EV Modbus phase switch %dφ → %dφ (available %.2f kW)",
-                self._ev_modbus_phase, phase_pref, available_kw,
+                "EV Modbus phase switch %dφ → %dφ (avg surplus %.2f kW, now %.2f kW)",
+                self._ev_modbus_phase, phase_pref, avg_avail_kw, available_kw,
             )
             self._ev_modbus_phase = phase_pref
             self._ev_modbus_phase_since_ts = now_ts
@@ -4458,14 +4462,26 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # the solar exactly and the car ramps down to match rather than draining
         # the battery — a hard stop would just cause stop/export/restart cycling.
 
-        final_amps = self._apply_ev_time_window(target_amps)
+        # Brief-dip hold (v0.59.6): on three-phase, if the instantaneous surplus
+        # can't meet the 3φ floor (target 0) but the rolling average still favors
+        # three-phase (we are still PHASES==3), hold at the 3φ minimum rather
+        # than stopping — so a passing cloud doesn't interrupt a genuinely sunny
+        # session. This draws a small amount from the battery for those moments.
+        # It is bounded: a sustained dip drops the rolling average below the
+        # downshift threshold, the phase decision falls to single-phase (which
+        # charges from solar only), and at most one suspend interval (~5 min)
+        # elapses before that downshift takes effect. Replaces the old guard that
+        # stopped the car cleanly (which on a choppy day meant long stalls).
+        if PHASES == 3 and target_amps == 0:
+            target_amps = min_amps_sel
+            reason = self._msg(
+                f"PV: surplus {available_kw:.1f} kW < 3φ floor — "
+                f"holding at three-phase minimum (brief dip)",
+                f"PV: overskud {available_kw:.1f} kW < 3φ-grænse — "
+                f"holder ved trefaset minimum (kortvarigt dyk)",
+            )
 
-        # Stuck-in-3φ guard: if we're three-phase but the surplus is below the
-        # 3φ floor (target 0) and the suspend interval hasn't let us downshift
-        # yet, stop cleanly instead of letting the anti-flap window hold at the
-        # 4.14 kW three-phase minimum — holding there would drain the battery.
-        if PHASES == 3 and target_amps == 0 and final_amps > 0:
-            final_amps = 0
+        final_amps = self._apply_ev_time_window(target_amps)
 
         # No 2 A/tick ramp clamp on the Modbus path (v0.59.2): the target is
         # already the median-smoothed true solar surplus, so let the current go
@@ -4477,7 +4493,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Heartbeat: ALWAYS apply (unlike OCPP's dedup) so the setpoint never
         # expires. amps<=0 stops; amps>0 holds the chosen phase + sets current.
         try:
-            await backend.async_apply(final_amps, phases=PHASES, status=state["status"])
+            await backend.async_apply(
+                final_amps, phases=PHASES, status=state["status"],
+                drawing=state["live_phases"] > 0,
+            )
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("FoxESS Modbus apply failed: %s", err)
         self._ev_last_amps = final_amps
