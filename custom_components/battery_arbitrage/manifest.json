@@ -1,9 +1,9 @@
 {
   "domain": "battery_arbitrage",
   "name": "Solar AI",
-  "version": "0.59.6",
-  "documentation": "https://github.com/planckus/ha-battery-arbitrage",
-  "issue_tracker": "https://github.com/planckus/ha-battery-arbitrage/issues",
+  "version": "0.59.7",
+  "documentation": "https://github.com/Planckus/solar_ai",
+  "issue_tracker": "https://github.com/Planckus/solar_ai/issues",
   "codeowners": ["@planckus"],
   "requirements": ["ocpp>=2.1.0"],
   "dependencies": [],
