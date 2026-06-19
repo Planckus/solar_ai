@@ -303,13 +303,17 @@ class FoxessModbusCharger:
     async def async_stop(self) -> None:
         await self._client.write_single(REG_CHARGING_CTRL, 2)
 
-    async def async_set_current(self, amps: int) -> None:
-        """Set the per-phase max current (0x3001), clamped to the envelope."""
+    async def async_set_current(self, amps: float) -> None:
+        """Set the per-phase max current (0x3001), clamped to the envelope.
+
+        The register is UINT16 in 0.1 A units, so fractional amps (e.g. 9.5 A)
+        are written at the hardware's native resolution: deci-amps = round(A×10).
+        """
         clamped = max(self._min_amps, min(self._max_amps, amps))
-        await self._client.write_multi(REG_MAX_CURRENT, [clamped * 10])
+        await self._client.write_multi(REG_MAX_CURRENT, [int(round(clamped * 10))])
 
     async def async_apply(
-        self, amps: int, *, phases: int = 1, status: int | None = None, drawing: bool = False,
+        self, amps: float, *, phases: int = 1, status: int | None = None, drawing: bool = False,
     ) -> None:
         """Heartbeat: hold the requested phase mode and assert the current.
 
