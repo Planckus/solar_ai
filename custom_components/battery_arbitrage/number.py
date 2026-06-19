@@ -30,6 +30,11 @@ from .const import (
     DEFAULT_EV_BATTERY_PRIORITY_SOC,
     CONF_EV_CONTROL_INTERVAL_SECONDS,
     DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
+    CONF_EV_CHARGER_BACKEND,
+    DEFAULT_EV_CHARGER_BACKEND,
+    EV_BACKEND_FOXESS_MODBUS,
+    EV_MODBUS_UPSHIFT_KW,
+    EV_MODBUS_DOWNSHIFT_KW,
     DEFAULT_EXPORT_FEE,
     DEFAULT_MAX_EXPORT_KW,
     DEFAULT_MIN_EXPORT_PRICE,
@@ -285,6 +290,28 @@ async def async_setup_entry(
             mode=NumberMode.SLIDER,
             display_precision=0,
         ),
+        # Three-phase switch-up threshold (v0.59.8) — FoxESS Modbus backend only.
+        # The car goes three-phase once the rolling-average solar surplus clears
+        # this. Higher = more margin over the 4.14 kW three-phase floor (commits
+        # to 3φ only on strong, steady sun; fewer phase switches). Lower = engage
+        # three-phase more eagerly at modest surplus (more switches on choppy
+        # days). The slider floor (4.3 kW) keeps it above the fixed downshift
+        # threshold so the hysteresis band can't invert. Greyed out unless the
+        # FoxESS Modbus backend is selected.
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="ev_modbus_upshift_kw",
+            translation_key="ev_modbus_upshift_kw",
+            default=EV_MODBUS_UPSHIFT_KW,
+            icon="mdi:sine-wave",
+            unit=UnitOfPower.KILO_WATT,
+            min_val=round(EV_MODBUS_DOWNSHIFT_KW + 0.1, 1),
+            max_val=8.0,
+            step=0.1,
+            mode=NumberMode.SLIDER,
+            display_precision=1,
+            available_when=_foxess_modbus_active,
+        ),
     ]
     async_add_entities(entities)
 
@@ -406,6 +433,18 @@ class BatteryArbitrageConfigNumber(
         self.coordinator._stored[self._storage_key] = round(value, 3)
         await self.coordinator._store.async_save(self.coordinator._stored)
         self.async_write_ha_state()
+
+
+def _foxess_modbus_active(coordinator: BatteryArbitrageCoordinator) -> bool:
+    """Return whether the FoxESS Modbus charger backend is selected.
+
+    The three-phase switch-up threshold only governs the Modbus phase decision;
+    on the OCPP backend it has no effect, so grey it out there.
+    """
+    return (
+        coordinator._setting(CONF_EV_CHARGER_BACKEND, DEFAULT_EV_CHARGER_BACKEND)
+        == EV_BACKEND_FOXESS_MODBUS
+    )
 
 
 def _manual_buy_component_available(coordinator: BatteryArbitrageCoordinator) -> bool:

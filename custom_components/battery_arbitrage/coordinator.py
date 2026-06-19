@@ -4420,9 +4420,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             sum(v for _, v in self._ev_modbus_phase_avg_hist)
             / len(self._ev_modbus_phase_avg_hist)
         )
+        # Upshift threshold is dashboard-adjustable (v0.59.8); falls back to the
+        # const default. Clamp above the downshift threshold so the hysteresis
+        # band can't invert if a stored value somehow slips below it.
+        upshift_kw = max(
+            EV_MODBUS_DOWNSHIFT_KW + 0.1,
+            float(self._stored.get("ev_modbus_upshift_kw", EV_MODBUS_UPSHIFT_KW)),
+        )
         if effective_mode == EV_MODE_FULL:
             phase_pref = 3
-        elif avg_avail_kw >= EV_MODBUS_UPSHIFT_KW:
+        elif avg_avail_kw >= upshift_kw:
             phase_pref = 3
         elif avg_avail_kw < EV_MODBUS_DOWNSHIFT_KW:
             phase_pref = 1
