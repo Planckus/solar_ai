@@ -567,6 +567,9 @@ views:
           - entity: number.solar_ai_batteri_forst_taerskel_ev_venter_til_husbatteriet_nar_dette_niveau
             name: Batteri-først tærskel (%)
             icon: mdi:battery-arrow-up
+          - entity: number.solar_ai_trefaset_skift_taerskel_kw
+            name: Trefaset skift-tærskel (kW)
+            icon: mdi:sine-wave
           - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
             name: Standard tilstand ved tilslutning
             icon: mdi:car-connected

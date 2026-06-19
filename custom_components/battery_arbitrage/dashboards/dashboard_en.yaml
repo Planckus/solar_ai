@@ -567,6 +567,9 @@ views:
           - entity: number.solar_ai_batteri_forst_taerskel_ev_venter_til_husbatteriet_nar_dette_niveau
             name: Battery-first threshold (%)
             icon: mdi:battery-arrow-up
+          - entity: number.solar_ai_trefaset_skift_taerskel_kw
+            name: Three-phase switch threshold (kW)
+            icon: mdi:sine-wave
           - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
             name: Default mode on connect
             icon: mdi:car-connected
