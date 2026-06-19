@@ -41,6 +41,9 @@ from .const import (
     DEFAULT_EV_CHARGER_BACKEND,
     EV_BACKEND_OCPP,
     EV_BACKEND_FOXESS_MODBUS,
+    CONF_EV_MODBUS_CURRENT_STEP,
+    DEFAULT_EV_MODBUS_CURRENT_STEP,
+    EV_MODBUS_CURRENT_STEP_OPTIONS,
 )
 from .coordinator import BatteryArbitrageCoordinator
 from .sensor import _device_info
@@ -100,6 +103,7 @@ async def async_setup_entry(
         # v0.57.0 — EV charger backend (OCPP vs FoxESS Modbus). Read live via
         # _setting, so flipping it on the Advanced pane applies next cycle.
         BatteryArbitrageChargerBackendSelect(coordinator, entry),
+        BatteryArbitrageEvCurrentStepSelect(coordinator, entry),
     ]
     # v0.38.0 — always create 4 per-slot mode selects (one per maximum
     # slot index). The select reads/writes `_stored["ev_schedules"]`
@@ -420,6 +424,26 @@ class BatteryArbitrageChargerBackendSelect(_ConfigSelectBase):
     _attr_options = [EV_BACKEND_OCPP, EV_BACKEND_FOXESS_MODBUS]
     _key = CONF_EV_CHARGER_BACKEND
     _default = DEFAULT_EV_CHARGER_BACKEND
+
+
+class BatteryArbitrageEvCurrentStepSelect(_ConfigSelectBase):
+    """Charging-current quantisation step (FoxESS Modbus backend, v0.59.9)."""
+
+    _attr_translation_key = "ev_modbus_current_step"
+    _attr_icon = "mdi:current-ac"
+    _attr_options = EV_MODBUS_CURRENT_STEP_OPTIONS
+    _key = CONF_EV_MODBUS_CURRENT_STEP
+    _default = DEFAULT_EV_MODBUS_CURRENT_STEP
+
+    @property
+    def available(self) -> bool:
+        # Only meaningful on the Modbus path; grey out on OCPP.
+        return (
+            super().available
+            and self.coordinator._setting(
+                CONF_EV_CHARGER_BACKEND, DEFAULT_EV_CHARGER_BACKEND,
+            ) == EV_BACKEND_FOXESS_MODBUS
+        )
 
 
 class BatteryArbitrageProviderSelect(

@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.9] — 2026-06-18
+
+### Added
+
+- **Charging current step is now selectable from the dashboard** (FoxESS Modbus backend). The charger's current register has 0.1 A resolution, but the controller previously quantised the per-phase target to whole amps. A new select offers 1.0 A (default, unchanged behaviour), 0.5 A, and 0.1 A. Finer steps track the solar surplus more closely — up to ~115 W (single-phase) / ~345 W (three-phase) less spilled to the grid or drawn from the battery per step. Takes effect on the next control cycle without a restart; greyed out on the OCPP backend. Note: the realised benefit depends on whether the EV's onboard charger follows sub-amp setpoints — some round to whole amps regardless.
+
+---
+
 ## [0.59.8] — 2026-06-18
 
 ### Added

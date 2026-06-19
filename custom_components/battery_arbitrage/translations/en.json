@@ -357,6 +357,14 @@
           "foxess_modbus": "FoxESS Modbus TCP (single-phase)"
         }
       },
+      "ev_modbus_current_step": {
+        "name": "Charging current step",
+        "state": {
+          "0.1": "0.1 A (finest)",
+          "0.5": "0.5 A",
+          "1.0": "1.0 A (whole amps)"
+        }
+      },
       "ev_mode": {
         "name": "EV charging mode",
         "state": {

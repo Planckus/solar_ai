@@ -570,6 +570,9 @@ views:
           - entity: number.solar_ai_trefaset_skift_taerskel_kw
             name: Three-phase switch threshold (kW)
             icon: mdi:sine-wave
+          - entity: select.solar_ai_stromtrin_opladning
+            name: Charging current step
+            icon: mdi:current-ac
           - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
             name: Default mode on connect
             icon: mdi:car-connected

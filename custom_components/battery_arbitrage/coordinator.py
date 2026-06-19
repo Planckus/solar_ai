@@ -4289,6 +4289,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             EV_MODBUS_MIN_AMPS, EV_MODBUS_MAX_AMPS,
             EV_MODBUS_UPSHIFT_KW, EV_MODBUS_DOWNSHIFT_KW, EV_MODBUS_SUSPEND_INTERVAL_MIN,
             EV_MODBUS_PHASE_AVG_WINDOW_SECONDS,
+            CONF_EV_MODBUS_CURRENT_STEP, DEFAULT_EV_MODBUS_CURRENT_STEP,
         )
 
         backend = await self._get_modbus_backend()
@@ -4455,13 +4456,33 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         min_kw = self._amps_to_kw(min_amps_sel, PHASES)
         max_kw = self._amps_to_kw(max_amps_sel, PHASES)
 
+        # Charging-current step (v0.59.9). The Modbus current register has 0.1 A
+        # resolution; the default 1.0 A reproduces the prior whole-amp behaviour,
+        # finer steps track the solar surplus more closely. The step is applied
+        # inside _compute_ev_target_kw (where the surplus is floored to a step),
+        # so the returned target_kw is already step-aligned.
+        try:
+            current_step = float(self._stored.get(
+                CONF_EV_MODBUS_CURRENT_STEP, DEFAULT_EV_MODBUS_CURRENT_STEP))
+        except (TypeError, ValueError):
+            current_step = 1.0
+        if current_step <= 0:
+            current_step = 1.0
+
         target_kw, reason = self._compute_ev_target_kw(
             effective_mode, available_kw, battery_soc, floor_soc,
             min_kw, max_kw, priority_soc,
             grid_export_kw=grid_export_kw, ev_last_amps=self._ev_last_amps,
-            phases=PHASES,
+            phases=PHASES, current_step=current_step,
         )
-        target_amps = self._kw_to_amps(target_kw, PHASES)
+        # Convert the (already step-aligned) target to per-phase amps at the
+        # register's native 0.1 A resolution, clamped to the user's envelope.
+        if target_kw <= 0:
+            target_amps = 0
+        else:
+            raw_amps = target_kw * 1000.0 / (EV_VOLTAGE * PHASES)
+            target_amps = round(
+                max(min_amps_sel, min(max_amps_sel, raw_amps)), 2)
 
         # No separate battery-discharge hard-stop here (unlike the v0.54.0 OCPP
         # fix): `available_kw` already subtracts battery discharge, so by energy
@@ -4570,6 +4591,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         grid_export_kw: float = 0.0,
         ev_last_amps: int = 0,
         phases: int = EV_PHASES,
+        current_step: float = 1.0,
     ) -> tuple[float, str]:
         """Pure mode→target translation. Returns (target_kw, human-readable reason).
 
@@ -4623,14 +4645,17 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         if mode == EV_MODE_PV:
             if solar_surplus >= min_kw:
-                # Floor to whole amps (v0.27.2): when surplus falls *between*
-                # two amp steps, command the LOWER amp so the fractional
-                # surplus flows into the house battery instead of being
-                # waste-exported or pulled from grid. Example: 5.4 kW surplus
-                # → 7 A (4.83 kW to EV), 0.57 kW to battery.
+                # Floor to the current step (v0.27.2 / v0.59.9): when surplus
+                # falls *between* two steps, command the LOWER step so the
+                # fractional surplus flows into the house battery instead of
+                # being waste-exported or pulled from grid. The step defaults to
+                # 1 A (whole amps), but the FoxESS Modbus backend can pass a
+                # finer step (0.5 / 0.1 A) for tighter solar tracking. Example
+                # at 1 A: 5.4 kW surplus → 7 A (4.83 kW to EV), 0.57 kW to battery.
                 import math
                 line_voltage_kw = EV_VOLTAGE * phases / 1000.0  # 0.69 kW/A (3φ), 0.23 (1φ)
-                raw_amps = math.floor(solar_surplus / line_voltage_kw)
+                step = current_step if current_step > 0 else 1.0
+                raw_amps = math.floor((solar_surplus / line_voltage_kw) / step) * step
                 max_amps = max(EV_OCPP_MIN_AMPS, int(round(max_kw / line_voltage_kw)))
                 amps = max(EV_OCPP_MIN_AMPS, min(max_amps, raw_amps))
                 target = amps * line_voltage_kw
@@ -4638,13 +4663,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 if excess > 0.05:  # only show "til batteri" if meaningful
                     return target, self._msg(
                         f"PV: {solar_surplus:.2f} kW surplus → {target:.2f} kW "
-                        f"({amps} A), {excess:.2f} kW to battery",
+                        f"({amps:g} A), {excess:.2f} kW to battery",
                         f"PV: {solar_surplus:.2f} kW overskud → {target:.2f} kW "
-                        f"({amps} A), {excess:.2f} kW til batteri",
+                        f"({amps:g} A), {excess:.2f} kW til batteri",
                     )
                 return target, self._msg(
-                    f"PV: {solar_surplus:.2f} kW surplus → {target:.2f} kW ({amps} A)",
-                    f"PV: {solar_surplus:.2f} kW overskud → {target:.2f} kW ({amps} A)",
+                    f"PV: {solar_surplus:.2f} kW surplus → {target:.2f} kW ({amps:g} A)",
+                    f"PV: {solar_surplus:.2f} kW overskud → {target:.2f} kW ({amps:g} A)",
                 )
             return 0.0, self._msg(
                 f"PV: surplus {solar_surplus:.1f} kW < min {min_kw:.1f} kW — stopped",
