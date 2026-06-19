@@ -343,6 +343,14 @@
           "foxess_modbus": "FoxESS Modbus TCP (enfaset)"
         }
       },
+      "ev_modbus_current_step": {
+        "name": "Strømtrin (opladning)",
+        "state": {
+          "0.1": "0,1 A (fineste)",
+          "0.5": "0,5 A",
+          "1.0": "1,0 A (hele ampere)"
+        }
+      },
       "ev_mode": {
         "name": "EV-opladningstilstand",
         "state": {

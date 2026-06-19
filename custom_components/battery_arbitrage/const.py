@@ -224,6 +224,14 @@ EV_MODBUS_DOWNSHIFT_KW = 4.2   # avg surplus below this → single-phase
 # Longer = more stable / slower to engage 3φ; long enough that a brief sun peak
 # on an otherwise choppy day does not pull the average over the upshift line.
 EV_MODBUS_PHASE_AVG_WINDOW_SECONDS = 300
+# Charging-current step (v0.59.9). The Modbus current register (0x3001) has
+# 0.1 A resolution; we quantise the per-phase target to this step. 1.0 = the
+# historical whole-amp behaviour; finer steps track the solar surplus more
+# closely (less spill to grid / draw from battery), subject to whether the EV
+# itself follows sub-amp setpoints. Dashboard-selectable.
+CONF_EV_MODBUS_CURRENT_STEP = "ev_modbus_current_step"
+DEFAULT_EV_MODBUS_CURRENT_STEP = "1.0"
+EV_MODBUS_CURRENT_STEP_OPTIONS = ["0.1", "0.5", "1.0"]
 # The charger only permits a phase switch once this interval (0x300B, minutes,
 # hardware minimum 5) has elapsed since the last change; a too-early downshift
 # pauses the session instead of switching. This also serves as the anti-thrash
