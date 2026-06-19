@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.8] — 2026-06-18
+
+### Added
+
+- **Three-phase switch threshold is now adjustable from the dashboard** (FoxESS Modbus backend). A new number entity sets the rolling-average solar surplus at which the charger switches the car to three-phase (default 5.0 kW). Higher = commit to three-phase only on strong, steady sun (fewer phase switches); lower = engage three-phase more eagerly at modest surplus. The slider floor (4.3 kW) keeps it above the downshift threshold so the hysteresis band cannot invert, and it takes effect on the next control cycle without a restart. Greyed out on the OCPP backend, where it has no effect.
+
+---
+
 ## [0.59.7] — 2026-06-18
 
 ### Changed
