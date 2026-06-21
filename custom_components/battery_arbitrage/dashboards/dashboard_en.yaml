@@ -573,6 +573,12 @@ views:
           - entity: select.solar_ai_stromtrin_opladning
             name: Charging current step
             icon: mdi:current-ac
+          - entity: number.solar_ai_faseskift_interval_min
+            name: Phase-switch interval (min)
+            icon: mdi:timer-sync-outline
+          - entity: number.solar_ai_override_rampe_trin_s
+            name: Override ramp step (s)
+            icon: mdi:speedometer
           - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
             name: Default mode on connect
             icon: mdi:car-connected
