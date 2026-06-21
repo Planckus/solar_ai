@@ -498,6 +498,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # EV_MODBUS_PHASE_AVG_WINDOW_SECONDS — the average drives the 1φ/3φ
         # choice, replacing the reset-on-blip dwell timers.
         self._ev_modbus_phase_avg_hist: list[tuple] = []
+        # Battery-full override grid-drain guard (v0.59.10): when the override
+        # ramp is pinned at min but still importing, this marks when that started
+        # so a sustained failure to lift MPPT trips the cool-down.
+        self._ev_modbus_override_fail_since_ts = None
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -4329,6 +4333,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_modbus_phase_since_ts = None
             self._ev_modbus_avail_hist = []
             self._ev_modbus_phase_avg_hist = []
+            self._ev_modbus_override_fail_since_ts = None
+            self._ev_session_was_override_induced = False
+            self._reset_override_ramp()
             _LOGGER.info("EV plugged in (Modbus) — resetting mode to %s", default_mode)
         self._ev_prev_connected = ev_connected
 
@@ -4490,6 +4497,84 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # the solar exactly and the car ramps down to match rather than draining
         # the battery — a hard stop would just cause stop/export/restart cycling.
 
+        # ── Battery-full override (v0.59.10) ──────────────────────────────────
+        # Ported from the OCPP controller, which the Modbus path never reaches
+        # (_run_ev_controller hands off to this method before the override code).
+        # Breaks the export-blocked + battery-full curtailment deadlock: when the
+        # price-floor block is open (export blocked on a low/negative price), the
+        # house battery is full, and PV is producing, the inverter throttles MPPT
+        # to the AC load — so the export-aware surplus reads ~0, the car never
+        # starts, and PV stays curtailed. Actively ramp the EV draw while watching
+        # grid import / battery discharge so it harvests only the otherwise-wasted
+        # PV; once MPPT lifts and real surplus appears, normal tracking returns a
+        # higher target and the override yields.
+        override_forcing = False
+        # Fresh session about to begin → clear the override session marker so
+        # only genuinely override-induced sessions get the soft cool-down.
+        if self._ev_last_amps == 0:
+            self._ev_session_was_override_induced = False
+        max_soc = int(self._stored.get(
+            "battery_max_soc",
+            self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)))
+        override_cooldown_active = (
+            self._ev_probe_cooldown_until is not None
+            and now_ts < self._ev_probe_cooldown_until
+        )
+        battery_full_override = (
+            effective_mode == EV_MODE_PV
+            and self._current_floor_block is not None      # export floor-blocked
+            and battery_soc >= (max_soc - 2)               # battery has no headroom
+            and solar_kw > 0.1                             # PV is producing
+            and not override_cooldown_active
+            # If the house battery is discharging to cover the car there is no
+            # curtailed PV to harvest — yield so the override can't drain it.
+            and battery_discharge_kw <= EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW
+        )
+        if battery_full_override:
+            ramp_amps = self._update_override_ramp(
+                now_ts, grid_import_kw, battery_discharge_kw,
+                min_amps_sel, max_amps_sel,
+            )
+            ramp_kw = self._amps_to_kw(ramp_amps, PHASES)
+            if target_amps <= ramp_amps:
+                target_amps = ramp_amps
+                override_forcing = True
+                self._ev_session_was_override_induced = True
+                reason = self._msg(
+                    f"Override: battery full ({battery_soc:.0f}%/{max_soc}%) + export "
+                    f"blocked — EV draws {ramp_amps:g} A ({ramp_kw:.2f} kW), "
+                    f"grid import {grid_import_kw:.2f} kW (raw PV {solar_kw:.2f} kW)",
+                    f"Override: batteri fuldt ({battery_soc:.0f}%/{max_soc}%) + eksport "
+                    f"blokeret — EV trækker {ramp_amps:g} A ({ramp_kw:.2f} kW), "
+                    f"net-import {grid_import_kw:.2f} kW (rå PV {solar_kw:.2f} kW)",
+                )
+            # Grid-drain guard: if MPPT can't even cover the minimum ramp from PV
+            # (ramp pinned at min while still importing for a sustained stretch),
+            # trip the cool-down and yield so we don't import from the grid
+            # indefinitely.
+            if (ramp_amps <= min_amps_sel
+                    and grid_import_kw > EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW):
+                if self._ev_modbus_override_fail_since_ts is None:
+                    self._ev_modbus_override_fail_since_ts = now_ts
+                elif (now_ts - self._ev_modbus_override_fail_since_ts).total_seconds() >= 120:
+                    self._ev_probe_cooldown_until = (
+                        now_ts + timedelta(seconds=EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS))
+                    self._reset_override_ramp()
+                    self._ev_modbus_override_fail_since_ts = None
+                    target_amps = 0
+                    override_forcing = False
+                    reason = self._msg(
+                        "Override paused: MPPT not lifting (grid import at minimum) "
+                        "— cooling down before retry",
+                        "Override pause: MPPT løfter ikke (net-import ved minimum) "
+                        "— afkøling før nyt forsøg",
+                    )
+            else:
+                self._ev_modbus_override_fail_since_ts = None
+        else:
+            self._ev_modbus_override_fail_since_ts = None
+            self._reset_override_ramp()
+
         # Brief-dip hold (v0.59.6): on three-phase, if the instantaneous surplus
         # can't meet the 3φ floor (target 0) but the rolling average still favors
         # three-phase (we are still PHASES==3), hold at the 3φ minimum rather
@@ -4509,7 +4594,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 f"holder ved trefaset minimum (kortvarigt dyk)",
             )
 
-        final_amps = self._apply_ev_time_window(target_amps)
+        final_amps = self._apply_ev_time_window(target_amps, probing=override_forcing)
+
+        # Soft cool-down on override-induced session end (v0.59.10, mirror of the
+        # OCPP path): when an override-induced session ends (was drawing, now
+        # stopping), arm a cool-down before the override may fire again, so it
+        # can't thrash on/off as surplus oscillates under partly-cloudy skies.
+        if (self._ev_session_was_override_induced
+                and self._ev_last_amps > 0
+                and final_amps == 0):
+            self._ev_probe_cooldown_until = now_ts + timedelta(
+                seconds=EV_OVERRIDE_SOFT_COOLDOWN_SECONDS)
+            self._ev_session_was_override_induced = False
 
         # No 2 A/tick ramp clamp on the Modbus path (v0.59.2): the target is
         # already the median-smoothed true solar surplus, so let the current go
@@ -4529,6 +4625,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("FoxESS Modbus apply failed: %s", err)
         self._ev_last_amps = final_amps
         self._ev_last_rate_assert_ts = now_ts
+
+        # Battery-lock (v0.59.10 — ported from the OCPP path): in FULL ("hurtig")
+        # mode, lock the house battery while the car is actually drawing, so the
+        # car's demand is met from solar + grid and never by raiding the house
+        # battery. Releases automatically when the draw stops or the mode leaves
+        # FULL. (PV-mode never needs this — its target tracks solar surplus and
+        # the battery-full override yields if the battery is discharging.)
+        want_lock = (
+            effective_mode == EV_MODE_FULL
+            and ev_current_kw > EV_BATTERY_LOCK_POWER_THRESHOLD_KW
+        )
+        if want_lock != self._ev_battery_locked:
+            await self._set_battery_lock(want_lock)
 
         # Honest COOLING telemetry: holding at minimum while target is 0.
         reported_target_kw = target_kw
