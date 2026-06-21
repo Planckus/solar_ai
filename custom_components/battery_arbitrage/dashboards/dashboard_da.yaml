@@ -933,7 +933,7 @@ views:
       - type: markdown
         content: '## Købspris-matrix (DKK/kWh)
 
-          {% set slots = state_attr(''sensor.solar_ai_kobspris_prognose'',''slots'') or [] %}{% set today = now().date() %}{% set tom = today + timedelta(days=1) %}{% macro cell(v) %}{% if v is none %}·{% elif v<1.0 %}🟢{{''%.1f''|format(v)}}{% elif v<1.5 %}🟡{{''%.1f''|format(v)}}{% elif v<2.0 %}🟠{{''%.1f''|format(v)}}{% else %}🔴{{''%.1f''|format(v)}}{% endif %}{% endmacro %}
+          {% set slots = state_attr(''sensor.solar_ai_kobspris_prognose'',''slots'') or [] %}{% set today = now().date() %}{% set tom = today + timedelta(days=1) %}{% macro cell(v) %}{% if v is none %}·{% elif v<1.0 %}🟢{{''%.2f''|format(v)}}{% elif v<1.5 %}🟡{{''%.2f''|format(v)}}{% elif v<2.0 %}🟠{{''%.2f''|format(v)}}{% else %}🔴{{''%.2f''|format(v)}}{% endif %}{% endmacro %}
 
           | | {% for h in range(24) %}{{''%02d''|format(h)}} | {% endfor %}
 
@@ -953,7 +953,7 @@ views:
       - type: markdown
         content: '## Salgspris-matrix (DKK/kWh)
 
-          {% set slots = state_attr(''sensor.solar_ai_kobspris_prognose'',''slots'') or [] %}{% set today = now().date() %}{% set tom = today + timedelta(days=1) %}{% macro cell(v) %}{% if v is none %}·{% elif v>=1.0 %}🟢{{''%.1f''|format(v)}}{% elif v>=0.7 %}🟡{{''%.1f''|format(v)}}{% elif v>=0.4 %}🟠{{''%.1f''|format(v)}}{% else %}🔴{{''%.1f''|format(v)}}{% endif %}{% endmacro %}
+          {% set slots = state_attr(''sensor.solar_ai_kobspris_prognose'',''slots'') or [] %}{% set today = now().date() %}{% set tom = today + timedelta(days=1) %}{% macro cell(v) %}{% if v is none %}·{% elif v>=1.0 %}🟢{{''%.2f''|format(v)}}{% elif v>=0.7 %}🟡{{''%.2f''|format(v)}}{% elif v>=0.4 %}🟠{{''%.2f''|format(v)}}{% else %}🔴{{''%.2f''|format(v)}}{% endif %}{% endmacro %}
 
           | | {% for h in range(24) %}{{''%02d''|format(h)}} | {% endfor %}
 

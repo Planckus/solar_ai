@@ -1735,7 +1735,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if price_resolution_15min:
             for slot_start, dur_h, h, m, spot in grid_slot_data:
                 buy_slot = round((spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor, 3)
-                sell_slot = round(max(0.0, spot - export_fee - feed_in_tariff), 3)
+                # v0.59.11 — do NOT clamp at 0: show the true (possibly negative)
+                # sell price so the matrix/chart reflect pay-to-export hours.
+                sell_slot = round(spot - export_fee - feed_in_tariff, 3)
                 price_chart_slots.append({"h": h, "m": m, "buy": buy_slot, "sell": sell_slot})
         else:
             seen_ch: set[int] = set()
@@ -1743,7 +1745,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 if h not in seen_ch:
                     seen_ch.add(h)
                     buy_slot = round((spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor, 3)
-                    sell_slot = round(max(0.0, spot - export_fee - feed_in_tariff), 3)
+                    # v0.59.11 — do NOT clamp at 0: show the true (possibly negative)
+                    # sell price so the matrix/chart reflect pay-to-export hours.
+                    sell_slot = round(spot - export_fee - feed_in_tariff, 3)
                     price_chart_slots.append({"h": h, "m": 0, "buy": buy_slot, "sell": sell_slot})
 
         # v0.48.1 — hourly, timestamped buy/sell price forecast over the FULL
@@ -1752,7 +1756,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         hourly_acc: dict = {}
         for slot_start, dur_h, h, m, spot in grid_slot_data_opt:
             buy = (spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor
-            sell = max(0.0, spot - export_fee - feed_in_tariff)
+            # v0.59.11 — unclamped so the price matrix shows negative sell prices.
+            sell = spot - export_fee - feed_in_tariff
             key = slot_start.replace(minute=0, second=0, microsecond=0).isoformat()
             hourly_acc.setdefault(key, []).append((buy, sell))
         buy_price_forecast = [

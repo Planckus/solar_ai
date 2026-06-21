@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.11] — 2026-06-21
+
+### Changed
+
+- **Price matrix now shows two decimals and negative prices.** The buy/sell price-matrix cards display prices to two decimals (`0.00`) instead of one, so small values read correctly (e.g. `-0.04` instead of `-0.0`). The sell price in the price-chart and matrix data is no longer clamped at zero, so genuinely negative prices are shown — making pay-to-export hours, and the hours where importing (e.g. charging the car) actually earns money, visible. (The buy price was already unclamped; this surfaces the sell side and the finer precision.)
+
+---
+
 ## [0.59.10] — 2026-06-21
 
 ### Fixed
