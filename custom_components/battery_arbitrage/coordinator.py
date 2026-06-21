@@ -199,6 +199,7 @@ from .const import (
     EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW,
     EV_OVERRIDE_RAMP_FREEZE_SECONDS,
     EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW,
+    EV_OVERRIDE_3PH_RETRY_SECONDS,
     EV_STOP_RECOVERY_SECONDS,
     EV_START_DROP_TIMEOUT_SECONDS,
     EV_COOL_ENTRY_SECONDS,
@@ -502,6 +503,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # ramp is pinned at min but still importing, this marks when that started
         # so a sustained failure to lift MPPT trips the cool-down.
         self._ev_modbus_override_fail_since_ts = None
+        # v0.59.13 — when the override's three-phase attempt can't be sustained
+        # (PV < 4.14 kW), three-phase is blocked until this time and the override
+        # falls back to single-phase; it retries three-phase afterwards.
+        self._ev_modbus_override_3ph_blocked_until = None
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -4339,6 +4344,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_modbus_avail_hist = []
             self._ev_modbus_phase_avg_hist = []
             self._ev_modbus_override_fail_since_ts = None
+            self._ev_modbus_override_3ph_blocked_until = None
             self._ev_session_was_override_induced = False
             self._reset_override_ramp()
             _LOGGER.info("EV plugged in (Modbus) — resetting mode to %s", default_mode)
@@ -4418,7 +4424,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # a choppy day whose instantaneous surplus oscillates across the line no
         # longer strands the charger on three-phase below its 4.14 kW floor.
         now_ts = datetime.now(timezone.utc)
-        interval_s = EV_MODBUS_SUSPEND_INTERVAL_MIN * 60
+        # Phase-switch / suspend interval — dashboard-adjustable (v0.59.13). The
+        # L11PMC was verified to accept a 1-min value on reg 0x300B (the
+        # documented 5-min "minimum" is not hardware-enforced), so switches can
+        # be far snappier. The hardware write is held at the floor; this gates
+        # only the controller's anti-thrash window.
+        suspend_interval_min = max(1, int(float(self._stored.get(
+            "ev_modbus_suspend_interval_min", EV_MODBUS_SUSPEND_INTERVAL_MIN))))
+        interval_s = suspend_interval_min * 60
         since_switch = (
             (now_ts - self._ev_modbus_phase_since_ts).total_seconds()
             if self._ev_modbus_phase_since_ts is not None else interval_s + 1
@@ -4440,8 +4453,33 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             EV_MODBUS_DOWNSHIFT_KW + 0.1,
             float(self._stored.get("ev_modbus_upshift_kw", EV_MODBUS_UPSHIFT_KW)),
         )
+        # ── Battery-full override → three-phase escalation (v0.59.13) ─────────
+        # When the override is active (battery full + export blocked + sun) the
+        # surplus signal is pinned ~0, so the rolling-average decision would keep
+        # us single-phase — capping the car at ~3.7 kW while the inverter can
+        # produce far more (measured 7.2 kW curtailed). Force three-phase to
+        # reach the curtailed PV. If three-phase can't be sustained (grid imports
+        # at the 6 A floor → PV < 4.14 kW), the grid-drain guard sets
+        # `_ev_modbus_override_3ph_blocked_until` and we fall back to single.
+        ovr_max_soc = int(self._stored.get(
+            "battery_max_soc", self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)))
+        override_cooldown_active = (
+            self._ev_probe_cooldown_until is not None
+            and now_ts < self._ev_probe_cooldown_until)
+        override_active = (
+            effective_mode == EV_MODE_PV
+            and self._current_floor_block is not None
+            and battery_soc >= (ovr_max_soc - 2)
+            and solar_kw > 0.1
+            and not override_cooldown_active
+            and battery_discharge_kw <= EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW)
+        override_3ph_blocked = (
+            self._ev_modbus_override_3ph_blocked_until is not None
+            and now_ts < self._ev_modbus_override_3ph_blocked_until)
         if effective_mode == EV_MODE_FULL:
             phase_pref = 3
+        elif override_active and not override_3ph_blocked:
+            phase_pref = 3   # escalate to three-phase to harvest curtailed PV
         elif avg_avail_kw >= upshift_kw:
             phase_pref = 3
         elif avg_avail_kw < EV_MODBUS_DOWNSHIFT_KW:
@@ -4518,24 +4556,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # only genuinely override-induced sessions get the soft cool-down.
         if self._ev_last_amps == 0:
             self._ev_session_was_override_induced = False
-        max_soc = int(self._stored.get(
-            "battery_max_soc",
-            self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)))
-        override_cooldown_active = (
-            self._ev_probe_cooldown_until is not None
-            and now_ts < self._ev_probe_cooldown_until
-        )
-        battery_full_override = (
-            effective_mode == EV_MODE_PV
-            and self._current_floor_block is not None      # export floor-blocked
-            and battery_soc >= (max_soc - 2)               # battery has no headroom
-            and solar_kw > 0.1                             # PV is producing
-            and not override_cooldown_active
-            # If the house battery is discharging to cover the car there is no
-            # curtailed PV to harvest — yield so the override can't drain it.
-            and battery_discharge_kw <= EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW
-        )
-        if battery_full_override:
+        # `override_active` was computed in the phase decision above (it also
+        # drives the three-phase escalation). PHASES is already 3 here when the
+        # override escalated, so the ramp climbs on three-phase to harvest the
+        # curtailed PV the single-phase wall couldn't reach.
+        if override_active:
             ramp_amps = self._update_override_ramp(
                 now_ts, grid_import_kw, battery_discharge_kw,
                 min_amps_sel, max_amps_sel,
@@ -4546,34 +4571,47 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 override_forcing = True
                 self._ev_session_was_override_induced = True
                 reason = self._msg(
-                    f"Override: battery full ({battery_soc:.0f}%/{max_soc}%) + export "
-                    f"blocked — EV draws {ramp_amps:g} A ({ramp_kw:.2f} kW), "
+                    f"Override: battery full ({battery_soc:.0f}%/{ovr_max_soc}%) + export "
+                    f"blocked — EV draws {ramp_amps:g} A {PHASES}φ ({ramp_kw:.2f} kW), "
                     f"grid import {grid_import_kw:.2f} kW (raw PV {solar_kw:.2f} kW)",
-                    f"Override: batteri fuldt ({battery_soc:.0f}%/{max_soc}%) + eksport "
-                    f"blokeret — EV trækker {ramp_amps:g} A ({ramp_kw:.2f} kW), "
+                    f"Override: batteri fuldt ({battery_soc:.0f}%/{ovr_max_soc}%) + eksport "
+                    f"blokeret — EV trækker {ramp_amps:g} A {PHASES}φ ({ramp_kw:.2f} kW), "
                     f"net-import {grid_import_kw:.2f} kW (rå PV {solar_kw:.2f} kW)",
                 )
-            # Grid-drain guard: if MPPT can't even cover the minimum ramp from PV
-            # (ramp pinned at min while still importing for a sustained stretch),
-            # trip the cool-down and yield so we don't import from the grid
-            # indefinitely.
+            # Drain guard: ramp pinned at min but still importing for a sustained
+            # stretch → MPPT can't cover even the minimum draw from PV at this
+            # phase.
             if (ramp_amps <= min_amps_sel
                     and grid_import_kw > EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW):
                 if self._ev_modbus_override_fail_since_ts is None:
                     self._ev_modbus_override_fail_since_ts = now_ts
                 elif (now_ts - self._ev_modbus_override_fail_since_ts).total_seconds() >= 120:
-                    self._ev_probe_cooldown_until = (
-                        now_ts + timedelta(seconds=EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS))
-                    self._reset_override_ramp()
                     self._ev_modbus_override_fail_since_ts = None
-                    target_amps = 0
-                    override_forcing = False
-                    reason = self._msg(
-                        "Override paused: MPPT not lifting (grid import at minimum) "
-                        "— cooling down before retry",
-                        "Override pause: MPPT løfter ikke (net-import ved minimum) "
-                        "— afkøling før nyt forsøg",
-                    )
+                    self._reset_override_ramp()
+                    if PHASES == 3:
+                        # Three-phase needs ≥4.14 kW and the sun can't supply it.
+                        # Block 3φ briefly and fall back to single-phase (which
+                        # harvests down to ~1.4 kW); retry 3φ later in case the
+                        # sun strengthens.
+                        self._ev_modbus_override_3ph_blocked_until = (
+                            now_ts + timedelta(seconds=EV_OVERRIDE_3PH_RETRY_SECONDS))
+                        reason = self._msg(
+                            "Override: 3-phase can't be sustained — falling back to single-phase",
+                            "Override: trefaset kan ikke holdes — falder tilbage til enfaset",
+                        )
+                    else:
+                        # Single-phase override also can't cover its minimum from
+                        # PV → nothing to harvest; cool down before retrying.
+                        self._ev_probe_cooldown_until = (
+                            now_ts + timedelta(seconds=EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS))
+                        target_amps = 0
+                        override_forcing = False
+                        reason = self._msg(
+                            "Override paused: MPPT not lifting (grid import at minimum) "
+                            "— cooling down before retry",
+                            "Override pause: MPPT løfter ikke (net-import ved minimum) "
+                            "— afkøling før nyt forsøg",
+                        )
             else:
                 self._ev_modbus_override_fail_since_ts = None
         else:
@@ -4662,6 +4700,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "charger_phase_currents": [state["l1"], state["l2"], state["l3"]],
             "charger_live_phases": state["live_phases"],
             "charger_target_phases": PHASES,
+            # v0.59.12 TEST — actual 0x300B value the charger holds (1=accepted sub-5, 5=clamped).
+            "charger_suspend_interval": state.get("suspend_interval"),
         }
 
     def _msg(self, en: str, da: str) -> str:
@@ -4891,10 +4931,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_override_ramp_freeze_until is not None
             and now_ts < self._ev_override_ramp_freeze_until
         )
+        # Step interval is dashboard-adjustable (v0.59.13); falls back to the
+        # const default. Floor at 3 s so it can't busy-step.
+        ramp_interval_s = max(3.0, float(self._stored.get(
+            "ev_override_ramp_interval_s", EV_OVERRIDE_RAMP_INTERVAL_SECONDS)))
         interval_ok = (
             self._ev_override_ramp_last_step_ts is None
             or (now_ts - self._ev_override_ramp_last_step_ts).total_seconds()
-            >= EV_OVERRIDE_RAMP_INTERVAL_SECONDS
+            >= ramp_interval_s
         )
         if (
             not frozen

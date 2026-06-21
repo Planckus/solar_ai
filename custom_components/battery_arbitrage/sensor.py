@@ -835,6 +835,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "live_phases": d.get("charger_live_phases"),
             "target_phases": d.get("charger_target_phases"),
             "charger_status": d.get("charger_status"),
+            "suspend_interval_min": d.get("charger_suspend_interval"),
         },
     ),
     BatteryArbitrageSensorDescription(

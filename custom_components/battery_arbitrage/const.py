@@ -236,7 +236,11 @@ EV_MODBUS_CURRENT_STEP_OPTIONS = ["0.1", "0.5", "1.0"]
 # hardware minimum 5) has elapsed since the last change; a too-early downshift
 # pauses the session instead of switching. This also serves as the anti-thrash
 # gate between phase changes.
-EV_MODBUS_SUSPEND_INTERVAL_MIN = 5
+# v0.59.13 — verified the L11PMC accepts a 1-min value on 0x300B (the documented
+# 5-min "minimum" is not hardware-enforced), so default to 1 for snappy phase
+# switching. Both the hardware write and the controller's anti-thrash gate use
+# this; the gate is dashboard-adjustable (the hardware write stays at this floor).
+EV_MODBUS_SUSPEND_INTERVAL_MIN = 1
 
 # v0.36.2 — Curtailment-probe parameters.
 # When the inverter reports PV curtailment (reg 49251 = 1) and the house
@@ -283,9 +287,13 @@ EV_OVERRIDE_SOFT_COOLDOWN_SECONDS = 600       # 10 minutes
 #   - Floor at the configured min amps; cap at the configured max amps.
 #   - Reset to min on session end, EV disconnect, or when the override
 #     deactivates (export resumes / battery drops below near-full).
-EV_OVERRIDE_RAMP_INTERVAL_SECONDS = 30          # min seconds between up-steps
+EV_OVERRIDE_RAMP_INTERVAL_SECONDS = 12          # default min seconds between up-steps (v0.59.13, dashboard-adjustable; was 30)
 EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW = 0.3 # kW grid import that triggers back-off
 EV_OVERRIDE_RAMP_FREEZE_SECONDS = 120           # back-off freeze after over-commit
+# v0.59.13 — after the override's three-phase attempt fails (PV can't sustain
+# the 4.14 kW floor) it falls back to single-phase and retries three-phase after
+# this long, in case the sun strengthens.
+EV_OVERRIDE_3PH_RETRY_SECONDS = 300
 # v0.54.0 — the battery-full override harvests *curtailed* PV (battery full,
 # export blocked) into the EV. If the house battery is DISCHARGING above this
 # threshold to cover the EV draw, there is no curtailed PV — the override's

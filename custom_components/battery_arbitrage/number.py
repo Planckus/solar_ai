@@ -35,6 +35,8 @@ from .const import (
     EV_BACKEND_FOXESS_MODBUS,
     EV_MODBUS_UPSHIFT_KW,
     EV_MODBUS_DOWNSHIFT_KW,
+    EV_MODBUS_SUSPEND_INTERVAL_MIN,
+    EV_OVERRIDE_RAMP_INTERVAL_SECONDS,
     DEFAULT_EXPORT_FEE,
     DEFAULT_MAX_EXPORT_KW,
     DEFAULT_MIN_EXPORT_PRICE,
@@ -310,6 +312,40 @@ async def async_setup_entry(
             step=0.1,
             mode=NumberMode.SLIDER,
             display_precision=1,
+            available_when=_foxess_modbus_active,
+        ),
+        # Phase-switch / suspend interval (v0.59.13) — minutes between phase
+        # switches. The L11PMC accepts 1 min (verified). Lower = snappier phase
+        # response; higher = calmer. FoxESS Modbus backend only.
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="ev_modbus_suspend_interval_min",
+            translation_key="ev_modbus_suspend_interval_min",
+            default=EV_MODBUS_SUSPEND_INTERVAL_MIN,
+            icon="mdi:timer-sync-outline",
+            unit="min",
+            min_val=1,
+            max_val=30,
+            step=1,
+            mode=NumberMode.SLIDER,
+            display_precision=0,
+            available_when=_foxess_modbus_active,
+        ),
+        # Override ramp step interval (v0.59.13) — seconds between current
+        # up-steps while the battery-full override harvests curtailed PV. Lower =
+        # ramps to the PV ceiling faster (but probes the grid more aggressively).
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="ev_override_ramp_interval_s",
+            translation_key="ev_override_ramp_interval_s",
+            default=EV_OVERRIDE_RAMP_INTERVAL_SECONDS,
+            icon="mdi:speedometer",
+            unit="s",
+            min_val=3,
+            max_val=60,
+            step=1,
+            mode=NumberMode.SLIDER,
+            display_precision=0,
             available_when=_foxess_modbus_active,
         ),
     ]

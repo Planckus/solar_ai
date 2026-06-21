@@ -9,6 +9,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.13] — 2026-06-21
+
+### Added
+
+- **The battery-full override now escalates to three-phase.** When the override harvests curtailed PV (battery full + export blocked), it previously ran single-phase, capping the car at ~3.7 kW even when the inverter could produce far more (measured 7.2 kW). It now drives three-phase to reach that curtailed solar, and falls back to single-phase if the sun can't sustain the 4.14 kW three-phase floor.
+- **Two new dashboard settings** (FoxESS Modbus backend): *Phase-switch interval (min)* — minutes between phase switches; and *Override ramp step (s)* — how fast the override ramps the car up to the PV ceiling. Both take effect on the next control cycle.
+
+### Changed
+
+- **Phase switching can now be sub-5-minute.** The FoxESS L11PMC was verified to accept a 1-minute suspend interval on its Modbus register (the documented 5-minute "minimum" is not hardware-enforced), so the default phase-switch interval is now 1 minute and the override's three-phase escalate/fall-back is far more responsive.
+- The override ramp step interval default is faster (30 s → 12 s) and is now adjustable.
+
+---
+
 ## [0.59.11] — 2026-06-21
 
 ### Changed
