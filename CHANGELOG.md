@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.10] — 2026-06-21
+
+### Fixed
+
+- **Battery-full / export-blocked curtailment deadlock on the FoxESS Modbus backend.** When export was blocked by the price floor (a low or negative export price), the house battery was full, and the sun was strong, the inverter throttled PV down to the house load — so the surplus signal read ~0, the car never started, and the PV stayed curtailed. The battery-full override that breaks this deadlock existed only in the OCPP controller; it was never reached on the Modbus path (which returns earlier). It is now ported to the Modbus controller: when those conditions hold in solar mode, the car's draw is actively ramped up while watching grid import and battery discharge, so it harvests the otherwise-wasted PV without pulling from the grid or the battery. Once the inverter lifts its output and real surplus appears, normal surplus tracking takes over. A grid-drain guard trips a cool-down if the inverter can't cover even the minimum draw from PV.
+- **Battery not locked in full-power ("hurtig") mode on the FoxESS Modbus backend.** The house battery could discharge to help feed the car in full-power mode. The battery-lock that prevents this also lived only in the OCPP controller. It is now applied on the Modbus path too: while the car is actually drawing in full-power mode, house-battery discharge is locked (`max_discharge_current` → 0), so the car is fed from solar and grid only; the lock releases when the draw stops or the mode changes.
+
+---
+
 ## [0.59.9] — 2026-06-18
 
 ### Added
