@@ -278,6 +278,13 @@ class FoxessModbusCharger:
         currents_raw = await self._client.read(REG_PHASE_CURRENT, 3)
         l1, l2, l3 = (c * 0.1 for c in currents_raw)
         power_raw = await self._client.read(REG_ACTIVE_POWER, 1)
+        # v0.59.12 — read back the suspend-interval register (0x300B) so we can
+        # see whether the charger accepts a sub-5-min value or clamps it.
+        try:
+            suspend_raw = await self._client.read(REG_SUSPEND_INTERVAL, 1)
+            suspend_interval = suspend_raw[0]
+        except Exception:  # noqa: BLE001
+            suspend_interval = None
         return {
             "status": status,
             "status_label": status_label(status),
@@ -288,6 +295,7 @@ class FoxessModbusCharger:
             "l3": round(l3, 1),
             "power_kw": round(power_raw[0] * 0.1, 2),
             "live_phases": phases_from_currents(l1, l2, l3),
+            "suspend_interval": suspend_interval,
         }
 
     async def async_start(self) -> None:

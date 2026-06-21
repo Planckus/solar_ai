@@ -573,6 +573,12 @@ views:
           - entity: select.solar_ai_stromtrin_opladning
             name: Strømtrin (opladning)
             icon: mdi:current-ac
+          - entity: number.solar_ai_faseskift_interval_min
+            name: Faseskift-interval (min)
+            icon: mdi:timer-sync-outline
+          - entity: number.solar_ai_override_rampe_trin_s
+            name: Override rampe-trin (s)
+            icon: mdi:speedometer
           - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
             name: Standard tilstand ved tilslutning
             icon: mdi:car-connected
