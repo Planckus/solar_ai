@@ -243,6 +243,27 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 ## Recent releases
 
+### v0.59.13 — three-phase override + sub-5-minute phase switching
+
+- The battery-full override — which charges the car from solar that would otherwise be curtailed when export is price-blocked and the house battery is full — now drives **three-phase**, reaching the full inverter output instead of the single-phase ~3.7 kW wall. It falls back to single-phase if the sun can't sustain the 4.14 kW three-phase floor.
+- The FoxESS charger was found to accept a **1-minute** phase-switch interval (the documented 5-minute minimum is not hardware-enforced), so phase switching is far more responsive. Two new dashboard sliders — **Phase-switch interval** and **Override ramp step** — let you tune the timings.
+
+### v0.59.11 — price matrix: two decimals and negative prices
+
+- The buy/sell price matrix shows two decimals (`0.00`) and no longer clamps the sell price at zero, so negative-price hours are visible.
+
+### v0.59.10 — curtailment recovery + full-power battery lock on the Modbus backend
+
+- Two protections that previously worked only on the OCPP path now apply to the FoxESS Modbus backend: the car **recovers from the export-blocked + battery-full curtailment deadlock** (it draws the otherwise-wasted solar instead of stalling), and the **house battery is locked while charging in full-power mode** so the car is fed from solar and grid rather than draining the battery.
+
+### v0.59.0–v0.59.9 — solar EV charging refinements + new controls
+
+- An export-aware surplus signal (no more dumping solar to the grid while the car waits), prices that **survive restarts and failed fetches**, a date-correct "today's plan" card, smoother phase switching that no longer stalls on broken-cloud days, and two new dashboard controls: the **three-phase switch threshold** and the **charging current step** (1 / 0.5 / 0.1 A).
+
+### v0.58.0 — EV control interval on the dashboard
+
+- How often the EV controller re-evaluates and re-asserts the charger is now adjustable from the dashboard.
+
 ### v0.57.0 — FoxESS Modbus charger backend (single- and three-phase solar following)
 
 - A FoxESS L11PMC can now be driven directly over **Modbus TCP** as an alternative to OCPP, which unlocks **single-phase charging** (~1.4–3.7 kW) for following small solar surpluses — below the 4.14 kW floor the three-phase OCPP path is stuck at. It switches up to three-phase (up to 11 kW) automatically when the surplus is large, by hysteresis (up ≥ 4.5 kW, down < 4.0 kW) gated by the charger's 5-minute suspend interval. **Single-phase is only available on the Modbus backend; OCPP is three-phase only.**
