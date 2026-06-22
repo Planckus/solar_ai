@@ -597,6 +597,14 @@ VACATION_THRESHOLD = 0.25           # 25% of long-term baseline → vacation
 VACATION_MIN_DURATION = 48          # Must be below threshold for 4h (48 × 5min samples)
 MIN_EXPORTABLE_KWH = 0.5            # Don't bother exporting less than this
 MIN_GRID_CHARGE_KWH = 0.5           # Don't bother grid-charging less than this
+# v0.59.15 — data-sanity guard for grid-charge. When the price feed degenerates
+# (e.g. a failed/garbled Energi Data Service fetch leaves only a slot or two),
+# the "is now a cheap hour?" percentile test breaks down — a lone price is its
+# own p25 — and the reactive fallback would grid-charge at whatever price
+# happens to be loaded, even an expensive one. Require at least this many price
+# slots AND a real cheap-vs-expensive range before any reactive grid-charge;
+# otherwise run self-consumption only.
+MIN_PRICE_SLOTS_FOR_GRID_CHARGE = 8
 
 # Grid overcurrent protection
 GRID_MAX_KW = 17.0                  # Default circuit breaker limit (kW) — user-adjustable via number entity
