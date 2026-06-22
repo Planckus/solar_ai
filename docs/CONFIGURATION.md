@@ -12,6 +12,11 @@ Every setup field, slider, and switch with its value range, effect, and when to 
   - [Pricing parameters](#pricing-parameters)
   - [Optimiser parameters](#optimiser-parameters)
   - [Learned charge rates](#learned-charge-rates)
+- [EV charging settings](#ev-charging-settings)
+  - [Mode](#mode)
+  - [Charge rate and priority](#charge-rate-and-priority)
+  - [FoxESS Modbus tuning](#foxess-modbus-tuning-modbus-backend-only)
+  - [Backend and connection](#backend-and-connection)
 - [Switches](#switches)
   - [Master controls](#master-controls)
   - [Notification events](#notification-events)
@@ -223,6 +228,87 @@ These auto-calibrate from Force Charge sessions. Visible under *Indstillinger �
 - Effect: the maximum charge rate written to the inverter, by temperature bucket. The integration learns the actual achievable rate per bucket from observed Force Charge data.
 - Buckets: `< 0`, `0–5`, `6–15`, `16–21`, `21–35`, `35–50`, `> 50 °C`
 - Override only if learning produced a clearly wrong value (e.g. inverter firmware quirk).
+
+---
+
+## EV charging settings
+
+These control solar-following EV charging. They apply on the next control cycle — no restart. Several are specific to the **FoxESS Modbus** charger backend and are greyed out on the OCPP backend.
+
+### Mode
+
+#### EV charging mode — `ev_active_mode`
+
+- Options: **Locked** (no charging) · **Solar only** (charge from solar surplus) · **Solar + battery** (surplus, plus the house battery if needed) · **Full power** (charge at maximum, from the grid if the sun is short) · **Scheduled** (follow the schedule slots)
+- Effect: the live charging mode. Resets to the *default mode on connect* each time a car is plugged in.
+
+#### Default mode on connect — `ev_default_mode`
+
+- Options: as above
+- Default: Locked — safe; won't charge until you pick a mode
+- Effect: the mode applied automatically when a car is plugged in.
+
+### Charge rate and priority
+
+#### Minimum / maximum charge rate — `ev_min_charge_kw` / `ev_max_charge_kw`
+
+- Range: 6–16 A per phase
+- Defaults: 6 A minimum, 16 A maximum
+- Effect: bounds the per-phase current. On single-phase that is ~1.4–3.7 kW; on three-phase ~4.1–11 kW. Lower the maximum to cap how much the car ever draws.
+
+#### Battery-first threshold — `ev_battery_priority_soc`
+
+- Range: 50–100%
+- Default: 80%
+- Effect: in solar modes the car waits until the house battery reaches this SoC before taking solar surplus; above it, the car is prioritised over topping the battery further.
+- Lower it: let the car start sooner. Raise it: fill the house battery first.
+
+#### EV control interval — `ev_control_interval_seconds`
+
+- Range: 5–60 s
+- Default: 10 s
+- Effect: how often the controller re-evaluates and re-asserts the charger setpoint.
+
+### FoxESS Modbus tuning (Modbus backend only)
+
+#### Three-phase switch threshold — `ev_modbus_upshift_kw`
+
+- Range: 4.3–8.0 kW
+- Default: 5.0 kW
+- Effect: the rolling-average solar surplus at which the car switches to three-phase. Higher = commit to three-phase only on strong, steady sun (fewer switches); lower = engage three-phase at more modest surplus. It cannot go below 4.3 kW because three-phase needs 4.14 kW (6 A × 3) to run.
+
+#### Charging current step — `ev_modbus_current_step`
+
+- Options: 1.0 / 0.5 / 0.1 A
+- Default: 1.0 A
+- Effect: the resolution at which the per-phase current is set. Finer steps track the solar surplus more closely (less spilled to the grid), subject to whether the car's onboard charger follows sub-amp setpoints — some round to whole amps.
+
+#### Phase-switch interval — `ev_modbus_suspend_interval_min`
+
+- Range: 1–30 min
+- Default: 1 min
+- Effect: minimum time between phase switches (single ↔ three-phase). Lower = snappier phase response to changing sun; higher = calmer switching on broken-cloud days.
+
+#### Override ramp step — `ev_override_ramp_interval_s`
+
+- Range: 3–60 s
+- Default: 12 s
+- Effect: how fast the battery-full override ramps the car up toward the available curtailed-PV ceiling (when export is blocked and the house battery is full). Lower = reaches the ceiling faster, but probes the grid more aggressively.
+
+### Backend and connection
+
+#### Charger backend — `ev_charger_backend`
+
+- Options: **OCPP** (embedded server, any OCPP charger) · **FoxESS Modbus TCP** (direct control, single- and three-phase solar following)
+- Effect: which charger-control path is used.
+
+#### Charger host — `foxess_charger_host`
+
+- The FoxESS Modbus charger's IP address. Used only on the Modbus backend.
+
+#### Embedded OCPP server — `ocpp_embedded`
+
+- On/off. Runs the built-in OCPP server for OCPP chargers (Easee, Zaptec, Wallbox, etc.). Leave on for the OCPP backend.
 
 ---
 

@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.14] — 2026-06-22
+
+### Documentation
+
+- Added an **EV charging settings** section to the configuration reference (`docs/CONFIGURATION.md`) documenting every EV/charger GUI setting: charging mode and default-on-connect, min/max charge rate, battery-first threshold, control interval, and the FoxESS Modbus tuning controls (three-phase switch threshold, charging current step, phase-switch interval, override ramp step), plus charger backend, host, and the embedded OCPP server. Brought the README release highlights current through v0.59.13.
+
+---
+
 ## [0.59.13] — 2026-06-21
 
 ### Added
