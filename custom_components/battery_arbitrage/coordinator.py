@@ -76,6 +76,7 @@ from .const import (
     MIN_EXPORTABLE_KWH,
     SAVINGS_LOG_MAX_DAYS,
     MIN_GRID_CHARGE_KWH,
+    MIN_PRICE_SLOTS_FOR_GRID_CHARGE,
     MODE_DISABLED,
     MODE_EXPORTING,
     MODE_GRID_CHARGING,
@@ -1675,11 +1676,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 elif s["action"] == "CHARGE":
                     optimizer_says_charge = True
                 break
+        # Data-sanity guard (v0.59.15): the percentile-based "is now cheap?" test
+        # only means something with enough genuine price points AND a real
+        # cheap-vs-expensive range. When the price feed fails and degenerates to a
+        # slot or two (all reading the same value), a lone price is its own p25 and
+        # the reactive fallback below would grid-charge at whatever — possibly
+        # expensive — price is loaded. Require real data before any reactive
+        # grid-charge; otherwise fall through to self-consumption.
+        price_data_sufficient = (
+            len(grid_vals) >= MIN_PRICE_SLOTS_FOR_GRID_CHARGE
+            and (price_max - price_min) >= min_spread
+        )
         # Fall back to reactive thresholds when no plan is available
         if not self._optimizer_plan:
             battery_export_at_peak = price_p75 > 0 and export_price >= price_p75
             optimizer_says_export = battery_export_at_peak and grid_arbitrage_worthwhile
-            optimizer_says_charge = buy_price_next_slot <= buy_price_p25
+            optimizer_says_charge = (
+                price_data_sufficient and buy_price_next_slot <= buy_price_p25
+            )
 
         # ---- decision logic ----
         should_export = (
@@ -1699,6 +1713,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         should_grid_charge = (
             not should_export
             and bool(grid_vals)
+            # v0.59.15 — never grid-charge on degenerate/thin price data, whatever
+            # path set `optimizer_says_charge`. This is the defence that would
+            # have prevented buying at 1.65 DKK/kWh during a feed failure.
+            and price_data_sufficient
             and optimizer_says_charge
             and importable_kwh >= MIN_GRID_CHARGE_KWH
             and not solar_will_fill
@@ -1721,8 +1739,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # If grid is paying US to buy electricity (buy price ≤ 0), always charge if there's
         # room — this overrides the spread threshold and even the EV schedule check.
+        # v0.59.15 — only when the price data is real: a failed feed leaves
+        # `buy_price_next_slot` at the degenerate 0.0 default, which would
+        # otherwise look like a free hour and force a grid-charge.
         if (
-            buy_price_next_slot <= 0.0
+            price_data_sufficient
+            and buy_price_next_slot <= 0.0
             and not should_export
             and importable_kwh >= MIN_GRID_CHARGE_KWH
             and battery_soc < max_soc

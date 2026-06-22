@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.15] — 2026-06-22
+
+### Fixed
+
+- **Grid-charging no longer fires on degenerate price data.** When the price feed fails or returns garbled/thin data (e.g. Energi Data Service hiccups), the forecast can collapse to a single price slot. The reactive "is now a cheap hour?" fallback then breaks down — a lone price is its own 25th-percentile — and the battery could grid-charge at whatever (possibly expensive) price happened to be loaded, even with a full battery and no real arbitrage opportunity. Grid-charging now requires a minimum number of genuine price slots **and** a real cheap-vs-expensive price range before any reactive charge; otherwise it runs self-consumption only. The same guard protects the "negative price → always charge" override (a failed feed left the buy price at a degenerate 0.0, which looked like a free hour).
+
+---
+
 ## [0.59.14] — 2026-06-22
 
 ### Documentation
