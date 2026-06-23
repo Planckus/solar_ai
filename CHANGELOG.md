@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.16] — 2026-06-22
+
+### Fixed
+
+- **A price-feed gap now self-heals in minutes instead of blanking for up to an hour.** The price refresh runs hourly, and the timer was reset even when a fetch came back empty — so if Energi Data Service had no records and the cache had drained, prices stayed blank until the next hourly retry. Now, when a refresh produces no usable rates, the integration retries every few minutes (5 min) until it succeeds, then returns to the hourly cadence. This is source-agnostic — it simply retries whatever price source you have configured sooner, so single-source setups are unaffected.
+
+---
+
 ## [0.59.15] — 2026-06-22
 
 ### Fixed

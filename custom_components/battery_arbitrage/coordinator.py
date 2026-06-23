@@ -38,6 +38,7 @@ from .const import (
     DEFAULT_EXPORT_FEE,
     LEARNING_TICK_INTERVAL_SECONDS,
     TARIFF_REFRESH_INTERVAL_SECONDS,
+    PRICE_RETRY_AFTER_FAIL_SECONDS,
     TARIFF_SCHEDULE_REFRESH_SECONDS,
     EV_CHARGE_BLOCK_PROBABILITY,
     EV_CHARGE_THRESHOLD_W,
@@ -313,6 +314,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # falls back to the last known prices instead of blanking the plan.
         self._cached_eds_rates: list[dict] = []
         self._last_eds_refresh: datetime | None = None
+        # v0.59.16 — whether the last price refresh yielded usable rates. False
+        # ⇒ retry sooner (PRICE_RETRY_AFTER_FAIL_SECONDS) instead of the full
+        # hourly interval, so a transient feed gap self-heals in minutes.
+        self._last_tariff_fetch_ok: bool = True
         # Octopus Energy cache (v0.30.0). Keyed by valid_from ISO timestamp →
         # per-30-min rate entry from /standard-unit-rates. Empty when the
         # buy-price mode is not "octopus".
@@ -1009,9 +1014,17 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         evcc_state = await self._fetch_live_state(session, evcc_url)
 
         # ── Hourly: refresh tariff / price data ──────────────────────────
+        # v0.59.16 — after a refresh that produced no usable rates, retry in
+        # minutes instead of waiting the full hour, so a transient feed gap
+        # self-heals. Source-agnostic: it just retries whatever source(s) are
+        # configured sooner — single-source setups are unaffected.
+        _refresh_interval = (
+            TARIFF_REFRESH_INTERVAL_SECONDS if self._last_tariff_fetch_ok
+            else PRICE_RETRY_AFTER_FAIL_SECONDS
+        )
         tariff_stale = (
             self._last_tariff_refresh is None
-            or (now - self._last_tariff_refresh).total_seconds() >= TARIFF_REFRESH_INTERVAL_SECONDS
+            or (now - self._last_tariff_refresh).total_seconds() >= _refresh_interval
         )
         if tariff_stale:
             price_area = self._setting(CONF_PRICE_AREA, DEFAULT_PRICE_AREA)
@@ -1029,8 +1042,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
             # EDS spot prices — primary price source; _fetch_eds_prices handles its own errors
             eds_data = await self._fetch_eds_prices(session, price_area, now)
+            fresh_prices = False
             if eds_data.get("rates"):
                 self._cached_grid_rates = eds_data
+                fresh_prices = True
                 _LOGGER.debug(
                     "EDS: %d spot price slots for area %s",
                     len(eds_data["rates"]), price_area,
@@ -1045,12 +1060,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     grid_data = await self._fetch_json(session, f"{evcc_url}{EVCC_API_GRID}")
                     if grid_data.get("rates"):
                         self._cached_grid_rates = grid_data
+                        fresh_prices = True
                     else:
                         _LOGGER.warning("EVCC grid tariff also returned no rates")
                 except Exception as evcc_err:
                     _LOGGER.debug("EVCC grid tariff fallback failed: %s", evcc_err)
 
             self._last_tariff_refresh = now
+            # v0.59.16 — drive the retry cadence: usable rates ⇒ hourly; nothing
+            # usable (feed gap + cache drained) ⇒ retry in minutes until it heals.
+            self._last_tariff_fetch_ok = fresh_prices
+            if not fresh_prices:
+                _LOGGER.info(
+                    "Price refresh produced no usable rates — retrying in %d s",
+                    PRICE_RETRY_AFTER_FAIL_SECONDS,
+                )
 
         solar_rates = self._cached_solar_rates
         grid_rates = self._cached_grid_rates
