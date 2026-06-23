@@ -569,6 +569,10 @@ EV_SESSION_DP_HORIZON_H = 2.0
 DEFAULT_FAST_POLL_SECONDS = 15       # v0.36.0: dropped from 30 → 15 so Lovelace cards driven by integration sensors refresh every 15 s (configurable 10–300)
 CONF_FAST_POLL_INTERVAL = "fast_poll_interval"
 TARIFF_REFRESH_INTERVAL_SECONDS = 3600   # Hourly tariff/price refresh (not configurable)
+# v0.59.16 — after a price refresh that produced NO usable rates (e.g. an EDS
+# gap with the cache drained), retry this soon instead of waiting the full hour,
+# so a transient feed outage self-heals in minutes rather than blanking prices.
+PRICE_RETRY_AFTER_FAIL_SECONDS = 300     # 5 min
 LEARNING_TICK_INTERVAL_SECONDS = 300     # Learning model write cadence (5 min)
 CALIBRATION_MIN_CHARGE_KW = 0.3     # Minimum charge power to count as a calibration sample
 CALIBRATION_MAX_SOC = 95            # Don't calibrate near-full (BMS tapers naturally)
