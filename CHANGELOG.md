@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.17] — 2026-06-23
+
+### Added
+
+- The solar-forecast card now shows a **"today total"** row — today's actual production so far plus the forecast for the rest of the day (e.g. produced 63 kWh + 3 kWh still forecast = ~66 kWh expected). A quick forecast-vs-actual check alongside the existing rest-of-today and tomorrow figures. Dashboard-only; uses the inverter's PV-generation total.
+
+---
+
 ## [0.59.16] — 2026-06-22
 
 ### Fixed
