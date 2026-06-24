@@ -110,6 +110,20 @@ BINARY_SENSORS: tuple[BatteryArbitrageBinarySensorDescription, ...] = (
             "path": d.get("disk_path"),
         },
     ),
+    # v0.59.19 — price-feed health. On = degraded (too few price slots, or the
+    # last fetch produced no rates); arbitrage pauses on self-consumption until
+    # it recovers.
+    BatteryArbitrageBinarySensorDescription(
+        key="price_data_degraded",
+        translation_key="price_data_degraded",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        icon="mdi:database-alert",
+        value_fn=lambda d: d.get("price_data_degraded", False),
+        attr_fn=lambda d: {
+            "price_slots": d.get("price_slots_count"),
+            "last_good_fetch": d.get("price_last_good_iso"),
+        },
+    ),
 )
 
 

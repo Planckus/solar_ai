@@ -985,6 +985,8 @@ views:
         icon: mdi:chart-bar
         show_header_toggle: false
         entities:
+        - entity: binary_sensor.solar_ai_prisdata_forringet
+          name: Prisdata-status
         - entity: sensor.battery_arbitrage_24h_prisminimum
           name: Minimum
         - entity: sensor.battery_arbitrage_24h_prismaksimum
@@ -1518,6 +1520,8 @@ views:
           name: Solcelleprognose-kilde
         - entity: select.solar_ai_buy_price_mode
           name: Købspris-tilstand
+        - entity: switch.solar_ai_kryds_kilde_prisfallback_stromligning_eds
+          name: Kryds-kilde prisfallback
         - entity: select.solar_ai_elprodukt_udbyder
           name: Elprodukt (udbyder)
         - entity: select.solar_ai_price_area
