@@ -318,6 +318,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # ⇒ retry sooner (PRICE_RETRY_AFTER_FAIL_SECONDS) instead of the full
         # hourly interval, so a transient feed gap self-heals in minutes.
         self._last_tariff_fetch_ok: bool = True
+        # v0.59.19 — edge-detect the price-data-degraded notification.
+        self._prev_price_degraded: bool = False
         # Octopus Energy cache (v0.30.0). Keyed by valid_from ISO timestamp →
         # per-30-min rate entry from /standard-unit-rates. Empty when the
         # buy-price mode is not "octopus".
@@ -1051,20 +1053,33 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     len(eds_data["rates"]), price_area,
                 )
             else:
-                # EDS unavailable — fall back to EVCC grid tariff
-                _LOGGER.info(
-                    "EDS spot prices unavailable for %s — falling back to EVCC grid tariff",
-                    price_area,
-                )
-                try:
-                    grid_data = await self._fetch_json(session, f"{evcc_url}{EVCC_API_GRID}")
-                    if grid_data.get("rates"):
-                        self._cached_grid_rates = grid_data
-                        fresh_prices = True
-                    else:
-                        _LOGGER.warning("EVCC grid tariff also returned no rates")
-                except Exception as evcc_err:
-                    _LOGGER.debug("EVCC grid tariff fallback failed: %s", evcc_err)
+                # v0.59.20 — opt-in cross-source forecast fallback: derive the
+                # spot-price forecast from the cached Strømligning prices (their
+                # spot component) so an EDS gap doesn't blank the chart/optimiser.
+                # Off by default; single-source users are unaffected.
+                sl_fc = self._stromligning_spot_forecast(now)
+                if sl_fc.get("rates"):
+                    self._cached_grid_rates = sl_fc
+                    fresh_prices = True
+                    _LOGGER.info(
+                        "EDS spot prices unavailable for %s — using Strømligning "
+                        "spot forecast (%d slots)", price_area, len(sl_fc["rates"]),
+                    )
+                else:
+                    # EDS (+ Strømligning) unavailable — fall back to EVCC grid tariff
+                    _LOGGER.info(
+                        "EDS spot prices unavailable for %s — falling back to EVCC grid tariff",
+                        price_area,
+                    )
+                    try:
+                        grid_data = await self._fetch_json(session, f"{evcc_url}{EVCC_API_GRID}")
+                        if grid_data.get("rates"):
+                            self._cached_grid_rates = grid_data
+                            fresh_prices = True
+                        else:
+                            _LOGGER.warning("EVCC grid tariff also returned no rates")
+                    except Exception as evcc_err:
+                        _LOGGER.debug("EVCC grid tariff fallback failed: %s", evcc_err)
 
             self._last_tariff_refresh = now
             # v0.59.16 — drive the retry cadence: usable rates ⇒ hourly; nothing
@@ -1523,10 +1538,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._learn_capacity(battery_soc, battery_charge_kw)
 
         # v0.47.0 (C) — dynamic self-learning discharge floor. When enabled, the
-        # export floor is the SoC needed to bridge the house to the next solar
-        # refill (net of any planned grid-charge) × a learned margin, instead of
-        # the fixed slider value. Bypasses the static floor; clamped to a health
-        # band.
+        # reserve is the SoC needed to bridge the house to the next solar refill
+        # (net of any planned grid-charge) × a learned margin.
+        # v0.59.18 — the user's Minimum SoC (export) slider is now a HARD floor:
+        # the dynamic reserve may only RAISE it (reserve more for the night),
+        # never sell below it. Previously it *replaced* the slider and could sell
+        # all the way to the hardware minimum on a forecast of a cheap overnight
+        # rebuy — which, when that forecast was wrong (or the price feed thin),
+        # drained the battery overnight and forced an expensive emergency buy.
         if self._stored.get("dynamic_discharge_floor", False):
             dyn_floor = self._compute_dynamic_floor_soc(
                 now=now, capacity_kwh=capacity_kwh, efficiency=efficiency,
@@ -1534,8 +1553,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 grid_charge_kw=self.get_effective_charge_rate(),
             )
             if dyn_floor is not None:
-                self._dynamic_floor_soc = round(dyn_floor, 1)
-                floor_soc = int(round(dyn_floor))
+                # Never below the user's slider — only raise the floor above it.
+                floor_soc = max(floor_soc, int(round(dyn_floor)))
+                self._dynamic_floor_soc = float(floor_soc)
             if is_learning_tick:
                 self._update_discharge_margin(now, battery_soc)
         else:
@@ -1711,6 +1731,37 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             len(grid_vals) >= MIN_PRICE_SLOTS_FOR_GRID_CHARGE
             and (price_max - price_min) >= min_spread
         )
+        # v0.59.19 — price-data HEALTH (distinct from "sufficient", which also
+        # requires a real spread). Degraded = a feed problem: too few price
+        # slots, or the last refresh produced no usable rates. Surfaced as a
+        # binary_sensor + notification so a silent feed failure becomes visible
+        # instead of quietly driving (or suppressing) trades. A flat-but-complete
+        # price day is NOT degraded — it just has no arbitrage.
+        price_data_degraded = (
+            len(grid_vals) < MIN_PRICE_SLOTS_FOR_GRID_CHARGE
+            or not self._last_tariff_fetch_ok
+        )
+        # Notify on the edge into degraded (mirror of the solar-floor pattern), so
+        # a silent feed failure surfaces. Arbitrage is paused on degraded data
+        # (the grid-charge and export guards both require sufficient data), so the
+        # system safely runs self-consumption meanwhile.
+        if price_data_degraded and not self._prev_price_degraded:
+            _LOGGER.warning(
+                "Price data degraded (%d slots) — arbitrage paused, running "
+                "self-consumption until the price feed recovers", len(grid_vals),
+            )
+            if self._stored.get("notifications_enabled", False):
+                await self._send_mobile_notification(
+                    self._msg("⚠️ Solar AI: Price data unavailable",
+                              "⚠️ Solar AI: Prisdata utilgængelig"),
+                    self._msg(
+                        f"Only {len(grid_vals)} price slot(s) — arbitrage paused, "
+                        f"running on self-consumption until the feed recovers.",
+                        f"Kun {len(grid_vals)} prisslot(s) — arbitrage sat på pause, "
+                        f"kører på selvforbrug indtil prisfeedet er tilbage.",
+                    ),
+                )
+        self._prev_price_degraded = price_data_degraded
         # Fall back to reactive thresholds when no plan is available
         if not self._optimizer_plan:
             battery_export_at_peak = price_p75 > 0 and export_price >= price_p75
@@ -1722,6 +1773,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # ---- decision logic ----
         should_export = (
             optimizer_says_export
+            # v0.59.19 — sell-side data-sanity guard (mirrors the grid-charge
+            # guard): never sell the battery on degenerate/thin price data, where
+            # the "is this a peak?" percentile test is meaningless. Only export
+            # when the price set is real (enough slots + a genuine spread).
+            and price_data_sufficient
             and truly_exportable_kwh >= MIN_EXPORTABLE_KWH
             and battery_soc > floor_soc
             # Don't fight EVCC: if EV is fast/minpv-charging, hold the battery for it
@@ -2188,6 +2244,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             time_to_charge_h=time_to_charge_h,
             should_export=should_export,
             should_grid_charge=should_grid_charge,
+            # v0.59.19 — price-feed health, for the binary_sensor + dashboard badge.
+            price_data_degraded=price_data_degraded,
+            price_slots_count=len(grid_vals),
+            price_last_good_iso=(
+                self._last_tariff_refresh.isoformat()
+                if (self._last_tariff_refresh is not None and self._last_tariff_fetch_ok)
+                else None
+            ),
             net_solar_for_battery=net_solar_for_battery,
             ev_block_prob=ev_block_prob,
             is_summer_mode=is_summer_mode,
@@ -6260,6 +6324,42 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "Strømligning prices refreshed: %d slots for product=%s, supplier=%s, area=%s",
             len(prices), product_id, supplier_id, price_area,
         )
+
+    def _stromligning_spot_forecast(self, now: datetime) -> dict:
+        """Opt-in cross-source forecast fallback (v0.59.20).
+
+        When EDS has no day-ahead data, derive an EDS-compatible spot-price
+        forecast from the cached Strømligning prices — using their *spot*
+        component (not the all-in total, which already bakes in tariffs + VAT) —
+        so the price chart and the optimiser don't go blind during an EDS gap.
+
+        Returns {"rates": [{"start": <utc-iso>, "value": <spot dkk/kwh>}, ...]}
+        for still-future slots, or {} when the toggle is off, there's no
+        Strømligning cache, or no usable future slots.
+        """
+        if not self._stored.get("price_cross_source_fallback", False):
+            return {}
+        cache = self._cached_stromligning_prices
+        if not cache:
+            return {}
+        from . import stromligning as sl  # noqa: PLC0415
+        cutoff = now - timedelta(minutes=15)
+        rates: list[dict] = []
+        for key, entry in cache.items():
+            try:
+                ts = datetime.strptime(key[:19], "%Y-%m-%dT%H:%M:%S").replace(
+                    tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                continue
+            if ts < cutoff:
+                continue
+            try:
+                spot = float(sl.get_price_details(entry)["spot"])
+            except Exception:  # noqa: BLE001
+                continue
+            rates.append({"start": ts.isoformat(), "value": spot})
+        rates.sort(key=lambda r: r["start"])
+        return {"rates": rates} if rates else {}
 
     def _compute_buy_price(
         self,

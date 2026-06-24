@@ -75,6 +75,8 @@ async def async_setup_entry(
     entities.append(BatteryArbitrageDynamicFloorSwitch(coordinator, entry))
     # v0.57.0 — embedded OCPP server on/off (Advanced pane). Reloads on change.
     entities.append(BatteryArbitrageOcppServerSwitch(coordinator, entry))
+    # v0.59.20 — opt-in cross-source forecast fallback (Strømligning ↔ EDS).
+    entities.append(BatteryArbitragePriceFallbackSwitch(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -194,6 +196,48 @@ class BatteryArbitragePriceResolutionSwitch(
 
     async def async_turn_off(self, **kwargs: object) -> None:
         self.coordinator._stored["price_resolution_15min"] = False
+        await self.coordinator._store.async_save(self.coordinator._stored)
+        self.async_write_ha_state()
+
+
+class BatteryArbitragePriceFallbackSwitch(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SwitchEntity
+):
+    """Opt-in cross-source price-forecast fallback (v0.59.20).
+
+    When on, and Energi Data Service returns no day-ahead prices, the forecast
+    is derived from the cached Strømligning prices (their spot component) so the
+    chart and optimiser don't go blind during an EDS gap. Off by default —
+    single-source users are unaffected. Only meaningful when the buy-price mode
+    is Strømligning (otherwise there's no Strømligning cache to fall back to).
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "price_cross_source_fallback"
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:swap-horizontal-bold"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_price_cross_source_fallback"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.coordinator._stored.get("price_cross_source_fallback", False))
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        self.coordinator._stored["price_cross_source_fallback"] = True
+        await self.coordinator._store.async_save(self.coordinator._stored)
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        self.coordinator._stored["price_cross_source_fallback"] = False
         await self.coordinator._store.async_save(self.coordinator._stored)
         self.async_write_ha_state()
 
