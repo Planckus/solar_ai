@@ -9,6 +9,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.20] — 2026-06-24
+
+### Added
+
+- **Optional cross-source price-forecast fallback.** A new switch (*Cross-source price fallback*, off by default) makes the price forecast fall back to Strømligning when Energi Data Service has no day-ahead data — using Strømligning's spot component (not its all-in total), so the price chart and the optimiser keep working through an EDS gap instead of going blank. Off by default, so single-source setups are unaffected; only meaningful when the buy-price mode is Strømligning. This addresses the *root cause* of the recurring EDS outages, where the earlier fixes (data-sanity guards, fast retry, degraded-data alert) defend against the symptoms.
+
+---
+
+## [0.59.19] — 2026-06-24
+
+### Added
+
+- **Price-data health is now visible.** A new binary sensor (*Price data degraded*) turns on when the price feed is unusable — too few price slots, or the last refresh produced no rates — with the slot count and last-good-fetch time as attributes. When notifications are enabled it also sends an alert. So a silent feed failure becomes visible instead of quietly affecting trades; the system safely runs self-consumption meanwhile.
+
+### Fixed
+
+- **The battery is no longer sold on degenerate/thin price data.** The data-sanity guard added in 0.59.15 for grid-charging now also gates exporting: the battery is only sold when the price set is real (enough slots and a genuine cheap-vs-expensive range), so a failed price feed can't trigger a spurious sell on a meaningless "peak".
+
+---
+
+## [0.59.18] — 2026-06-24
+
+### Fixed
+
+- **The "Minimum SoC (export)" slider is now a hard floor that the dynamic discharge floor can never sell below.** Previously, when the dynamic discharge floor was enabled it *replaced* the slider value and could sell the battery all the way down to the hardware minimum — if it forecast a cheap overnight rebuy. When that forecast was wrong (or the price feed was thin), it drained the battery overnight and then had to grid-charge back at an expensive price. The dynamic reserve now only ever *raises* the floor above the slider (to reserve more for the night when needed); it never sells below the SoC you set. Set the slider to the lowest SoC you're comfortable selling down to.
+
+---
+
 ## [0.59.17] — 2026-06-23
 
 ### Added

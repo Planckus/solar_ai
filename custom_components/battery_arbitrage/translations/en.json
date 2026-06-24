@@ -465,7 +465,8 @@
       "ev_connected": { "name": "EV connected" },
       "ev_charging_now": { "name": "EV charging (now/minpv mode)" },
       "ev_charging_solar": { "name": "EV on Solar" },
-      "disk_low": { "name": "Low disk space" }
+      "disk_low": { "name": "Low disk space" },
+      "price_data_degraded": { "name": "Price data degraded" }
     },
     "number": {
       "ev_control_interval": { "name": "EV control interval" },
@@ -500,6 +501,7 @@
       "enabled": { "name": "Arbitrage enabled" },
       "notifications_enabled": { "name": "Mode-change notifications" },
       "price_resolution_15min": { "name": "15-minute price resolution" },
+      "price_cross_source_fallback": { "name": "Cross-source price fallback (Strømligning ↔ EDS)" },
       "notify_export_start": { "name": "Notify: export started" },
       "notify_export_stop": { "name": "Notify: export stopped" },
       "notify_charge_start": { "name": "Notify: charging started" },

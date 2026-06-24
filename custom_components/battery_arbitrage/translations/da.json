@@ -451,7 +451,8 @@
       "ev_connected": { "name": "EV tilsluttet" },
       "ev_charging_now": { "name": "EV oplader (now/minpv-tilstand)" },
       "ev_charging_solar": { "name": "EV på solenergi" },
-      "disk_low": { "name": "Lav diskplads" }
+      "disk_low": { "name": "Lav diskplads" },
+      "price_data_degraded": { "name": "Prisdata forringet" }
     },
     "number": {
       "ev_control_interval": { "name": "EV-styringsinterval" },
@@ -486,6 +487,7 @@
       "enabled": { "name": "Arbitrage aktiv" },
       "notifications_enabled": { "name": "Notifikationer ved tilstandsskift" },
       "price_resolution_15min": { "name": "15-minutters prisopløsning" },
+      "price_cross_source_fallback": { "name": "Kryds-kilde prisfallback (Strømligning ↔ EDS)" },
       "notify_export_start": { "name": "Notifikation: eksport startet" },
       "notify_export_stop": { "name": "Notifikation: eksport stoppet" },
       "notify_charge_start": { "name": "Notifikation: opladning startet" },

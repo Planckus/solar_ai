@@ -985,6 +985,8 @@ views:
         icon: mdi:chart-bar
         show_header_toggle: false
         entities:
+        - entity: binary_sensor.solar_ai_prisdata_forringet
+          name: Price-data status
         - entity: sensor.battery_arbitrage_24h_prisminimum
           name: Minimum
         - entity: sensor.battery_arbitrage_24h_prismaksimum
@@ -1518,6 +1520,8 @@ views:
           name: Solar forecast source
         - entity: select.solar_ai_buy_price_mode
           name: Buy-price mode
+        - entity: switch.solar_ai_kryds_kilde_prisfallback_stromligning_eds
+          name: Cross-source price fallback
         - entity: select.solar_ai_electricity_product_provider
           name: Electricity product (provider)
         - entity: select.solar_ai_price_area
