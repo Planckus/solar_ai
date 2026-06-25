@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.59.21] — 2026-06-25
+
+### Documentation
+
+- **Clearer EVCC setup.** Added a dedicated *Using Solar AI with EVCC* section to the installation guide, walking through how the two run side by side (EVCC controls the EV charger; Solar AI does the battery arbitrage and reads EVCC's live data), the EVCC-vs-Hybrid live-data-source choice, and the setup steps. EVCC is now described as a prerequisite to install first, and the *Live data source* wizard row links to the new section. Addresses feedback that the EVCC install path was unclear. No code changes.
+
+---
+
 ## [0.59.20] — 2026-06-24
 
 ### Added
