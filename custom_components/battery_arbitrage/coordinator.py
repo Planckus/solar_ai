@@ -963,6 +963,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if not self._stored.get("capacity_samples_reset_v060"):
             self._stored["capacity_samples"] = []
             self._stored["capacity_samples_reset_v060"] = True
+        # v0.60.1 — the discharge_reserve_margin self-learned to its 2.50 ceiling
+        # while compensating for the capacity bug fixed in v0.60.0 (the inflated
+        # capacity under-set the floor%, the battery undershot overnight, and the
+        # margin ramped up fighting it). With capacity now correct the same margin
+        # over-reserves — it pegs the floor at the 85% cap — and it relaxes only
+        # ~2%/day. Reset it once to the default so the floor is sane immediately
+        # and re-learns from a clean baseline.
+        if not self._stored.get("discharge_margin_reset_v0601"):
+            self._stored["discharge_reserve_margin"] = DYNAMIC_FLOOR_MARGIN_DEFAULT
+            self._stored.pop("dynamic_floor_min_seen", None)
+            self._stored.pop("dynamic_floor_day", None)
+            self._stored["discharge_margin_reset_v0601"] = True
 
     # ------------------------------------------------------------------ #
     # Legacy automation management                                          #
@@ -2915,7 +2927,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 continue
             loc = slot_start.astimezone()
             house_kw = self.get_house_load_profile(weekend=loc.weekday() >= 5)[loc.hour]
-            solar_covers = house_kw > 0 and (s[4] / 1000.0) >= onset * house_kw
+            # v0.60.1 — correct the forecast by the learned per-hour accuracy
+            # factor, exactly as the DP optimiser does (_slot_factor). Using the
+            # raw (often optimistic) forecast here made the floor think solar
+            # covered the house earlier than it really would, shortening the dark
+            # bridge and under-reserving for the night.
+            solar_kw = (s[4] / 1000.0) * self.get_solar_accuracy_factor_for_hour(loc.hour)
+            solar_covers = house_kw > 0 and solar_kw >= onset * house_kw
             slot_end = slot_start + timedelta(hours=float(dur_h))
             charge_here = any(slot_start <= pc < slot_end for pc in planned_charge_dts)
             slots.append((slot_start, house_kw, float(dur_h), solar_covers, charge_here))
