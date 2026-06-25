@@ -1303,6 +1303,8 @@ views:
         icon: mdi:battery-charging-50
         show_header_toggle: false
         entities:
+        - entity: number.solar_ai_batterikapacitet_kwh
+          name: Batterikapacitet (kWh)
         - entity: number.solar_ai_minimum_soc_eksport
           name: Minimum SoC (eksport)
         - entity: number.solar_ai_maksimum_soc_netopladning

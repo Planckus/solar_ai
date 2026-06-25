@@ -479,6 +479,7 @@
       "charge_rate_above_50": { "name": "Max charge rate — over 50°C" },
       "floor_soc": { "name": "Minimum SoC (export)" },
       "max_soc": { "name": "Maximum SoC (grid charge)" },
+      "battery_capacity": { "name": "Battery capacity (kWh)" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage spread" },
       "grid_max_kw": { "name": "Grid import limit" },
       "vat_pct": { "name": "Buy-side VAT (%)" },

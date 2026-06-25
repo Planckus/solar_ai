@@ -465,6 +465,7 @@
       "charge_rate_above_50": { "name": "Maks. opladning — over 50 °C" },
       "floor_soc": { "name": "Minimum SoC (eksport)" },
       "max_soc": { "name": "Maksimum SoC (netopladning)" },
+      "battery_capacity": { "name": "Batterikapacitet (kWh)" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage-spread" },
       "grid_max_kw": { "name": "Net-importgrænse" },
       "vat_pct": { "name": "Moms på køb (%)" },
