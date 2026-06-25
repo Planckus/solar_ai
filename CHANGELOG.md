@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.60.1] — 2026-06-25
+
+### Fixed
+
+- **Discharge reserve margin reset after the capacity correction.** The self-learning reserve margin had ramped to its ceiling (2.50) while compensating for the capacity over-estimate fixed in v0.60.0. With capacity now correct, that margin over-reserves — it pegs the dynamic discharge floor at its 85% cap, suppressing arbitrage — and it relaxes only ~2%/day (≈40 days to recover). The margin is reset once on upgrade to its default so the floor is correct immediately and re-learns from a clean baseline.
+- **Dynamic discharge floor now uses the accuracy-corrected solar forecast.** When deciding where the overnight "dark bridge" ends (the next slot solar covers the house), the floor used the raw forecast while the optimiser used the learned per-hour accuracy correction. With an optimistic forecast the floor ended the bridge too early and under-reserved for the night — a contributor to overnight over-discharge. The floor now applies the same per-hour accuracy factor as the optimiser.
+
+---
+
 ## [0.60.0] — 2026-06-25
 
 ### Added
