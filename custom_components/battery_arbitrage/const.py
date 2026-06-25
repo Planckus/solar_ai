@@ -828,6 +828,12 @@ CAPACITY_MIN_DELTA_SOC = 0.3        # % — minimum SoC rise per tick to count a
 CAPACITY_MIN_CHARGE_KW = 0.5        # kW — minimum charge power to count as a valid sample
 CAPACITY_MIN_SAMPLES = 20           # Need this many samples before trusting the learned value
 CAPACITY_MAX_SAMPLES = 300          # Rolling window size
+# The BMS kWh-remaining register updates slowly/stickily while SoC moves live.
+# Sampling capacity = kwh_remaining / (SoC/100) during active charge/discharge
+# divides a stale-high kWh value by a live SoC and inflates the estimate (a
+# 12.1 kWh battery drifted to ~16.9). Only sample when the battery is near idle,
+# so the two readings are coherent.
+CAPACITY_SAMPLE_MAX_BATTERY_KW = 0.3   # kW — skip BMS capacity sample above this charge/discharge power
 EFFICIENCY_MIN_TOTAL_KWH = 100      # kWh — minimum lifetime charge before trusting auto-efficiency
 
 # ── Disk-space alarm (v0.49.0) ────────────────────────────────────────────────

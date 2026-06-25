@@ -19,6 +19,7 @@ from .const import (
     BUY_PRICE_MODE_STROMLIGNING,
     CONF_BUY_PRICE_MODE,
     CONF_STROMLIGNING_USE_MANUAL_OVERRIDES,
+    DEFAULT_BATTERY_CAPACITY,
     DEFAULT_BATTERY_DEGRADATION_COST,
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_DISK_ALARM_THRESHOLD_PCT,
@@ -116,6 +117,22 @@ async def async_setup_entry(
             min_val=10,
             max_val=100,
             step=1,
+        ),
+        # v0.60.0 — usable battery capacity, settable from the dashboard (was
+        # setup-wizard only). Authoritative over the BMS auto-learner: the value
+        # set here is what the optimiser uses. Defaults to the configured value.
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="battery_capacity",
+            translation_key="battery_capacity",
+            default=float(entry.data.get("battery_capacity", DEFAULT_BATTERY_CAPACITY)),
+            icon="mdi:battery",
+            unit="kWh",
+            min_val=3.0,
+            max_val=30.0,
+            step=0.1,
+            mode=NumberMode.BOX,
+            display_precision=1,
         ),
         BatteryArbitrageConfigNumber(
             coordinator, entry,

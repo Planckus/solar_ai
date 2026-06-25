@@ -9,6 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.60.0] — 2026-06-25
+
+### Added
+
+- **Battery capacity is now a dashboard setting.** A new *Battery capacity (kWh)* number (3–30 kWh) lets you set usable capacity without re-running the setup wizard. The value set here is authoritative — it is what the optimiser uses for reserve sizing, exportable energy and cycle planning.
+
+### Fixed
+
+- **BMS capacity learner drifted high during discharge.** The learner sampled `capacity = kWh_remaining / (SoC/100)` while the battery was actively charging or discharging. The BMS kWh-remaining register updates slowly while SoC moves live, so a stale-high kWh value divided by a live SoC inflated the estimate (a 12.1 kWh battery reached ~16.9 kWh). An overstated capacity lowers the dynamic discharge floor and oversizes trades. The learner is now skipped unless the battery is near idle (|power| ≤ 0.3 kW), and it is demoted to a read-only diagnostic — the GUI Battery capacity value drives the optimiser. The drifted sample window is reset once on upgrade.
+
+---
+
 ## [0.59.21] — 2026-06-25
 
 ### Documentation

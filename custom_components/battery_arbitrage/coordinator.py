@@ -133,6 +133,7 @@ from .const import (
     CAPACITY_MIN_CHARGE_KW,
     CAPACITY_MIN_SAMPLES,
     CAPACITY_MAX_SAMPLES,
+    CAPACITY_SAMPLE_MAX_BATTERY_KW,
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
     CONF_PRICE_AREA,
@@ -953,6 +954,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if not self._stored.get("discharge_margin_reset_v053"):
             self._stored["discharge_reserve_margin"] = DYNAMIC_FLOOR_MARGIN_DEFAULT
             self._stored["discharge_margin_reset_v053"] = True
+        # v0.60.0 — the BMS capacity learner sampled during active discharge,
+        # dividing a stale-high kWh-remaining register by a live (lower) SoC,
+        # which drifted the learned capacity high (a 12.1 kWh battery reached
+        # ~16.9). The learner is now idle-gated and is diagnostic-only (the GUI
+        # Battery capacity number is authoritative). Clear the drifted samples
+        # once so the diagnostic re-learns cleanly from idle ticks.
+        if not self._stored.get("capacity_samples_reset_v060"):
+            self._stored["capacity_samples"] = []
+            self._stored["capacity_samples_reset_v060"] = True
 
     # ------------------------------------------------------------------ #
     # Legacy automation management                                          #
@@ -1519,13 +1529,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         floor_soc = int(self._stored.get("battery_floor_soc", self.config.get("battery_floor_soc", DEFAULT_BATTERY_FLOOR_SOC)))
         max_soc = int(self._stored.get("battery_max_soc", self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)))
 
-        # Capacity: use the learned value once enough samples exist. Samples
-        # come primarily from the BMS kWh-remaining registers (available every
-        # tick the battery is in its mid-range), with Force Charge cycles as a
-        # secondary source.
-        learned_capacity = self.get_learned_capacity()
-        capacity_kwh = learned_capacity if learned_capacity is not None \
-            else self.config.get("battery_capacity", DEFAULT_BATTERY_CAPACITY)
+        # Capacity: the GUI "Battery capacity" number is authoritative — the
+        # value the user sets there is what the optimiser uses, full stop. It
+        # falls back to the configured (setup-wizard) value until the user
+        # changes the slider. The BMS auto-learner is kept only as a read-only
+        # diagnostic (the `learned_capacity` telemetry below); it no longer
+        # overrides the user's value, because the BMS kWh-remaining register
+        # lags SoC during discharge and drifts the estimate high.
+        configured_capacity = self.config.get("battery_capacity", DEFAULT_BATTERY_CAPACITY)
+        capacity_kwh = float(self._stored.get("battery_capacity", configured_capacity))
+        learned_capacity = self.get_learned_capacity()  # diagnostic only
 
         # Efficiency: use FoxESS lifetime totals if available
         auto_efficiency = self.get_auto_efficiency()
@@ -1534,7 +1547,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # Capacity learning: gate to 5-min ticks (energy calculation needs correct interval_h)
         if is_learning_tick:
-            self._learn_capacity_from_bms(battery_soc)
+            self._learn_capacity_from_bms(
+                battery_soc, max(battery_charge_kw, battery_discharge_kw)
+            )
             self._learn_capacity(battery_soc, battery_charge_kw)
 
         # v0.47.0 (C) — dynamic self-learning discharge floor. When enabled, the
@@ -2268,7 +2283,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             learned_rates=self.get_all_learned_rates(),
             learned_capacity=learned_capacity,
             auto_efficiency=auto_efficiency,
-            capacity_source="learned" if learned_capacity is not None else "configured",
+            capacity_source="manual" if "battery_capacity" in self._stored else "configured",
             efficiency_source="auto" if auto_efficiency is not None else "configured",
             capacity_sample_count=len(self._stored.get("capacity_samples", [])),
             price_chart_slots=price_chart_slots,
@@ -3076,7 +3091,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 have_any = True
         return total if have_any else None
 
-    def _learn_capacity_from_bms(self, battery_soc: float) -> None:
+    def _learn_capacity_from_bms(
+        self, battery_soc: float, battery_power_kw: float = 0.0
+    ) -> None:
         """Sample usable capacity directly from the BMS kWh-remaining registers.
 
         capacity = Σ kwh_remaining / (SoC / 100)
@@ -3085,11 +3102,17 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         warms up for PV-only / arbitrage users too. Sampling is restricted to
         the safe mid-range (CAPACITY_MIN_SOC..CAPACITY_MAX_SOC): below it the
         BMS holds a hidden reserve, above it the BMS pins SoC while balancing
-        and kwh_remaining lags, both of which would skew the ratio. Samples
+        and kwh_remaining lags, both of which would skew the ratio. It is also
+        skipped while the battery is actively charging or discharging
+        (|power| > CAPACITY_SAMPLE_MAX_BATTERY_KW): the kWh-remaining register
+        updates slowly while SoC moves live, so during a cycle the ratio
+        divides a stale-high kWh value by a live SoC and reads too high. Samples
         feed the same rolling-median window as the Force Charge learner, so
         get_learned_capacity() is the single source of truth.
         """
         if not (CAPACITY_MIN_SOC <= battery_soc <= CAPACITY_MAX_SOC):
+            return
+        if abs(battery_power_kw) > CAPACITY_SAMPLE_MAX_BATTERY_KW:
             return
         total_remaining = self._get_bms_total_kwh_remaining()
         if total_remaining is None or total_remaining <= 0:
