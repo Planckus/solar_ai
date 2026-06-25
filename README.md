@@ -115,7 +115,7 @@ After downloading all five, **hard-refresh your browser** so it picks up the new
 
    | Page | What to enter |
    |---|---|
-   | **Live data source** | Pick **EVCC**, **Hybrid**, or **FoxESS only** — see the [Live data mode](#live-data-mode) table. If unsure and you have no EV, choose **FoxESS only**. |
+   | **Live data source** | Pick **EVCC**, **Hybrid**, or **FoxESS only** — see the [Live data mode](#live-data-mode) table. If unsure and you have no EV, choose **FoxESS only**. Using EVCC? See [Using Solar AI with EVCC](#using-solar-ai-with-evcc). |
    | **EVCC URL** *(EVCC/Hybrid only)* | The address of your EVCC instance, e.g. `http://your-ha-ip:7070`. |
    | **FoxESS live sensors** *(Hybrid / FoxESS-only)* | Grid-import, grid-export, PV-power and house-load sensors. Auto-detected defaults are pre-filled — change only if your entity IDs differ. |
    | **No-EV acknowledgement** *(FoxESS-only)* | Confirm you have no EV, or that your charger never pulls from the house battery. This avoids tripping your main breaker. |
@@ -128,6 +128,25 @@ After downloading all five, **hard-refresh your browser** so it picks up the new
    | **Dashboard** | Leave **"Create the Solar AI dashboard for me"** ticked (recommended) and the integration builds the dashboard for you at the URL `/solar-ai` — you skip the manual import in step 7. (It still needs the cards from step 4 to render.) Untick it if you'd rather import the YAML by hand or link an existing dashboard. |
 
 Everything here can be changed later from *Settings → Devices & Services → Solar AI → **Configure*** without re-running the wizard. When the wizard finishes, Solar AI creates its sensors and switches and starts in monitoring mode (control off).
+
+### Using Solar AI with EVCC
+
+**What each one does.** EVCC ([evcc.io](https://evcc.io)) is a separate, free application that controls your EV charger — when and how fast the car charges, including solar following. Solar AI does the home-battery arbitrage — it reads live grid, PV and EV data and decides when to charge the battery from the grid, when to export, and when to hold. They run side by side: EVCC owns the car, Solar AI owns the battery, and Solar AI reads EVCC's live data over the LAN so the two don't fight.
+
+You do **not** set up EVCC from inside Solar AI. EVCC must already be installed and running, with your charger (and, for EVCC mode, your grid/PV meters) configured in EVCC itself. Solar AI only needs EVCC's address — it reads from EVCC's local API and never changes EVCC's configuration.
+
+1. **Get EVCC running first (prerequisite).** Install EVCC (Home Assistant add-on, Docker, or standalone — see [evcc.io](https://evcc.io)) and confirm its web UI is reachable, e.g. `http://your-ha-ip:7070`. Note that address. No EVCC API key or special setting is required; Solar AI uses EVCC's standard read endpoints on the local network.
+2. **Pick EVCC or Hybrid as the live data source** when the Solar AI wizard asks:
+
+   | Choose | When | Live grid + PV from | EV data from |
+   |---|---|---|---|
+   | **EVCC** | EVCC already sees your grid and PV meters | EVCC | EVCC |
+   | **Hybrid** | You want grid + PV straight from the FoxESS inverter, but still let EVCC run the car | FoxESS Modbus sensors | EVCC |
+
+3. **Enter the EVCC URL** from step 1 (both modes), e.g. `http://your-ha-ip:7070`.
+4. **(Hybrid only) Confirm the FoxESS live sensors** — grid import/export, PV power, house load. Auto-detected defaults are pre-filled; change only if your entity IDs differ. Hybrid also needs a solar-forecast source (Solcast or Forecast.Solar), since it doesn't take the PV forecast from EVCC.
+
+The rest of the wizard (inverter control, battery, prices, forecast) is identical in all modes. EV-aware scheduling and EVCC battery-mode coordination are active in both EVCC and Hybrid mode — see [Live data mode](#live-data-mode).
 
 ### 6. Connect an EV charger (optional)
 
