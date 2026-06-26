@@ -34,6 +34,7 @@ from .const import (
     GRID_MAX_KW,
     GRID_SAFETY_MARGIN_KW,
     GRID_MIN_CHARGE_KW,
+    CHARGE_RECAP_DEADBAND_KW,
     DEFAULT_VAT_PCT,
     DEFAULT_EXPORT_FEE,
     LEARNING_TICK_INTERVAL_SECONDS,
@@ -69,6 +70,8 @@ from .const import (
     FOXESS_FEED_IN,
     FOXESS_FORCE_CHARGE_ENTITY,
     FOXESS_FORCE_DISCHARGE_ENTITY,
+    FOXESS_MIN_SOC_ON_GRID_ENTITY,
+    CONF_FOXESS_MIN_SOC_ENTITY,
     FOXESS_LOAD_POWER,
     FOXESS_WORK_MODE_ENTITY,
     FOXESS_EXPORT_LIMIT_REGISTER,
@@ -117,6 +120,7 @@ from .const import (
     MODEL_HEALTH_SOLAR_LO,
     MODEL_HEALTH_SOLAR_HI,
     MODEL_HEALTH_SOC_MAE_PCT,
+    MODEL_HEALTH_AUTORESET_STREAK,
     DYNAMIC_FLOOR_MARGIN_DEFAULT,
     DYNAMIC_FLOOR_MARGIN_MIN,
     DYNAMIC_FLOOR_MARGIN_MAX,
@@ -347,6 +351,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # the 5-min learning tick) + edge-tracking for the notification.
         self._model_health_issues: list[str] = []
         self._prev_model_unhealthy: bool = False
+        # v0.66.0 Tier-2 — consecutive checks the capacity learner has been drifted,
+        # for the bounded auto-reset circuit breaker.
+        self._capacity_drift_streak: int = 0
+        # v0.65.0 — last grid-charge power cap actually written, so the per-cycle
+        # maintainer only re-writes when live headroom moves materially.
+        self._last_charge_cap_kw: float | None = None
+        # v0.65.0 — effective export floor (max of the user floor and the dynamic
+        # reserve), updated each cycle; _transition_to reads it to set the
+        # hardware min-SoC backstop on Force Discharge.
+        self._effective_floor_soc: float = float(DEFAULT_BATTERY_FLOOR_SOC)
         # Octopus Energy cache (v0.30.0). Keyed by valid_from ISO timestamp →
         # per-30-min rate entry from /standard-unit-rates. Empty when the
         # buy-price mode is not "octopus".
@@ -1505,6 +1519,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # than acting on a phantom value (e.g. a spurious grid-charge into a "near
         # empty" reading). The learners are already SoC-range-gated.
         soc_reliable = battery_soc > 0
+        # v0.65.0 — crash-recovery for the export-floor hardware backstop: if a
+        # raised on-grid Min-SoC was persisted but we are no longer exporting
+        # (e.g. HA restarted mid-Force-Discharge), restore it now so overnight
+        # house self-use isn't blocked. No-op once nothing is pending.
+        if (self._stored.get("export_min_soc_prev") is not None
+                and self._current_mode != MODE_EXPORTING):
+            await self._restore_export_min_soc()
 
         # ---- current spot price ----
         # Primary: read from a user-configured HA sensor (Strømligning, Tibber, etc.)
@@ -1639,6 +1660,37 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                         "; ".join(self._model_health_issues),
                     )
             self._prev_model_unhealthy = unhealthy
+            # v0.66.0 Tier-2 — bounded auto-correction circuit breaker. If the
+            # capacity learner stays drifted from the set value for ~a day,
+            # auto-reset its samples (a learner reset is safe — it never changes a
+            # safety bound; the GUI capacity stays authoritative). The Tier-1 edge
+            # notification already alerted the user when it first drifted.
+            _cap_cfg = float(self._stored.get(
+                "battery_capacity", self.config.get("battery_capacity", DEFAULT_BATTERY_CAPACITY)))
+            _cap_learned = self.get_learned_capacity()
+            _cap_drifted = (
+                _cap_learned is not None and _cap_cfg > 0
+                and abs(_cap_learned - _cap_cfg) / _cap_cfg > MODEL_HEALTH_CAPACITY_DRIFT_FRAC)
+            if _cap_drifted:
+                self._capacity_drift_streak += 1
+                if self._capacity_drift_streak >= MODEL_HEALTH_AUTORESET_STREAK:
+                    self._stored["capacity_samples"] = []
+                    self._capacity_drift_streak = 0
+                    _LOGGER.warning(
+                        "Tier-2 self-correction: capacity learner drifted for ~1 day "
+                        "(learned %.1f vs set %.1f kWh) — samples reset",
+                        _cap_learned, _cap_cfg)
+                    if self._stored.get("notifications_enabled", False):
+                        await self._send_mobile_notification(
+                            self._msg("Solar AI: capacity learner auto-reset",
+                                      "Solar AI: kapacitetslæring nulstillet"),
+                            self._msg(
+                                "The learned capacity drifted from your set value for over "
+                                "a day and was reset. Your set value is unchanged.",
+                                "Den lærte kapacitet afveg fra din indstilling i over et "
+                                "døgn og blev nulstillet. Din indstilling er uændret."))
+            else:
+                self._capacity_drift_streak = 0
 
         # v0.47.0 (C) — dynamic self-learning discharge floor. When enabled, the
         # reserve is the SoC needed to bridge the house to the next solar refill
@@ -1665,6 +1717,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # by post-restart SoC=0 reads (it pegged the floor at the 85% cap).
         else:
             self._dynamic_floor_soc = None
+        # v0.65.0 — remember the effective export floor for the hardware-min-SoC
+        # backstop set in _transition_to(MODE_EXPORTING).
+        self._effective_floor_soc = float(floor_soc)
 
         exportable_kwh = max(0.0, (battery_soc - floor_soc) / 100 * capacity_kwh * efficiency)
         importable_kwh = max(0.0, (max_soc - battery_soc) / 100 * capacity_kwh)
@@ -1883,7 +1938,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # the "is this a peak?" percentile test is meaningless. Only export
             # when the price set is real (enough slots + a genuine spread).
             and price_data_sufficient
-            and truly_exportable_kwh >= MIN_EXPORTABLE_KWH
+            # v0.65.0 — gate on energy ABOVE THE FLOOR (exportable_kwh), not
+            # truly_exportable_kwh. The dynamic floor already reserves the
+            # overnight house need; truly_exportable_kwh subtracted the 24 h net
+            # house need a SECOND time, which in low-solar/winter could fall to 0
+            # and veto a sell even when the (economically-correct) DP plan said
+            # export. The floor + the DP own the reservation; energy above the
+            # floor is genuinely sellable.
+            and exportable_kwh >= MIN_EXPORTABLE_KWH
             and battery_soc > floor_soc
             # Don't fight EVCC: if EV is fast/minpv-charging, hold the battery for it
             and not ev_charging_now
@@ -1904,12 +1966,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and price_data_sufficient
             and optimizer_says_charge
             and importable_kwh >= MIN_GRID_CHARGE_KWH
-            and not solar_will_fill
+            # v0.66.0 — the day-ahead DP plan already models solar and the EV
+            # session, so when a plan is driving this charge don't re-veto it with
+            # the reactive heuristics (solar_will_fill / ev_likely_charging) —
+            # they could override an economically-optimal planned charge. They
+            # still apply in the reactive fallback (no plan).
+            and (bool(self._optimizer_plan) or not solar_will_fill)
             and battery_soc < max_soc
             # Same EVCC respect: don't grid-charge if EVCC is managing battery
             and not evcc_managing_battery
-            # Skip if EV typically charges at this hour — avoid competing for cheap slots
-            and not ev_likely_charging
+            # Skip if EV typically charges at this hour — only in the reactive
+            # fallback; with a plan the DP already accounts for the EV.
+            and (bool(self._optimizer_plan) or not ev_likely_charging)
             # Grid overcurrent protection: only charge if there is useful headroom
             and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
         )
@@ -1921,6 +1989,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         min_export_price = float(self._stored.get("min_export_price", DEFAULT_MIN_EXPORT_PRICE))
         if export_price_raw <= min_export_price:
             should_export = False
+
+        # ── Blocked sell hours (v0.66.0) ─────────────────────────────────────
+        # A user veto on specific hours-of-day, set as a comma-separated list in
+        # the "Blocked sell hours" text field (e.g. "20,21"). Never sells the
+        # battery in a blocked hour, regardless of price or plan. Self-consumption
+        # and solar export are unaffected — only the battery export is held.
+        if should_export and current_local_hour in self._blocked_sell_hours():
+            should_export = False
+            self._mode_reason = f"Sell blocked for hour {current_local_hour:02d}h (user)"
 
         # If grid is paying US to buy electricity (buy price ≤ 0), always charge if there's
         # room — this overrides the spread threshold and even the EV schedule check.
@@ -2210,6 +2287,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # ---- export limit (every tick — enforces solar floor even when disabled) ----
         await self._maintain_export_limit(export_price_raw, min_export_price, new_mode)
+        # ---- grid-charge power (every tick — re-cap to LIVE headroom) ----
+        # v0.65.0 — the charge power was only set on the transition into
+        # GRID_CHARGING; if house load rose mid-charge the total grid draw could
+        # exceed the breaker. Re-cap to current headroom each cycle.
+        if self._enabled and soc_reliable:
+            await self._maintain_charge_power(capped_charge_rate_kw, new_mode)
 
         # ---- PV-curtailment flag (v0.36.2) — read inverter reg 49251 every tick ----
         # The EV controller consumes this cached value to decide whether to
@@ -2480,7 +2563,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if should_export:
             target_mode = MODE_EXPORTING
             reason = (
-                f"Exporting: price {export_price:.2f} ≥ p75 {price_p75:.2f} DKK/kWh, "
+                f"Exporting: sell price {export_price:.2f} DKK/kWh (peak ref p75 {price_p75:.2f}), "
                 f"spread {spread:.2f} DKK/kWh, "
                 f"{exportable_kwh:.1f} kWh available"
             )
@@ -2535,6 +2618,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # Discharge, so the inverter actually exports.
             max_export_kw = float(self._stored.get("max_export_kw", DEFAULT_MAX_EXPORT_KW))
             await self._set_discharge_power(max_export_kw)
+            # v0.65.0 — HARDWARE floor backstop: raise the on-grid Min-SoC to the
+            # export floor so Force Discharge physically stops at the floor even
+            # if a Solar AI tick stalls. Restored the moment we leave EXPORTING.
+            await self._apply_export_floor_min_soc(self._effective_floor_soc)
             # Tell EVCC to hold so it doesn't fight our export
             if coordinate_with_evcc:
                 self._we_set_evcc_mode = True
@@ -2542,6 +2629,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         elif new_mode == MODE_GRID_CHARGING:
             # Force Charge: inverter charges battery from grid at grid-headroom-capped rate
+            await self._restore_export_min_soc()  # leaving export — give the house its SoC back
             await self._set_work_mode(WORK_MODE_FORCE_CHARGE)
             await self._set_charge_power(inverter_id, max_kw=capped_charge_rate_kw)
             if coordinate_with_evcc:
@@ -2549,6 +2637,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
 
         elif new_mode == MODE_NORMAL:
+            await self._restore_export_min_soc()  # leaving export — give the house its SoC back
             await self._set_work_mode(WORK_MODE_SELF_USE)
             # Release EVCC back to normal only if WE were the one who set it to hold
             if coordinate_with_evcc and self._we_set_evcc_mode:
@@ -2708,6 +2797,26 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.error("Failed to set export limit: %s", err)
 
+    async def _maintain_charge_power(
+        self, capped_charge_rate_kw: float, current_mode: str,
+    ) -> None:
+        """Re-cap the grid-charge power to the live grid headroom each cycle while
+        grid-charging (v0.65.0). The power was previously set only at the
+        transition into GRID_CHARGING, so a mid-charge rise in house load could
+        push total grid draw (house + charge) over the breaker. Only writes when
+        the cap moves by more than the deadband, to bound register wear. When the
+        headroom collapses below the minimum, the decision layer stops the charge
+        on the next cycle (should_grid_charge requires headroom ≥ GRID_MIN)."""
+        if current_mode != MODE_GRID_CHARGING:
+            self._last_charge_cap_kw = None
+            return
+        prev = self._last_charge_cap_kw
+        if prev is not None and abs(capped_charge_rate_kw - prev) < CHARGE_RECAP_DEADBAND_KW:
+            return
+        self._last_charge_cap_kw = capped_charge_rate_kw
+        await self._set_charge_power(
+            self.config.get("foxess_inverter_id", ""), max_kw=capped_charge_rate_kw)
+
     async def _set_charge_power(self, inverter_id: str, max_kw: float = 0.0) -> None:
         """Set the Force Charge power to the learned rate, capped to grid headroom."""
         rate_kw = self.get_current_charge_rate()
@@ -2735,6 +2844,50 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("Battery Arbitrage: force charge power → %.3f kW", value)
         except Exception as err:
             _LOGGER.error("Failed to set force charge power: %s", err)
+
+    async def _apply_export_floor_min_soc(self, floor_soc: float) -> None:
+        """v0.65.0 — raise the FoxESS on-grid Min-SoC to the export floor while
+        Force-Discharging, so the inverter HARDWARE stops the sell at the floor
+        even if a Solar AI tick stalls. The user's original value is saved (in
+        storage, so it survives a restart) and restored when export ends — the
+        floor must never block overnight HOUSE self-use, only the sell."""
+        entity = self.config.get(CONF_FOXESS_MIN_SOC_ENTITY, FOXESS_MIN_SOC_ON_GRID_ENTITY)
+        st = self.hass.states.get(entity)
+        if st is None or st.state in ("unknown", "unavailable"):
+            return  # entity not present (e.g. non-Modbus install) — soft floor only
+        try:
+            current = float(st.state)
+        except (ValueError, TypeError):
+            return
+        target = float(max(0, min(100, round(floor_soc))))
+        # Only raise (never lower the user's setting) and only act on a real change.
+        if target <= current:
+            return
+        if self._stored.get("export_min_soc_prev") is None:
+            self._stored["export_min_soc_prev"] = current
+        try:
+            await self.hass.services.async_call(
+                "number", "set_value", {"entity_id": entity, "value": target}, blocking=True)
+            _LOGGER.info("Export floor backstop: on-grid Min-SoC %.0f%% → %.0f%%", current, target)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Could not raise on-grid Min-SoC for export floor: %s", err)
+            self._stored.pop("export_min_soc_prev", None)
+
+    async def _restore_export_min_soc(self) -> None:
+        """Restore the on-grid Min-SoC to the user's saved value after export, so
+        overnight house self-use is never blocked. No-op if we never raised it."""
+        prev = self._stored.get("export_min_soc_prev")
+        if prev is None:
+            return
+        entity = self.config.get(CONF_FOXESS_MIN_SOC_ENTITY, FOXESS_MIN_SOC_ON_GRID_ENTITY)
+        try:
+            await self.hass.services.async_call(
+                "number", "set_value",
+                {"entity_id": entity, "value": float(prev)}, blocking=True)
+            _LOGGER.info("Export floor backstop: on-grid Min-SoC restored to %.0f%%", float(prev))
+            self._stored.pop("export_min_soc_prev", None)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Could not restore on-grid Min-SoC after export: %s", err)
 
     async def _set_discharge_power(self, max_kw: float) -> None:
         """Set the Force Discharge power (kW). `max_kw <= 0` → full rate (the
@@ -3196,18 +3349,53 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             del samples[: len(samples) - OVERNIGHT_SAMPLES_MAX]
 
     def _reserve_factor(self) -> float:
-        """Effective reserve safety factor for the dynamic floor. The empirical
-        p80 of clean-night forecast error once warm (clamped), else the fixed
-        fallback factor. Can never leave [RESERVE_FACTOR_MIN, RESERVE_FACTOR_MAX]."""
+        """Effective reserve safety factor for the dynamic floor. Once warm, the
+        empirical p80 of clean-night forecast error (clamped to the safety band).
+        Until then, the user-set 'Reserve safety factor' number (v0.66.0,
+        default 1.3) — so the reserve can be tuned immediately (lower = sell more
+        into peaks, higher = hold more for the night) before the data takes over."""
         samples: list[float] = self._stored.get("overnight_ratio_samples", [])
         if len(samples) < OVERNIGHT_MIN_NIGHTS:
-            return DYNAMIC_FLOOR_RESERVE_FACTOR
+            manual = float(self._stored.get(
+                "reserve_factor_manual", DYNAMIC_FLOOR_RESERVE_FACTOR))
+            return round(max(1.0, min(2.0, manual)), 3)
         s = sorted(samples)
         k = (len(s) - 1) * OVERNIGHT_PERCENTILE
         lo = int(k)
         hi = min(lo + 1, len(s) - 1)
         p80 = s[lo] + (s[hi] - s[lo]) * (k - lo)
         return round(max(RESERVE_FACTOR_MIN, min(RESERVE_FACTOR_MAX, p80)), 3)
+
+    def _blocked_sell_hours(self) -> set[int]:
+        """Parse the user's 'Blocked sell hours' text (comma-separated hours of
+        day, e.g. "20,21") into a set of ints (v0.66.0). Robust to whitespace and
+        garbage; values outside 0–23 are ignored."""
+        raw = str(self._stored.get("blocked_sell_hours", "") or "")
+        hours: set[int] = set()
+        for tok in raw.replace(";", ",").split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            try:
+                h = int(tok)
+            except ValueError:
+                continue
+            if 0 <= h <= 23:
+                hours.add(h)
+        return hours
+
+    async def toggle_blocked_sell_hour(self, hour: int) -> None:
+        """Toggle one hour-of-day in the blocked-sell-hours set (v0.66.1) — backs
+        the clickable hour grid on the dashboard via the
+        battery_arbitrage.toggle_blocked_sell_hour service."""
+        if not (0 <= hour <= 23):
+            return
+        hours = self._blocked_sell_hours()
+        hours.discard(hour) if hour in hours else hours.add(hour)
+        self._stored["blocked_sell_hours"] = ",".join(str(h) for h in sorted(hours))
+        if self.hass:
+            await self._store.async_save(self._stored)
+            await self.async_request_refresh()
 
     def _update_vacation_mode(self, load_2h: float, load_28d: float) -> bool:
         counter: int = self._stored.get("vacation_counter", 0)
@@ -7681,6 +7869,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning(
                     "Battery unlock during restore_normal failed: %s", err)
+        # v0.65.0 — likewise restore the on-grid Min-SoC if export raised it, so
+        # the hardware export-floor backstop never strands the house's overnight SoC.
+        await self._restore_export_min_soc()
 
 
 # ------------------------------------------------------------------ #

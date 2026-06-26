@@ -482,6 +482,13 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             coordinator.reset_learned_rates()
 
+    async def handle_toggle_blocked_sell_hour(call: ServiceCall) -> None:
+        """v0.66.1 — toggle one hour in the blocked-sell-hours set (backs the
+        clickable hour grid on the dashboard)."""
+        coordinator = _get_coordinator(call)
+        if coordinator:
+            await coordinator.toggle_blocked_sell_hour(int(call.data.get("hour", -1)))
+
     async def handle_add_schedule_slot(call: ServiceCall) -> None:
         """v0.38.0 — Allocate the next free EV-schedule slot in coordinator
         storage and seed it with defaults. No HA `schedule.*` helper is
@@ -543,6 +550,7 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, "force_grid_charge", handle_force_grid_charge)
     hass.services.async_register(DOMAIN, "restore_normal", handle_restore_normal)
     hass.services.async_register(DOMAIN, "reset_learning", handle_reset_learning)
+    hass.services.async_register(DOMAIN, "toggle_blocked_sell_hour", handle_toggle_blocked_sell_hour)
     hass.services.async_register(DOMAIN, "add_schedule_slot", handle_add_schedule_slot)
     hass.services.async_register(DOMAIN, "remove_schedule_slot", handle_remove_schedule_slot)
     hass.services.async_register(DOMAIN, "toggle_schedule_day", handle_toggle_schedule_day)

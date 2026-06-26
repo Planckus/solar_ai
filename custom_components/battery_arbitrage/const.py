@@ -436,6 +436,13 @@ FOXESS_FEED_IN = "sensor.foxessmodbus_feed_in"
 FOXESS_WORK_MODE_ENTITY = "select.foxessmodbus_work_mode"
 FOXESS_FORCE_CHARGE_ENTITY = "number.foxessmodbus_force_charge_power"
 FOXESS_FORCE_DISCHARGE_ENTITY = "number.foxessmodbus_force_discharge_power"
+# v0.65.0 — the on-grid Min-SoC register. Force Discharge stops discharging to
+# the grid when SoC reaches this. Solar AI raises it to the export floor while
+# Force-Discharging (a HARDWARE backstop so a stalled tick can't over-sell), and
+# restores the user's original value the moment it stops, so overnight HOUSE
+# self-use is never blocked.
+FOXESS_MIN_SOC_ON_GRID_ENTITY = "number.foxessmodbus_min_soc_on_grid"
+CONF_FOXESS_MIN_SOC_ENTITY = "foxess_min_soc_entity"
 FOXESS_EXPORT_LIMIT_REGISTER = 46616
 # RO holding register: 0 = inverter not curtailing PV; 1 = MPPT actively
 # throttled (set whenever the inverter is clipping PV output for any
@@ -577,6 +584,10 @@ MODEL_HEALTH_EFFICIENCY_HI = 0.985
 MODEL_HEALTH_SOLAR_LO = 0.35              # solar accuracy factor clamp-edge band
 MODEL_HEALTH_SOLAR_HI = 1.45
 MODEL_HEALTH_SOC_MAE_PCT = 12.0           # 7-day predicted-vs-actual SoC error above this = degraded
+# Tier-2 self-correction (v0.66.0) — if a learner stays flagged for this many
+# consecutive 5-min checks (~1 day), auto-reset it (within bounds; never touches
+# a safety clamp). The user was already alerted when it first drifted.
+MODEL_HEALTH_AUTORESET_STREAK = 288
 # Legacy self-learning-margin constants — retained for the (now-uncalled)
 # _update_discharge_margin and the one-time upgrade resets; no longer drive the
 # floor.
@@ -650,6 +661,9 @@ MIN_PRICE_SLOTS_FOR_GRID_CHARGE = 8
 GRID_MAX_KW = 17.0                  # Default circuit breaker limit (kW) — user-adjustable via number entity
 GRID_SAFETY_MARGIN_KW = 0.5         # Buffer below the breaker limit to avoid nuisance trips
 GRID_MIN_CHARGE_KW = 0.3            # Minimum useful battery charge rate under headroom constraint
+# v0.65.0 — re-cap the grid-charge power to live headroom only when it moves by
+# more than this, to bound register wear (mirrors the export-limit maintainer).
+CHARGE_RECAP_DEADBAND_KW = 0.5
 
 # Pricing (VAT % and export fee are now live-configurable via number entities)
 

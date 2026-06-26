@@ -314,7 +314,8 @@
       "ev_schedule_slot_4_summary": { "name": "Schedule 4" }
     },
     "text": {
-      "foxess_charger_host": { "name": "FoxESS charger host (IP)" }
+      "foxess_charger_host": { "name": "FoxESS charger host (IP)" },
+      "blocked_sell_hours": { "name": "Blocked sell hours" }
     },
     "select": {
       "live_data_source": {
@@ -481,6 +482,7 @@
       "floor_soc": { "name": "Minimum SoC (export)" },
       "max_soc": { "name": "Maximum SoC (grid charge)" },
       "battery_capacity": { "name": "Battery capacity (kWh)" },
+      "reserve_factor_manual": { "name": "Reserve safety factor" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage spread" },
       "grid_max_kw": { "name": "Grid import limit" },
       "vat_pct": { "name": "Buy-side VAT (%)" },

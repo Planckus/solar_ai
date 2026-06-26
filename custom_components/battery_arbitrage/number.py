@@ -20,6 +20,7 @@ from .const import (
     CONF_BUY_PRICE_MODE,
     CONF_STROMLIGNING_USE_MANUAL_OVERRIDES,
     DEFAULT_BATTERY_CAPACITY,
+    DYNAMIC_FLOOR_RESERVE_FACTOR,
     DEFAULT_BATTERY_DEGRADATION_COST,
     DEFAULT_BATTERY_FLOOR_SOC,
     DEFAULT_DISK_ALARM_THRESHOLD_PCT,
@@ -133,6 +134,23 @@ async def async_setup_entry(
             step=0.1,
             mode=NumberMode.BOX,
             display_precision=1,
+        ),
+        # v0.66.0 — overnight reserve safety factor (the multiplier on the
+        # predicted overnight need). Used until the adaptive p80 learner warms
+        # up (7 clean nights), then the data takes over. Lower = sell more into
+        # peaks; higher = hold more for the night.
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="reserve_factor_manual",
+            translation_key="reserve_factor_manual",
+            default=DYNAMIC_FLOOR_RESERVE_FACTOR,
+            icon="mdi:shield-half-full",
+            unit="×",
+            min_val=1.0,
+            max_val=2.0,
+            step=0.05,
+            mode=NumberMode.BOX,
+            display_precision=2,
         ),
         BatteryArbitrageConfigNumber(
             coordinator, entry,
