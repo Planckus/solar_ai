@@ -9,6 +9,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.66.2] — 2026-06-26
+
+### Documentation
+
+- Documented the features added since v0.59.x: the dashboard *Battery capacity*, *Reserve safety factor* and *Blocked sell hours* controls and the redesigned dynamic discharge floor (in the Settings reference), the *Model health* self-monitoring (in the safety overview), and a *Recent releases* summary of the v0.60.0–v0.66.1 floor-redesign and self-correction work.
+
+## [0.66.1] — 2026-06-26
+
+### Added
+
+- **Clickable blocked-sell-hours grid.** Adds a `battery_arbitrage.toggle_blocked_sell_hour` service and a dashboard grid of 24 hour buttons that toggle each hour on/off (red = blocked), instead of typing into the text field. The text field still works and shows the result.
+
+## [0.66.0] — 2026-06-26
+
+### Added
+
+- **Reserve safety factor slider.** A new *Reserve safety factor* number lets you tune the overnight reserve directly (lower = sell more into peaks, higher = hold more for the night). It sets the factor used until the adaptive p80 learner warms up (7 clean nights), after which the measured value takes over.
+- **Blocked sell hours.** A new *Blocked sell hours* text field takes a comma-separated list of hours of day (e.g. `20,21`) in which the battery is never sold, regardless of price or plan. Self-consumption and solar export are unaffected — only battery export is held.
+- **Tier-2 self-correction.** If a learned model stays flagged by the model-health monitor for about a day, the integration now auto-resets that learner (currently the capacity learner) and notifies you — a bounded circuit breaker that resets a drifted learner but never changes a safety limit. Your set values are untouched.
+
+### Changed
+
+- **The day-ahead plan is no longer second-guessed by reactive heuristics.** When the optimiser's plan drives a grid-charge it already models solar and the EV, so the reactive "solar will fill the battery" and "EV usually charges now" vetoes no longer override it; they still apply in the reactive fallback when no plan is available. (Together with the v0.65.0 export-gating fix, this stops the heuristics from suppressing economically-optimal trades.)
+
+## [0.65.0] — 2026-06-26
+
+### Fixed
+
+- **Hardware export-floor backstop.** While Force-Discharging to sell, the integration now raises the FoxESS on-grid Min-SoC register to the export floor, so the inverter physically stops the sell at the floor even if a Solar AI control tick stalls. Previously the floor was enforced only by Solar AI re-evaluating each cycle and switching out of Force Discharge — a stalled or slow tick could over-discharge. The user's original Min-SoC is saved (in storage, so it survives a restart) and restored the moment export ends, on disable/unload, and on the next cycle after a mid-export restart — so overnight **house** self-use is never blocked, only the sell.
+- **Export no longer double-reserves the house load.** The export decision gated on energy above the floor minus the *full 24 h* net house need, but the dynamic floor already reserves the overnight need — so in low-solar/winter conditions the second subtraction could fall to zero and veto a sell even when the optimiser's plan said export. It now gates on energy above the floor (the floor and the optimiser own the reservation).
+- **Grid-charge power is re-capped to live grid headroom every cycle.** It was set only when grid-charging started, so a rise in house load mid-charge could push total grid draw over the breaker limit. A per-cycle maintainer now re-caps it to current headroom (matching the export-limit maintainer), writing only on a material change.
+- Clarified the export reason text (it no longer implies the price is always at the p75 peak threshold when the day-ahead plan drove the decision).
+
 ## [0.64.1] — 2026-06-26
 
 ### Fixed

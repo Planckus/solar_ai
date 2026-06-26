@@ -300,7 +300,8 @@
       "ev_schedule_slot_4_summary": { "name": "Skema 4" }
     },
     "text": {
-      "foxess_charger_host": { "name": "FoxESS-lader vært (IP)" }
+      "foxess_charger_host": { "name": "FoxESS-lader vært (IP)" },
+      "blocked_sell_hours": { "name": "Blokerede salgstimer" }
     },
     "select": {
       "live_data_source": {
@@ -467,6 +468,7 @@
       "floor_soc": { "name": "Minimum SoC (eksport)" },
       "max_soc": { "name": "Maksimum SoC (netopladning)" },
       "battery_capacity": { "name": "Batterikapacitet (kWh)" },
+      "reserve_factor_manual": { "name": "Reserve-sikkerhedsfaktor" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage-spread" },
       "grid_max_kw": { "name": "Net-importgrænse" },
       "vat_pct": { "name": "Moms på køb (%)" },

@@ -39,6 +39,7 @@ Solar AI tunes itself to your specific system instead of running on fixed assump
 
 - **Respects your main fuse.** Total grid draw (house + battery + EV) is held under your breaker rating, so charging never trips the main.
 - **Protects the battery.** It accounts for cycle wear and temperature and keeps a health floor, so chasing a few øre never costs you battery life.
+- **Watches its own models.** A **Model health** sensor flags any learned value that has drifted, pinned at a safety limit, or whose predictions have gone persistently wrong — and resets a clearly-broken learner on its own — so a silent model error surfaces instead of quietly skewing decisions. Learned values are also clamped to safe bands so none can ever run away.
 - **Show, then trust.** Run it in monitoring mode first — it shows exactly what it *would* do on a built-in dashboard (prices, the plan, battery, EV, earnings and history) — and hand over control only when you're satisfied.
 
 Everything runs locally in Home Assistant, on top of your existing FoxESS Modbus and solar-forecast integrations. No cloud account, and no external service makes the decisions.
@@ -261,6 +262,18 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 ---
 
 ## Recent releases
+
+### v0.60.0–v0.66.1 — discharge-floor redesign, self-correction, and new controls
+
+A run of changes that reworked the overnight reserve from a fragile self-learning margin into a robust, self-correcting design, and added several dashboard controls. Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Battery capacity is now a dashboard setting** (*Batterikapacitet*) and authoritative for all the energy maths. The BMS-based capacity auto-learner proved unreliable on some hardware (a sticky kWh-remaining register drifted the estimate high) and was retired in favour of the value you set.
+- **The dynamic discharge floor was rebuilt.** The old self-learning margin could ratchet to its cap — pinning the floor near 85 % and suppressing arbitrage — and was vulnerable to bad inputs. It is replaced by a deterministic reserve (predicted overnight need from the learned load profile and accuracy-corrected solar forecast) times a safety factor that adapts from the **measured overnight forecast error** (the 80th percentile over clean nights), clamped so it can never run away. A new **Reserve safety factor** control tunes it directly.
+- **Hardware export-floor backstop.** While Force-Discharging, the inverter's own on-grid Min-SoC is raised to the export floor, so a stalled control tick can't over-discharge the battery; the original value is restored the moment selling stops (house self-use is never blocked).
+- **The optimiser values retained overnight SoC at the avoided-buy price** instead of the lower sell price, so it no longer dumps the last of the battery at the end of its planning horizon.
+- **Model-health monitor** (*Model health* sensor) — flags a learned model that has drifted, pinned at a safety limit, or whose predictions are persistently wrong, and auto-resets a clearly-broken learner.
+- **Blocked sell hours** — a clickable 24-hour grid (and text field) to veto selling in chosen hours, without affecting solar export or self-consumption.
+- Hardening: an unreliable (0 / unavailable) SoC reading no longer drives control or learning; the day-ahead plan is no longer over-ridden by reactive heuristics it already accounts for; grid-charge power is re-capped to live grid headroom every cycle; clearer EVCC setup docs.
 
 ### v0.59.13 — three-phase override + sub-5-minute phase switching
 
@@ -638,12 +651,15 @@ Every setting below is editable from the dashboard (**Indstillinger / Settings**
 
 | Setting | Range | Default | What it does |
 |---|---|---|---|
-| **Minimum SoC (export)**<br>_Minimum SoC (eksport)_ | 10–100 % | 50 % | The static export floor — the battery is never *exported* below this SoC, reserving the rest for the house. Ignored while *Dynamic discharge floor* is on. |
+| **Minimum SoC (export)**<br>_Minimum SoC (eksport)_ | 10–100 % | 50 % | The static export floor — the battery is never *exported* below this SoC, reserving the rest for the house. With *Dynamic discharge floor* on this is a hard minimum the dynamic reserve can only raise, never go below. |
 | **Maximum SoC (grid charge)**<br>_Maksimum SoC (netopladning)_ | 10–100 % | 100 % | Ceiling that grid-charging will fill the battery to. |
+| **Battery capacity**<br>_Batterikapacitet (kWh)_ | 3–30 kWh | from setup | Usable capacity used for all the energy maths (reserve sizing, exportable energy, cycle planning). The value here is authoritative — it overrides the auto-detected estimate. |
+| **Reserve safety factor**<br>_Reserve-sikkerhedsfaktor_ | 1.0–2.0× | 1.3× | Multiplier on the predicted overnight need that the *Dynamic discharge floor* reserves. Lower = sell more into peaks; higher = hold more for the night. Used until the adaptive learner has ≈7 clean nights of data, after which the measured value takes over. |
+| **Blocked sell hours**<br>_Blokerede salgstimer_ | hours of day | none | Hours in which the battery is never sold — set with the clickable hour grid on the Settings page (or as a comma list, e.g. `20,21`). Solar export and house self-consumption are unaffected; only the battery *sell* is held. |
 | **Export power cap**<br>_Eksporteffekt-grænse (0 = ingen)_ | 0–10 kW | 0 (no cap) | Limits how fast the battery discharges to the grid. 0 = use the full available rate. |
-| **Grid import limit**<br>_Net-importgrænse_ | 5–63 kW | 17 kW | Your main breaker rating. Total grid draw is kept under this — grid-charge power is reduced to leave headroom for house + EV load. |
-| **Dynamic discharge floor**<br>_Dynamisk afladningsgulv (selvlærende)_ | on/off | off | When on, replaces the static *Minimum SoC* with a self-learning floor sized to run the house from now until solar covers it again, on top of the hardware minimum SoC. A planned grid-charge is netted off the reserve only for the energy it actually returns (so a token charge does not lower the floor; a real cheap multi-hour charge does). Short bright night → lower floor (export more); long winter night → higher floor (hold more). The safety margin self-corrects daily from how far the SoC actually fell. |
-| **Effective discharge floor**<br>_Effektivt afladningsgulv_ | read-only | — | Shows the floor actually in effect right now (the static value, or the computed dynamic reserve) plus the self-learned safety margin. |
+| **Grid import limit**<br>_Net-importgrænse_ | 5–63 kW | 17 kW | Your main breaker rating. Total grid draw is kept under this — grid-charge power is reduced (and re-checked every cycle) to leave headroom for house + EV load. |
+| **Dynamic discharge floor**<br>_Dynamisk afladningsgulv (selvlærende)_ | on/off | off | When on, raises the export floor to the SoC needed to run the house from now until solar covers it again (net of any planned grid-charge), on top of your *Minimum SoC*. The reserve is a deterministic calculation from the learned load profile and accuracy-corrected solar forecast, multiplied by the *Reserve safety factor*. Short bright night → lower floor (export more); long winter night → higher floor (hold more). While Force-Discharging it also raises the inverter's own on-grid Min-SoC to the floor as a hardware backstop, and restores it the moment selling stops. |
+| **Effective discharge floor**<br>_Effektivt afladningsgulv_ | read-only | — | Shows the floor actually in effect right now (the static value, or the computed dynamic reserve), with the reserve factor in use as an attribute. |
 
 #### Price parameters
 

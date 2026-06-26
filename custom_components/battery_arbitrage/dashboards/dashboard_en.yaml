@@ -1317,6 +1317,10 @@ views:
           name: Dynamic discharge floor (auto)
         - entity: sensor.solar_ai_effektivt_afladningsgulv
           name: Effective floor (active)
+        - entity: number.solar_ai_reserve_sikkerhedsfaktor
+          name: Reserve safety factor
+        - entity: binary_sensor.solar_ai_modelhelbred
+          name: Model health
       - type: entities
         title: Price parameters
         icon: mdi:currency-eur
@@ -1487,6 +1491,260 @@ views:
           name: Export power
         - entity: sensor.foxessmodbus_load_power
           name: House load
+      - type: vertical-stack
+        cards:
+        - type: markdown
+          content: '#### 🚫 Block sell hours (tap to toggle)
+
+            Red = the battery is not sold in that hour. Solar export and self-consumption are unaffected.'
+        - type: grid
+          columns: 6
+          square: true
+          cards:
+          - type: custom:mushroom-template-card
+            primary: '00'
+            icon: '{% if ''0'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''0'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 0
+          - type: custom:mushroom-template-card
+            primary: '01'
+            icon: '{% if ''1'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''1'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 1
+          - type: custom:mushroom-template-card
+            primary: '02'
+            icon: '{% if ''2'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''2'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 2
+          - type: custom:mushroom-template-card
+            primary: '03'
+            icon: '{% if ''3'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''3'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 3
+          - type: custom:mushroom-template-card
+            primary: '04'
+            icon: '{% if ''4'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''4'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 4
+          - type: custom:mushroom-template-card
+            primary: '05'
+            icon: '{% if ''5'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''5'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 5
+          - type: custom:mushroom-template-card
+            primary: '06'
+            icon: '{% if ''6'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''6'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 6
+          - type: custom:mushroom-template-card
+            primary: '07'
+            icon: '{% if ''7'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''7'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 7
+          - type: custom:mushroom-template-card
+            primary: 08
+            icon: '{% if ''8'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''8'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 8
+          - type: custom:mushroom-template-card
+            primary: 09
+            icon: '{% if ''9'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''9'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 9
+          - type: custom:mushroom-template-card
+            primary: '10'
+            icon: '{% if ''10'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''10'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 10
+          - type: custom:mushroom-template-card
+            primary: '11'
+            icon: '{% if ''11'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''11'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 11
+          - type: custom:mushroom-template-card
+            primary: '12'
+            icon: '{% if ''12'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''12'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 12
+          - type: custom:mushroom-template-card
+            primary: '13'
+            icon: '{% if ''13'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''13'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 13
+          - type: custom:mushroom-template-card
+            primary: '14'
+            icon: '{% if ''14'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''14'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 14
+          - type: custom:mushroom-template-card
+            primary: '15'
+            icon: '{% if ''15'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''15'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 15
+          - type: custom:mushroom-template-card
+            primary: '16'
+            icon: '{% if ''16'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''16'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 16
+          - type: custom:mushroom-template-card
+            primary: '17'
+            icon: '{% if ''17'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''17'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 17
+          - type: custom:mushroom-template-card
+            primary: '18'
+            icon: '{% if ''18'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''18'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 18
+          - type: custom:mushroom-template-card
+            primary: '19'
+            icon: '{% if ''19'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''19'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 19
+          - type: custom:mushroom-template-card
+            primary: '20'
+            icon: '{% if ''20'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''20'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 20
+          - type: custom:mushroom-template-card
+            primary: '21'
+            icon: '{% if ''21'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''21'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 21
+          - type: custom:mushroom-template-card
+            primary: '22'
+            icon: '{% if ''22'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''22'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 22
+          - type: custom:mushroom-template-card
+            primary: '23'
+            icon: '{% if ''23'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
+            icon_color: '{% if ''23'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
+            layout: vertical
+            tap_action:
+              action: call-service
+              service: battery_arbitrage.toggle_blocked_sell_hour
+              data:
+                hour: 23
+        - type: entities
+          entities:
+          - entity: text.solar_ai_blokerede_salgstimer
+            name: Blocked hours (text)
 - title: Advanced setup
   path: advanced
   icon: mdi:tune-variant

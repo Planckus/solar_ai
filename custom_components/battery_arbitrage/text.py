@@ -26,7 +26,49 @@ async def async_setup_entry(
 ) -> None:
     """Set up text entities."""
     coordinator: BatteryArbitrageCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([BatteryArbitrageChargerHostText(coordinator, entry)])
+    async_add_entities([
+        BatteryArbitrageChargerHostText(coordinator, entry),
+        BatteryArbitrageBlockedSellHoursText(coordinator, entry),
+    ])
+
+
+class BatteryArbitrageBlockedSellHoursText(
+    CoordinatorEntity[BatteryArbitrageCoordinator], TextEntity
+):
+    """Comma-separated hours-of-day in which the battery must NOT be sold
+    (v0.66.0), e.g. "20,21". Empty = no restriction."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_translation_key = "blocked_sell_hours"
+    _attr_icon = "mdi:cancel"
+    _attr_mode = TextMode.TEXT
+    _attr_native_max = 64
+    _attr_pattern = r"[0-9, ;]*"
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_blocked_sell_hours"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def native_value(self) -> str:
+        return self.coordinator._stored.get("blocked_sell_hours", "")
+
+    async def async_set_value(self, value: str) -> None:
+        # Normalise to a clean, sorted, de-duplicated hour list.
+        self.coordinator._stored["blocked_sell_hours"] = value.strip()
+        hours = sorted(self.coordinator._blocked_sell_hours())
+        self.coordinator._stored["blocked_sell_hours"] = ",".join(str(h) for h in hours)
+        if self.coordinator.hass:
+            await self.coordinator._store.async_save(self.coordinator._stored)
+            await self.coordinator.async_request_refresh()
+        self.async_write_ha_state()
 
 
 class BatteryArbitrageChargerHostText(
