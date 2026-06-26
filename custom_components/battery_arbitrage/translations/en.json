@@ -466,7 +466,8 @@
       "ev_charging_now": { "name": "EV charging (now/minpv mode)" },
       "ev_charging_solar": { "name": "EV on Solar" },
       "disk_low": { "name": "Low disk space" },
-      "price_data_degraded": { "name": "Price data degraded" }
+      "price_data_degraded": { "name": "Price data degraded" },
+      "model_health": { "name": "Model health" }
     },
     "number": {
       "ev_control_interval": { "name": "EV control interval" },
