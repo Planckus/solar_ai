@@ -452,7 +452,8 @@
       "ev_charging_now": { "name": "EV oplader (now/minpv-tilstand)" },
       "ev_charging_solar": { "name": "EV på solenergi" },
       "disk_low": { "name": "Lav diskplads" },
-      "price_data_degraded": { "name": "Prisdata forringet" }
+      "price_data_degraded": { "name": "Prisdata forringet" },
+      "model_health": { "name": "Modelhelbred" }
     },
     "number": {
       "ev_control_interval": { "name": "EV-styringsinterval" },

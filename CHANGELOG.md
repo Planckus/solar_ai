@@ -9,6 +9,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.64.1] — 2026-06-26
+
+### Fixed
+
+- **Retired the unreliable BMS battery-capacity learner.** It derived capacity from the FoxESS kWh-remaining register, which is sticky and lags the state-of-charge even when the battery is near idle, so the estimate drifted badly (to ~16.9 then ~25.7 kWh against a real 12.1) despite the v0.60.0 idle-gate — the new model-health monitor flagged it on its first run. Capacity is set in the GUI and is authoritative for the optimiser regardless, so this only affected the diagnostic value. The BMS sampler is no longer called and its drifted samples are cleared once on upgrade; the reliable Force-Charge capacity sampler (real energy-in vs SoC change) remains. This clears the model-health flag.
+
+## [0.64.0] — 2026-06-26
+
+### Added
+
+- **Model-health monitor.** A new *Model health* binary sensor (and edge-triggered notification) watches the learned models and raises a flag when one looks wrong, instead of letting it silently skew decisions. It checks: the BMS capacity learner drifting more than 25 % from the set capacity; the overnight reserve factor pinned at a safety clamp (e.g. its 1.60 cap, the signal to raise it for winter); auto round-trip efficiency at a clamp edge; the solar forecast factor persistently biased; and the 7-day predicted-vs-actual SoC error exceeding 12 %. The `issues` attribute lists what and why. It is detection-and-surface only — it never changes a model (that boundary is what keeps the self-correction stable). Both problems hit during the 0.60–0.63 work — the capacity learner reaching ~16.9 kWh vs the real 12.1, and the reserve margin pinning at its cap — would have been flagged automatically by this.
+
+## [0.63.0] — 2026-06-26
+
+### Changed
+
+- **Optimiser values retained overnight SoC at the avoided-buy price, not the sell price.** The day-ahead optimiser estimates the worth of the energy left in the battery at the end of its planning horizon. It used the mean *sell* price, which under-values that energy — a kWh you keep is worth what it *replaces* (the buy price you would otherwise pay, which is higher than the sell price by the full retail spread of tariffs, fees and VAT). Under-valuing it biased the optimiser toward dumping the final SoC at the horizon edge, which the dynamic discharge floor then had to fight. It now values retained SoC at the avoided-buy price (mean buy, floored at mean sell for robustness) — the economically correct "never sell a kWh for less than it costs to replace." Real arbitrage is unaffected (price peaks still exceed the avoided-buy value, and the forward-spread check still governs mid-horizon trades); only the under-priced end-of-horizon discharge stops. On current prices this raises the retained-SoC valuation about 1.6×, matching the buy/sell spread.
+
+## [0.62.0] — 2026-06-26
+
+### Added
+
+- **Adaptive overnight reserve factor.** The dynamic discharge floor's safety factor now adapts to your home's actual overnight house-load forecast error instead of using a fixed value. Each night the integration passively measures actual core-night (22:00–06:00) house consumption against what the learned load profile predicted, and sets the reserve factor to the **80th percentile** of that error over a rolling window of clean nights — so the reserve covers a typical bad night without over-reserving. It is **clamped to [1.05, 1.60]** and **falls back to the fixed 1.30** until seven clean nights are collected, so it cannot move the floor outside a sane band and there is no behaviour change until it has warmed up. Nights affected by a restart or an unreliable SoC read are excluded; the EV is already excluded from the house-load signal. This is the robust, bounded replacement for the self-learning margin retired in 0.61.0 — it adapts, but it is a windowed percentile (not a ratcheting integrator), so it cannot run away.
+
+## [0.61.0] — 2026-06-26
+
+### Changed
+
+- **Dynamic discharge floor now uses a fixed safety factor instead of a self-learning margin.** The overnight reserve is `(predicted house need over the dark bridge − planned grid-charge) × 1.3`, sized from the already-learned hourly load profile and the accuracy-corrected solar forecast. The previous self-learning margin was a band-aid over the capacity, raw-solar and bridge bugs fixed in v0.60.x; with those corrected the deterministic reserve is accurate, and the integrator only added fragility — it ratcheted asymmetrically (fast up, ~2%/day down → ~40-day recovery), trained on anomalous nights, and was poisoned by post-restart `SoC = 0` reads, which pegged the floor at its 85% cap. A fixed factor cannot ratchet or be poisoned. The reserve still only ever *raises* the floor above your Minimum SoC (export) setting, and the dynamic floor can still be turned off entirely.
+
+### Fixed
+
+- **An unreliable battery-SoC reading no longer drives control or learning.** `battery_soc` defaults to 0 when the FoxESS entity is briefly unavailable (common for the first ticks after a restart). The integration now treats a non-positive SoC as unreliable and holds the current state for that cycle instead of acting on it (which could otherwise trigger a spurious grid-charge into an apparent near-empty battery). The capacity learners were already range-gated; the self-learning floor margin that this most affected has been retired (see above).
+
 ## [0.60.2] — 2026-06-25
 
 ### Fixed

@@ -544,6 +544,42 @@ DYNAMIC_FLOOR_REFILL_MAX_H = 18.0     # cap the bridge horizon used for the rese
 # reserved for. Raised from 1.0 → 1.3 after a battery near-drain (the floor
 # released the reserve too early at first light).
 DYNAMIC_FLOOR_SOLAR_ONSET_FACTOR = 1.3
+# v0.61.0 — fixed safety factor on the deterministic overnight reserve, replacing
+# the self-learning margin. The learner was a band-aid over the capacity/solar/
+# bridge bugs fixed in v0.60.x; with those corrected the reserve is accurate, and
+# the integrator only added fragility (ratcheted on noise, was poisoned by
+# post-restart SoC=0 reads). A fixed factor cannot ratchet or be poisoned.
+DYNAMIC_FLOOR_RESERVE_FACTOR = 1.3
+# v0.61.x step 2 — passively learn the overnight house-load forecast error and
+# size the reserve factor from it (the empirical p80 of actual-vs-predicted core
+# -night house energy over clean nights), clamped + falling back to the fixed
+# factor until warm. The clamp+fallback guarantee the floor stays in a sane band
+# no matter what the estimator does.
+OVERNIGHT_START_HOUR = 22             # local hour the core-night window opens
+OVERNIGHT_END_HOUR = 6                # local hour it closes (window spans midnight)
+OVERNIGHT_MIN_TICKS = 60              # min 5-min ticks in the window for a usable night (~5h of 8)
+OVERNIGHT_SAMPLES_MAX = 30            # rolling window of clean nightly ratios
+OVERNIGHT_MIN_NIGHTS = 7             # need this many before trusting the empirical factor
+OVERNIGHT_PERCENTILE = 0.80          # cover the forecast error this fraction of nights
+RESERVE_FACTOR_MIN = 1.05            # clamp: never reserve less than +5 %
+RESERVE_FACTOR_MAX = 1.60            # clamp: never reserve more than +60 %
+RESERVE_RATIO_SANE_LO = 0.3          # drop a night whose actual/predicted ratio is wilder than this
+RESERVE_RATIO_SANE_HI = 3.0
+
+# Tier-1 model-health monitor (v0.64.0) — watches the learned models for drift,
+# clamp-pinning, or persistently-wrong predictions and surfaces it (a flag +
+# notification) rather than silently compensating. Detection only; it never
+# changes a model. Thresholds are deliberately loose so it fires on a real
+# problem, not normal variation.
+MODEL_HEALTH_CAPACITY_DRIFT_FRAC = 0.25   # BMS-learned capacity vs the set value
+MODEL_HEALTH_EFFICIENCY_LO = 0.72         # auto round-trip efficiency clamp-edge band
+MODEL_HEALTH_EFFICIENCY_HI = 0.985
+MODEL_HEALTH_SOLAR_LO = 0.35              # solar accuracy factor clamp-edge band
+MODEL_HEALTH_SOLAR_HI = 1.45
+MODEL_HEALTH_SOC_MAE_PCT = 12.0           # 7-day predicted-vs-actual SoC error above this = degraded
+# Legacy self-learning-margin constants — retained for the (now-uncalled)
+# _update_discharge_margin and the one-time upgrade resets; no longer drive the
+# floor.
 DYNAMIC_FLOOR_MARGIN_DEFAULT = 1.10   # initial learned safety multiplier on projected load
 DYNAMIC_FLOOR_MARGIN_MIN = 0.80
 # v0.52.0 — raised cap 1.60 → 2.50 so the learner can reserve enough after a

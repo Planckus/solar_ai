@@ -100,6 +100,23 @@ from .const import (
     DYNAMIC_FLOOR_MAX_SOC,
     DYNAMIC_FLOOR_REFILL_MAX_H,
     DYNAMIC_FLOOR_SOLAR_ONSET_FACTOR,
+    DYNAMIC_FLOOR_RESERVE_FACTOR,
+    OVERNIGHT_START_HOUR,
+    OVERNIGHT_END_HOUR,
+    OVERNIGHT_MIN_TICKS,
+    OVERNIGHT_SAMPLES_MAX,
+    OVERNIGHT_MIN_NIGHTS,
+    OVERNIGHT_PERCENTILE,
+    RESERVE_FACTOR_MIN,
+    RESERVE_FACTOR_MAX,
+    RESERVE_RATIO_SANE_LO,
+    RESERVE_RATIO_SANE_HI,
+    MODEL_HEALTH_CAPACITY_DRIFT_FRAC,
+    MODEL_HEALTH_EFFICIENCY_LO,
+    MODEL_HEALTH_EFFICIENCY_HI,
+    MODEL_HEALTH_SOLAR_LO,
+    MODEL_HEALTH_SOLAR_HI,
+    MODEL_HEALTH_SOC_MAE_PCT,
     DYNAMIC_FLOOR_MARGIN_DEFAULT,
     DYNAMIC_FLOOR_MARGIN_MIN,
     DYNAMIC_FLOOR_MARGIN_MAX,
@@ -326,6 +343,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._last_tariff_fetch_ok: bool = True
         # v0.59.19 — edge-detect the price-data-degraded notification.
         self._prev_price_degraded: bool = False
+        # Tier-1 model-health monitor (v0.64.0): cached issue list (recomputed on
+        # the 5-min learning tick) + edge-tracking for the notification.
+        self._model_health_issues: list[str] = []
+        self._prev_model_unhealthy: bool = False
         # Octopus Energy cache (v0.30.0). Keyed by valid_from ISO timestamp →
         # per-30-min rate entry from /standard-unit-rates. Empty when the
         # buy-price mode is not "octopus".
@@ -980,6 +1001,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored.pop("dynamic_floor_min_seen", None)
             self._stored.pop("dynamic_floor_day", None)
             self._stored["discharge_margin_reset_v0601"] = True
+        # v0.61.x step 2 — if a restart happened mid-night, the in-progress
+        # overnight accumulation has a gap; mark it dirty so it's dropped at
+        # finalize rather than logged as an under-counted (too-low) sample.
+        if self._stored.get("overnight_night_id"):
+            self._stored["overnight_dirty"] = True
+        # v0.64.1 — BMS capacity learner retired (see _async_update_data). Clear
+        # the sample window once to drop the BMS-polluted values (drifted to
+        # ~25.7 kWh). get_learned_capacity() then returns None until the reliable
+        # Force-Charge learner re-populates it, clearing the model-health flag.
+        if not self._stored.get("capacity_bms_retired_v0641"):
+            self._stored["capacity_samples"] = []
+            self._stored["capacity_bms_retired_v0641"] = True
 
     # ------------------------------------------------------------------ #
     # Legacy automation management                                          #
@@ -1465,6 +1498,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         battery_discharge_kw = self._get_float_state(self.config.get(CONF_BATTERY_DISCHARGE_ENTITY, FOXESS_BATTERY_DISCHARGE_POWER), 0)
         current_work_mode = self.hass.states.get(FOXESS_WORK_MODE_ENTITY)
         work_mode_str = current_work_mode.state if current_work_mode else WORK_MODE_SELF_USE
+        # v0.61.0 — a 0 / unavailable SoC read (common for the first ticks after a
+        # restart, before FoxESS repopulates; `battery_soc` defaults to 0) must not
+        # drive control. The battery never legitimately sits at 0 % (it floors well
+        # above). Treat <= 0 as unreliable and hold control for that cycle rather
+        # than acting on a phantom value (e.g. a spurious grid-charge into a "near
+        # empty" reading). The learners are already SoC-range-gated.
+        soc_reliable = battery_soc > 0
 
         # ---- current spot price ----
         # Primary: read from a user-configured HA sensor (Strømligning, Tibber, etc.)
@@ -1570,10 +1610,35 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # Capacity learning: gate to 5-min ticks (energy calculation needs correct interval_h)
         if is_learning_tick:
-            self._learn_capacity_from_bms(
-                battery_soc, max(battery_charge_kw, battery_discharge_kw)
-            )
+            # v0.64.1 — the BMS capacity learner is RETIRED. The FoxESS
+            # kWh-remaining register is sticky and lags SoC even near idle, so
+            # capacity = kWh_remaining / (SoC/100) drifted badly (16.9 then 25.7
+            # vs the real 12.1) despite the v0.60.0 idle-gate — and the model
+            # -health monitor flagged it. Capacity is GUI-set (authoritative);
+            # the only remaining capacity sampler is the Force-Charge learner
+            # below, which measures real energy-in vs ΔSoC and is reliable when
+            # it fires. (_learn_capacity_from_bms is left as dead code.)
             self._learn_capacity(battery_soc, battery_charge_kw)
+            # v0.61.x step 2 — passively learn the overnight house-load forecast
+            # error (base_load_kw already excludes the EV). soc_reliable marks a
+            # night dirty so a restart-time 0 read can't pollute the sample.
+            self._update_overnight_reserve_learning(now, base_load_kw, soc_reliable)
+            # v0.64.0 — Tier-1 model-health monitor: detect a learned model that
+            # has drifted / pinned at a clamp / gone persistently wrong and
+            # surface it (edge-triggered notification), instead of letting it
+            # silently skew decisions the way the capacity/margin bugs did.
+            self._model_health_issues = self._check_model_health()
+            unhealthy = bool(self._model_health_issues)
+            if unhealthy and not self._prev_model_unhealthy:
+                _LOGGER.warning(
+                    "Model health: %s", "; ".join(self._model_health_issues))
+                if self._stored.get("notifications_enabled", False):
+                    await self._send_mobile_notification(
+                        self._msg("⚠️ Solar AI: a learned model needs attention",
+                                  "⚠️ Solar AI: en lært model kræver opmærksomhed"),
+                        "; ".join(self._model_health_issues),
+                    )
+            self._prev_model_unhealthy = unhealthy
 
         # v0.47.0 (C) — dynamic self-learning discharge floor. When enabled, the
         # reserve is the SoC needed to bridge the house to the next solar refill
@@ -1594,8 +1659,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 # Never below the user's slider — only raise the floor above it.
                 floor_soc = max(floor_soc, int(round(dyn_floor)))
                 self._dynamic_floor_soc = float(floor_soc)
-            if is_learning_tick:
-                self._update_discharge_margin(now, battery_soc)
+            # v0.61.0 — the self-learning margin (_update_discharge_margin) is
+            # retired: the reserve now uses a fixed safety factor, so there is no
+            # integrator to train. The learner ratcheted on noise and was poisoned
+            # by post-restart SoC=0 reads (it pegged the floor at the 85% cap).
         else:
             self._dynamic_floor_soc = None
 
@@ -2100,8 +2167,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             export_hours_tomorrow = _split_day("EXPORT", 1)
 
         # ---- execute action (skipped when disabled — data still reported) ----
+        # v0.61.0 — also skip execution on an unreliable SoC read (hold current
+        # state) so a phantom 0 can't trigger a spurious grid-charge/export.
         prev_mode = self._current_mode
-        if self._enabled:
+        if self._enabled and soc_reliable:
             new_mode, reason = await self._execute_decision(
                 should_export, should_grid_charge, export_price,
                 grid_arbitrage_spread, buy_price_next_slot, buy_price_p25, price_p75,
@@ -2112,7 +2181,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
         else:
             new_mode = MODE_DISABLED
-            if ev_charging_now:
+            if self._enabled and not soc_reliable:
+                reason = "Holding — battery SoC unavailable (waiting for a valid reading)"
+            elif ev_charging_now:
                 reason = "Disabled — EV actively charging"
             elif should_export:
                 reason = "Disabled — would export if enabled"
@@ -2358,8 +2429,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # off → the static floor slider is used) + the learned safety margin.
             dynamic_floor_soc=self._dynamic_floor_soc,
             dynamic_floor_active=bool(self._stored.get("dynamic_discharge_floor", False)),
-            discharge_reserve_margin=round(float(self._stored.get(
-                "discharge_reserve_margin", DYNAMIC_FLOOR_MARGIN_DEFAULT)), 3),
+            discharge_reserve_margin=self._reserve_factor(),
+            overnight_reserve_samples=len(self._stored.get("overnight_ratio_samples", [])),
+            model_health_ok=not self._model_health_issues,
+            model_health_issues=list(self._model_health_issues),
             effective_floor_soc=int(floor_soc),
             # v0.28.6: short-term solar correction visibility
             solar_short_term_factor=round(self._st_solar_factor, 3),
@@ -2976,7 +3049,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             bridge_h += dur_h
 
         eff = max(efficiency, 0.5)
-        margin = float(self._stored.get("discharge_reserve_margin", DYNAMIC_FLOOR_MARGIN_DEFAULT))
+        # v0.61.0 — a safety factor on the deterministic reserve, NOT the old
+        # self-learning integrator (which ratcheted on noise and was poisoned by
+        # post-restart SoC=0 reads → pegged the floor at the 85% cap). v0.61.x
+        # step 2: this is the empirical p80 of the overnight house-load forecast
+        # error over clean nights once warm, clamped to a sane band, falling back
+        # to the fixed factor until then — so it adapts to this house's variance
+        # but can never leave [RESERVE_FACTOR_MIN, RESERVE_FACTOR_MAX].
+        margin = self._reserve_factor()
         # Battery energy the house will draw over the bridge (discharge losses in).
         house_need_kwh = bridge_house_kwh / eff
         # Energy a planned grid-charge actually returns to the battery over the
@@ -3051,6 +3131,83 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         history.append(round(base_load_kw, 3))
         if len(history) > LOAD_HISTORY_MAX_SAMPLES:
             del history[: len(history) - LOAD_HISTORY_MAX_SAMPLES]
+
+    # ── Overnight reserve-factor learning (v0.61.x step 2) ────────────────
+    # Passively measures the overnight house-load forecast error (actual vs
+    # profile-predicted core-night house energy) over CLEAN nights, then sizes
+    # the reserve factor as the p80 of that error — clamped, with the fixed
+    # factor as the fallback until warm. Mirrors the _update_daily_solar
+    # date-rollover pattern. base_load_kw already excludes the EV, so the EV
+    # never contaminates the house-load measurement.
+    def _overnight_window_key(self, now: datetime) -> str:
+        """Return the night-id (date the evening started) when `now` is inside the
+        core-night window, else "" (daytime). A night spanning midnight keeps one
+        key so it accumulates as a single sample."""
+        local = now.astimezone()
+        h = local.hour
+        if h >= OVERNIGHT_START_HOUR:
+            return local.date().isoformat()
+        if h < OVERNIGHT_END_HOUR:
+            return (local.date() - timedelta(days=1)).isoformat()
+        return ""
+
+    def _update_overnight_reserve_learning(
+        self, now: datetime, base_load_kw: float, soc_reliable: bool,
+    ) -> None:
+        cur_key = self._overnight_window_key(now)
+        prev_key = self._stored.get("overnight_night_id", "")
+        if prev_key != cur_key:
+            if prev_key:  # a night just ended — finalize it
+                self._finalize_overnight_sample()
+            self._stored["overnight_night_id"] = cur_key
+            self._stored["overnight_actual_kwh"] = 0.0
+            self._stored["overnight_ticks"] = 0
+            self._stored["overnight_dirty"] = False
+        if not cur_key:
+            return  # daytime — nothing to accumulate
+        tick_h = LEARNING_TICK_INTERVAL_SECONDS / 3600.0
+        self._stored["overnight_actual_kwh"] = round(
+            self._stored.get("overnight_actual_kwh", 0.0) + max(0.0, base_load_kw) * tick_h, 4,
+        )
+        self._stored["overnight_ticks"] = self._stored.get("overnight_ticks", 0) + 1
+        if not soc_reliable:
+            self._stored["overnight_dirty"] = True
+
+    def _finalize_overnight_sample(self) -> None:
+        """Close the completed night: if it was clean and well-covered, append the
+        actual/predicted house-energy ratio to the rolling window."""
+        actual = float(self._stored.get("overnight_actual_kwh", 0.0))
+        ticks = int(self._stored.get("overnight_ticks", 0))
+        dirty = bool(self._stored.get("overnight_dirty", False))
+        # Predicted core-night HOUSE energy from the learned hourly profile (kWh;
+        # each profile entry is kW held for one hour). No efficiency term — both
+        # sides are house-side energy, so it cancels in the ratio.
+        profile = self.get_house_load_profile()
+        hours = list(range(OVERNIGHT_START_HOUR, 24)) + list(range(0, OVERNIGHT_END_HOUR))
+        predicted = sum(profile[h] for h in hours if 0 <= h < 24)
+        if dirty or ticks < OVERNIGHT_MIN_TICKS or predicted < 0.5 or actual < 0.1:
+            return  # not a clean, usable night
+        ratio = actual / predicted
+        if not (RESERVE_RATIO_SANE_LO <= ratio <= RESERVE_RATIO_SANE_HI):
+            return  # wild outlier — drop
+        samples: list[float] = self._stored.setdefault("overnight_ratio_samples", [])
+        samples.append(round(ratio, 3))
+        if len(samples) > OVERNIGHT_SAMPLES_MAX:
+            del samples[: len(samples) - OVERNIGHT_SAMPLES_MAX]
+
+    def _reserve_factor(self) -> float:
+        """Effective reserve safety factor for the dynamic floor. The empirical
+        p80 of clean-night forecast error once warm (clamped), else the fixed
+        fallback factor. Can never leave [RESERVE_FACTOR_MIN, RESERVE_FACTOR_MAX]."""
+        samples: list[float] = self._stored.get("overnight_ratio_samples", [])
+        if len(samples) < OVERNIGHT_MIN_NIGHTS:
+            return DYNAMIC_FLOOR_RESERVE_FACTOR
+        s = sorted(samples)
+        k = (len(s) - 1) * OVERNIGHT_PERCENTILE
+        lo = int(k)
+        hi = min(lo + 1, len(s) - 1)
+        p80 = s[lo] + (s[hi] - s[lo]) * (k - lo)
+        return round(max(RESERVE_FACTOR_MIN, min(RESERVE_FACTOR_MAX, p80)), 3)
 
     def _update_vacation_mode(self, load_2h: float, load_28d: float) -> bool:
         counter: int = self._stored.get("vacation_counter", 0)
@@ -3642,6 +3799,54 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "prediction_action_mix": action_mix,
             "prediction_log": log[-96:],  # last 24 h for charting
         }
+
+    # ── Tier-1 model-health monitor (v0.64.0) ─────────────────────────────
+    def _check_model_health(self) -> list[str]:
+        """Detect a learned model that has drifted, pinned at a safety clamp, or
+        whose predictions are persistently wrong, and return human-readable
+        issues. Detection + surfacing ONLY — it never changes a model itself
+        (that boundary is what keeps the self-correction stable). Would have
+        caught both bugs hit in this development cycle: the capacity learner
+        drifting to ~16.9 vs the real 12.1, and the reserve margin pinning at its
+        cap. Cheap enough to call on the 5-min learning tick."""
+        issues: list[str] = []
+        # 1. Battery-capacity learner drift vs the authoritative (GUI/config) value.
+        configured = float(self._stored.get(
+            "battery_capacity", self.config.get("battery_capacity", DEFAULT_BATTERY_CAPACITY)))
+        learned = self.get_learned_capacity()
+        if learned is not None and configured > 0:
+            drift = abs(learned - configured) / configured
+            if drift > MODEL_HEALTH_CAPACITY_DRIFT_FRAC:
+                issues.append(
+                    f"Capacity learner drift: BMS-learned {learned:.1f} kWh vs set "
+                    f"{configured:.1f} kWh ({drift * 100:.0f}%)")
+        # 2. Reserve factor pinned at a safety clamp (only meaningful once warm).
+        if len(self._stored.get("overnight_ratio_samples", [])) >= OVERNIGHT_MIN_NIGHTS:
+            rf = self._reserve_factor()
+            if rf >= RESERVE_FACTOR_MAX - 1e-6:
+                issues.append(
+                    f"Reserve factor pinned at max ({RESERVE_FACTOR_MAX}): overnight need "
+                    f"exceeds the cap — consider raising it")
+            elif rf <= RESERVE_FACTOR_MIN + 1e-6:
+                issues.append(f"Reserve factor pinned at min ({RESERVE_FACTOR_MIN})")
+        # 3. Auto round-trip efficiency at a clamp edge (implausible learned value).
+        eff = self.get_auto_efficiency()
+        if eff is not None and (eff <= MODEL_HEALTH_EFFICIENCY_LO or eff >= MODEL_HEALTH_EFFICIENCY_HI):
+            issues.append(f"Round-trip efficiency at clamp edge ({eff:.3f})")
+        # 4. Solar accuracy factor persistently extreme (forecast badly biased).
+        saf = self.get_solar_accuracy_factor()
+        if saf <= MODEL_HEALTH_SOLAR_LO:
+            issues.append(f"Solar forecast persistently optimistic (factor {saf:.2f})")
+        elif saf >= MODEL_HEALTH_SOLAR_HI:
+            issues.append(f"Solar forecast persistently pessimistic (factor {saf:.2f})")
+        # 5. Prediction accuracy degraded (7-day predicted-vs-actual SoC error).
+        try:
+            mae = float(self.get_prediction_accuracy_summary().get("prediction_soc_mae_7d", 0.0))
+            if mae > MODEL_HEALTH_SOC_MAE_PCT:
+                issues.append(f"Prediction accuracy degraded: 7-day SoC error {mae:.0f}%")
+        except Exception:  # noqa: BLE001 — observability must never break the loop
+            pass
+        return issues
 
     # ------------------------------------------------------------------ #
     # Action log (export / grid-charge session tracking)                  #
@@ -7224,15 +7429,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 running_min = min(running_min, slot_data[t + 1]["buy"])
             best_buy_after[t] = running_min
 
-        # ── Terminal value: expected revenue from SoC remaining at horizon end ──
-        # Use mean sell price over the planning window as a proxy. This adapts
-        # to current market conditions and prevents the optimizer from
-        # discharging to floor in the last few slots just because V=0.
+        # ── Terminal value: worth of SoC remaining at the horizon end ──
+        # v0.63.0 — value retained SoC at the AVOIDED-BUY price, not the sell
+        # price. A kWh kept past the horizon is worth what it replaces: the
+        # buy price the house would otherwise pay (buy > sell by the full retail
+        # spread). The old mean-SELL proxy under-valued it, so the optimiser
+        # dumped the final SoC at the horizon edge — an over-discharge bias that
+        # the dynamic floor then had to fight. Avoided-buy is the economically
+        # correct value ("never sell a kWh for less than it costs to replace");
+        # peaks still exceed it so real arbitrage is unaffected, and spread_ok
+        # still governs mid-horizon trades. Floored at mean sell (selling is
+        # always an option) for robustness against degenerate price data.
         sell_vals = [s["sell"] for s in slot_data if s["sell"] > 0]
-        if sell_vals:
-            expected_terminal_sell = max(0.0, statistics.mean(sell_vals))
-        else:
-            expected_terminal_sell = DEFAULT_TERMINAL_VALUE_FALLBACK
+        buy_vals = [s["buy"] for s in slot_data if s["buy"] > 0]
+        mean_sell = statistics.mean(sell_vals) if sell_vals else 0.0
+        mean_buy = statistics.mean(buy_vals) if buy_vals else 0.0
+        expected_terminal_value = max(mean_buy, mean_sell)
+        if expected_terminal_value <= 0.0:
+            expected_terminal_value = DEFAULT_TERMINAL_VALUE_FALLBACK
 
         # Effective export rate: use user cap if set, else same as charge rate
         export_rate_kw = max_export_kw if max_export_kw > 0 else charge_rate_kw
@@ -7254,11 +7468,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # ── Backward induction ────────────────────────────────────────────
         # Initialize V at the horizon edge with the terminal value.
-        # V_terminal[s] = (usable kWh at SoC s) × discharge_eff × expected_terminal_sell
+        # V_terminal[s] = (usable kWh at SoC s) × discharge_eff × expected_terminal_value
         V: list[float] = []
         for s in range(SOC_STATES):
             remaining_kwh = max(0.0, (s - soc_floor) / 100.0 * capacity_kwh)
-            V.append(remaining_kwh * discharge_eff * expected_terminal_sell)
+            V.append(remaining_kwh * discharge_eff * expected_terminal_value)
 
         policy: list[list[str]] = [["I"] * SOC_STATES for _ in range(N)]
 
@@ -7411,10 +7625,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         horizon_hours = sum(s["dur_h"] for s in slot_data)
         _LOGGER.debug(
             "Optimizer: %d charge slots, %d export slots over %d slots (%.1f h horizon) "
-            "(SoC %d%%→%d%%, terminal_sell=%.3f, degradation=%.3f)",
+            "(SoC %d%%→%d%%, terminal_value=%.3f, degradation=%.3f)",
             n_charge, n_export, N, horizon_hours,
             int(current_soc + 0.5), soc_s,
-            expected_terminal_sell, degradation_cost,
+            expected_terminal_value, degradation_cost,
         )
         return plan
 
