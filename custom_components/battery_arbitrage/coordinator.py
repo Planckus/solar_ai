@@ -265,6 +265,11 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Danish market timezone (DST-aware). Used to interpret EDS/tariff local-time
+# stamps and to derive local hours. Defined once here rather than rebuilt in
+# each function that needs it.
+_CPH_TZ = ZoneInfo("Europe/Copenhagen")
+
 
 class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     """Coordinator: fetches data, runs model, executes decisions."""
@@ -1472,15 +1477,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             or self.config.get(CONF_STROMLIGNING_ENTITY)
         )
         spot_ex_vat: float = 0.0
+        spot_from_entity = False
         if spot_entity_id:
             spot_state = self.hass.states.get(spot_entity_id)
             if spot_state and spot_state.state not in ("unknown", "unavailable"):
                 try:
                     spot_ex_vat = float(spot_state.state)
+                    spot_from_entity = True
                 except ValueError:
                     pass
 
-        if spot_ex_vat == 0.0:
+        # v0.60.2 — fall back to the EDS cache only when the entity didn't supply
+        # a value. (Previously this keyed off `spot_ex_vat == 0.0`, which
+        # discarded a legitimately-zero / free-hour spot price and replaced it
+        # with the EDS rate.)
+        if not spot_from_entity:
             # HA entity missing/unavailable — fall back to EDS rate for this hour
             for rate in self._cached_grid_rates.get("rates", []):
                 try:
@@ -3640,7 +3651,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self, now: datetime, action_type: str, soc: float, price: float
     ) -> None:
         """Open a new export or grid-charge session in the action log."""
-        _CPH_TZ = ZoneInfo("Europe/Copenhagen")
         local_now = now.astimezone(_CPH_TZ)
         self._open_action = {
             "type": action_type,   # "export" | "charge"
@@ -3677,7 +3687,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         """Close the current open session and append the completed entry to action_log."""
         if self._open_action is None:
             return
-        _CPH_TZ = ZoneInfo("Europe/Copenhagen")
         local_now = now.astimezone(_CPH_TZ)
         start_ts: str = self._open_action["start_ts"]
         soc_start: float = self._open_action["soc_start"]
@@ -3828,7 +3837,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     def _open_floor_block(
         self, now: datetime, price: float, floor: float,
     ) -> None:
-        _CPH_TZ = ZoneInfo("Europe/Copenhagen")
         local_now = now.astimezone(_CPH_TZ)
         # v0.36.0: writes to `_current_floor_block` (was `_open_floor_block`
         # — name clashed with this method).
@@ -3845,7 +3853,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     def _close_floor_block(self, now: datetime, price: float) -> None:
         if self._current_floor_block is None:
             return
-        _CPH_TZ = ZoneInfo("Europe/Copenhagen")
         local_now = now.astimezone(_CPH_TZ)
         start_ts: str = self._current_floor_block["start_ts"]
         try:
@@ -6743,7 +6750,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("forecast_solar entity %s missing/empty 'watts' attribute", entity_id)
             return {}
 
-        _CPH_TZ = ZoneInfo("Europe/Copenhagen")
         rates: list[dict] = []
         for ts_str, watts in watts_dict.items():
             try:
@@ -6897,7 +6903,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         info; we convert to UTC using the Europe/Copenhagen zone so that DST
         transitions are handled correctly year-round.
         """
-        _CPH_TZ = ZoneInfo("Europe/Copenhagen")
         today_str = reference_dt.astimezone(_CPH_TZ).strftime("%Y-%m-%d")
         url = (
             f"{EDS_ELSPOT_URL}"
@@ -7450,6 +7455,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if self._current_mode != MODE_NORMAL:
             await self._transition_to(MODE_NORMAL)
             self._current_mode = MODE_NORMAL
+        # v0.60.2 — restoring the inverter mode is not a full restore if the EV
+        # controller left the house battery locked (max_discharge_current = 0,
+        # set during FULL-mode charging so the car isn't fed by the battery).
+        # Without this, the restore_normal service would strand the lock and the
+        # battery could not discharge. The unload path already unlocks before
+        # calling this (so the guard skips there); this covers the service path.
+        if self._ev_battery_locked:
+            try:
+                await self._set_battery_lock(False)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Battery unlock during restore_normal failed: %s", err)
 
 
 # ------------------------------------------------------------------ #
