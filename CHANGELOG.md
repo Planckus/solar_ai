@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.60.2] — 2026-06-25
+
+### Fixed
+
+- **`restore_normal` no longer strands the EV battery lock.** When the EV controller charges in FULL mode it locks the house battery (sets max discharge current to 0) so the car isn't fed by the battery. `async_restore_normal` — invoked by the `restore_normal` service — reset the inverter mode but did not release that lock, so calling it mid-charge left the battery unable to discharge. It now releases the lock as part of the restore. (The unload path already unlocked separately and is unaffected.)
+- **A legitimately-zero spot price is no longer discarded.** The current-price read fell back to the Energi Data Service cache whenever the spot value was exactly `0.0`, which also caught genuine free/zero-price hours from a configured price entity. It now falls back only when the entity supplies no value at all.
+
+---
+
 ## [0.60.1] — 2026-06-25
 
 ### Fixed
