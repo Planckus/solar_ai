@@ -124,6 +124,19 @@ BINARY_SENSORS: tuple[BatteryArbitrageBinarySensorDescription, ...] = (
             "last_good_fetch": d.get("price_last_good_iso"),
         },
     ),
+    # v0.64.0 — Tier-1 model-health monitor. On = a learned model has drifted,
+    # pinned at a safety clamp, or its predictions are persistently wrong. The
+    # `issues` attribute lists what and why. Detection only — no model is changed.
+    BatteryArbitrageBinarySensorDescription(
+        key="model_health",
+        translation_key="model_health",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        icon="mdi:brain",
+        value_fn=lambda d: not d.get("model_health_ok", True),
+        attr_fn=lambda d: {
+            "issues": d.get("model_health_issues") or ["none"],
+        },
+    ),
 )
 
 
