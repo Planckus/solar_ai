@@ -662,6 +662,41 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 totals["savings_missed_month"] += m
         return {k: round(v, 2) for k, v in totals.items()}
 
+    def get_actual_savings_summary(self) -> dict:
+        """Actual total saving the system delivers (v0.67.0):
+            savings = baseline house cost − grid import cost + export revenue
+        summed per day. Returns today, all-time, and the user-set date range
+        (the date pickers). 'All-time' covers only the days that have a baseline
+        entry — i.e. since this tracking started — so it's never skewed by the
+        older import/export history that predates it."""
+        def by_date(key: str) -> dict[str, float]:
+            return {e["date"]: e.get("dkk", 0.0)
+                    for e in self._stored.get(key, []) if "date" in e}
+        base = by_date("baseline_cost_log")
+        imp = by_date("import_cost_log")
+        exp = by_date("export_income_log")
+
+        def savings(lo: str | None, hi: str | None) -> float:
+            s = 0.0
+            for d, b in base.items():   # baseline dates bound the period
+                if (lo is None or d >= lo) and (hi is None or d <= hi):
+                    s += b - imp.get(d, 0.0) + exp.get(d, 0.0)
+            return round(s, 2)
+
+        today_d = datetime.now().date()
+        today = today_d.isoformat()
+        # Default range = last 30 days (kept consistent with the date pickers).
+        start = self._stored.get("savings_range_start") or (today_d - timedelta(days=30)).isoformat()
+        end = self._stored.get("savings_range_end") or today
+        return {
+            "actual_savings_today": savings(today, today),
+            "actual_savings_total": savings(None, None),
+            "actual_savings_range": savings(start, end),
+            "actual_savings_range_start": start,
+            "actual_savings_range_end": end,
+            "actual_savings_days": len(base),
+        }
+
     def get_export_income_summary(self) -> dict:
         """Cumulative export income + today / 7-day / 30-day / month / year
         totals, plus the daily series for charting (v0.42.0)."""
@@ -2333,8 +2368,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     (spot_ex_vat + spot_markup + tariff_sched[current_local_hour] + elafgift)
                     * vat_factor, 4,
                 ),
+                home_power_kw=max(0.0, home_power_w / 1000.0),
             )
         savings = self.get_savings_summary()
+        actual_savings = self.get_actual_savings_summary()
 
         # ---- prediction scorecard (v0.43.0, M1) — observability only ----
         # Records the plan's predicted SoC vs realised SoC on 15-min rollover.
@@ -2529,6 +2566,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             solar_short_term_last_curtailed_skip=self._st_solar_last_curtailed_skip_iso,
             **ev_telemetry,
             **savings,
+            **actual_savings,
             **self.get_export_income_summary(),
             **self.get_grid_balance_summary(),
             **self.get_prediction_accuracy_summary(),
@@ -3574,6 +3612,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         importable_kwh: float,
         grid_import_kw: float = 0.0,
         buy_price_now: float = 0.0,
+        home_power_kw: float = 0.0,
     ) -> None:
         """Accumulate actual and missed DKK savings into today's daily log entry."""
         interval_h = LEARNING_TICK_INTERVAL_SECONDS / 3600  # 5/60 h
@@ -3624,6 +3663,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 if len(clog) > 400:
                     del clog[: len(clog) - 400]
             clog[-1]["dkk"] = round(clog[-1]["dkk"] + cost, 4)
+
+        # v0.67.0 — baseline "no solar / no battery" house cost: what running the
+        # house from the grid would have cost this tick (full house consumption ×
+        # buy price). The true total saving the system delivers is then
+        #   savings = baseline_cost − import_cost + export_income
+        # which automatically captures solar self-consumption, battery savings,
+        # arbitrage AND the cost of grid-charging — all at the meter level.
+        if home_power_kw > 0 and buy_price_now > 0:
+            base = home_power_kw * interval_h * buy_price_now
+            self._stored["baseline_cost_total"] = round(
+                self._stored.get("baseline_cost_total", 0.0) + base, 4,
+            )
+            blog: list[dict] = self._stored.setdefault("baseline_cost_log", [])
+            if not blog or blog[-1]["date"] != today:
+                blog.append({"date": today, "dkk": 0.0})
+                if len(blog) > 400:
+                    del blog[: len(blog) - 400]
+            blog[-1]["dkk"] = round(blog[-1]["dkk"] + base, 4)
 
         if mode == MODE_EXPORTING and battery_discharge_kw > 0 and export_price > 0:
             # Actual export revenue from the battery portion

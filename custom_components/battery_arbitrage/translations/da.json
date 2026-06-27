@@ -275,6 +275,9 @@
       "export_income": { "name": "Eksport-indtægt" },
       "import_cost": { "name": "Import-omkostning" },
       "net_grid_balance": { "name": "Netto el-balance" },
+      "total_savings_today": { "name": "Samlet besparelse i dag" },
+      "total_savings_all": { "name": "Samlet besparelse (i alt)" },
+      "total_savings_range": { "name": "Samlet besparelse i periode" },
       "prediction_accuracy": { "name": "Forudsigelsesnøjagtighed" },
       "effective_floor": { "name": "Effektivt afladningsgulv" },
       "ev_target_kw": { "name": "EV mål-opladningseffekt" },
@@ -302,6 +305,10 @@
     "text": {
       "foxess_charger_host": { "name": "FoxESS-lader vært (IP)" },
       "blocked_sell_hours": { "name": "Blokerede salgstimer" }
+    },
+    "date": {
+      "savings_range_start": { "name": "Besparelsesperiode — fra" },
+      "savings_range_end": { "name": "Besparelsesperiode — til" }
     },
     "select": {
       "live_data_source": {
