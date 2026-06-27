@@ -110,6 +110,7 @@ PLATFORMS = [
     Platform.SELECT,
     Platform.TIME,        # v0.38.0 — per-schedule-slot start/end time pickers
     Platform.TEXT,        # v0.57.0 — FoxESS Modbus charger host
+    Platform.DATE,        # v0.67.0 — savings date-range pickers
 ]
 
 

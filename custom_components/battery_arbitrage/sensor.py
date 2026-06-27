@@ -612,6 +612,42 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "daily": d.get("net_grid_daily", []),
         },
     ),
+    # v0.67.0 — actual total saving the system delivers = baseline house cost
+    # (what running the house from the grid would cost) − grid import cost +
+    # export revenue. Captures solar self-consumption, battery savings, arbitrage
+    # and the cost of grid-charging, all at the meter level.
+    BatteryArbitrageSensorDescription(
+        key="total_savings_today",
+        translation_key="total_savings_today",
+        icon="mdi:piggy-bank",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        native_unit_of_measurement="DKK",
+        value_fn=lambda d: d.get("actual_savings_today", 0.0),
+    ),
+    BatteryArbitrageSensorDescription(
+        key="total_savings_all",
+        translation_key="total_savings_all",
+        icon="mdi:piggy-bank-outline",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement="DKK",
+        value_fn=lambda d: d.get("actual_savings_total", 0.0),
+        attrs_fn=lambda d: {"tracked_days": d.get("actual_savings_days", 0)},
+    ),
+    BatteryArbitrageSensorDescription(
+        key="total_savings_range",
+        translation_key="total_savings_range",
+        icon="mdi:calendar-range",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        native_unit_of_measurement="DKK",
+        value_fn=lambda d: d.get("actual_savings_range", 0.0),
+        attrs_fn=lambda d: {
+            "from": d.get("actual_savings_range_start", ""),
+            "to": d.get("actual_savings_range_end", ""),
+        },
+    ),
     # ── EV charge controller (Phase B1) ──────────────────────────────────
     BatteryArbitrageSensorDescription(
         key="ev_target_kw",

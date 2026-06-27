@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.67.0] — 2026-06-26
+
+### Added
+
+- **Actual savings counter.** Three new sensors track the real money the system delivers — *Actual savings today*, *Actual savings total*, and *Actual savings in range* — computed as `baseline house cost − grid import cost + export revenue`, where the baseline is what running the house entirely from the grid would have cost. This single figure captures everything: solar self-consumption (energy you didn't buy because it came from the sun), battery savings, price arbitrage, and export revenue, net of what you paid to grid-charge the battery. Two date pickers (*Savings range — from / to*, default last 30 days) set the period for the range sensor, and the *today* sensor updates live. Tracking starts from this version; the total covers only the days it has measured.
+
 ## [0.66.2] — 2026-06-26
 
 ### Documentation
