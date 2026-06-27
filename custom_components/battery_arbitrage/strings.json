@@ -289,6 +289,9 @@
       "export_income": { "name": "Export income" },
       "import_cost": { "name": "Import cost" },
       "net_grid_balance": { "name": "Net grid balance" },
+      "total_savings_today": { "name": "Total savings today" },
+      "total_savings_all": { "name": "Total savings (all-time)" },
+      "total_savings_range": { "name": "Total savings in range" },
       "prediction_accuracy": { "name": "Prediction accuracy" },
       "effective_floor": { "name": "Effective discharge floor" },
       "ev_target_kw": { "name": "EV target charge rate" },
@@ -316,6 +319,10 @@
     "text": {
       "foxess_charger_host": { "name": "FoxESS charger host (IP)" },
       "blocked_sell_hours": { "name": "Blocked sell hours" }
+    },
+    "date": {
+      "savings_range_start": { "name": "Savings range — from" },
+      "savings_range_end": { "name": "Savings range — to" }
     },
     "select": {
       "live_data_source": {

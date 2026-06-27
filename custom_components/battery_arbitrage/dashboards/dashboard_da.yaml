@@ -1202,6 +1202,23 @@ views:
       type: vertical-stack
       cards:
       - type: entities
+        title: Samlet besparelse
+        icon: mdi:piggy-bank
+        show_header_toggle: false
+        entities:
+        - entity: sensor.solar_ai_samlet_besparelse_i_dag
+          name: I dag (live)
+        - entity: sensor.solar_ai_samlet_besparelse_i_alt
+          name: Total siden start
+        - type: section
+          label: Vælg periode
+        - entity: date.solar_ai_besparelsesperiode_fra
+          name: Fra
+        - entity: date.solar_ai_besparelsesperiode_til
+          name: Til
+        - entity: sensor.solar_ai_samlet_besparelse_i_periode
+          name: Besparelse i perioden
+      - type: entities
         title: Besparelser (DKK)
         icon: mdi:cash
         show_header_toggle: false
