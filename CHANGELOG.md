@@ -9,6 +9,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.68.0] — 2026-06-28
+
+### Changed
+
+- **EV solar phase-switching rebuilt around two regimes (anti-flap).** On choppy days the Modbus charger flapped between single- and three-phase (measured ~15 switches/hour), each switch dropping through zero-phase and interrupting charging. Diagnosis: below the EV battery-priority SoC the available-surplus signal excludes the house battery's charge, so the battery's on/off charge pulse (~2 kW) swung the signal through the narrow phase band via the export term. The phase logic now separates two cases:
+  - **Surplus has a home (export paid, or the battery has room).** Nothing is wasted by the phase choice, so this is where anti-flap belongs: the upshift acts only on the rolling-average surplus (no single spike can trigger it) and the hysteresis band is widened (upshift 5.0 → 5.5 kW) so the battery's charge pulse no longer flips the phase.
+  - **Surplus would be wasted (export limit / curtailment active).** The car is bumped to three-phase to absorb what would otherwise be clipped.
+
+### Added
+
+- **Battery-independent curtailment bump.** The three-phase "harvest curtailed solar" escalation now fires on the inverter's PV-curtailment flag (reg 49251), not only when the house battery is full. Installs with no battery, an empty battery, or a physical export cap now bump the car to three-phase when export is limited, instead of clipping the surplus.
+- **Buffer-aware fast downshift.** When charging on three-phase below the 4.14 kW floor, a surplus collapse shows as grid import (a house battery covers a brief dip; without one, or with an empty battery, it does not). The car now drops to single-phase immediately on grid import while not curtailing, so it stops buying from the grid. Re-upshift remains average-gated, so this cannot thrash.
+
 ## [0.67.0] — 2026-06-26
 
 ### Added
