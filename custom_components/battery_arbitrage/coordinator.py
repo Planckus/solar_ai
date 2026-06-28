@@ -4910,7 +4910,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             CONF_BATTERY_DISCHARGE_ENTITY, FOXESS_BATTERY_DISCHARGE_POWER,
             EV_MODBUS_MIN_AMPS, EV_MODBUS_MAX_AMPS,
             EV_MODBUS_UPSHIFT_KW, EV_MODBUS_DOWNSHIFT_KW, EV_MODBUS_SUSPEND_INTERVAL_MIN,
-            EV_MODBUS_PHASE_AVG_WINDOW_SECONDS,
+            EV_MODBUS_PHASE_AVG_WINDOW_SECONDS, EV_MODBUS_IMPORT_DOWNSHIFT_KW,
             CONF_EV_MODBUS_CURRENT_STEP, DEFAULT_EV_MODBUS_CURRENT_STEP,
         )
 
@@ -5074,13 +5074,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         override_cooldown_active = (
             self._ev_probe_cooldown_until is not None
             and now_ts < self._ev_probe_cooldown_until)
+        # Regime A — "solar would be wasted" → bump the car to three-phase to
+        # absorb it. Fires when the inverter is actively curtailing PV (reg 49251:
+        # export-limited with nowhere to store the surplus — covers a full battery,
+        # a physical export cap, AND installs with no battery / an empty one), OR
+        # the legacy case of a price export-block with the battery full. The flag
+        # path carries no SoC gate, so battery-less installs still grab curtailed
+        # solar instead of clipping it.
         override_active = (
             effective_mode == EV_MODE_PV
-            and self._current_floor_block is not None
-            and battery_soc >= (ovr_max_soc - 2)
             and solar_kw > 0.1
             and not override_cooldown_active
-            and battery_discharge_kw <= EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW)
+            and battery_discharge_kw <= EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW
+            and (
+                self._pv_power_limited_flag
+                or (self._current_floor_block is not None
+                    and battery_soc >= (ovr_max_soc - 2))
+            ))
         override_3ph_blocked = (
             self._ev_modbus_override_3ph_blocked_until is not None
             and now_ts < self._ev_modbus_override_3ph_blocked_until)
@@ -5094,10 +5104,25 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             phase_pref = 1
         else:
             phase_pref = self._ev_modbus_phase   # within the hysteresis band — hold
+        override_3ph = override_active and not override_3ph_blocked
+        # v0.68.0 — Buffer-aware fast downshift. The upshift acts only on the
+        # rolling average (it can't react to a single spike), so anti-flap needs
+        # nothing extra on the way up — the wide band carries it. On the way down
+        # the averaged `avg < downshift` test can lag a real surplus collapse;
+        # while it lags, a car on 3φ below the 4.14 kW floor buys from the grid. A
+        # house battery covers a brief dip (no import shows), so this only bites
+        # without one or with an empty battery: if we're on 3φ, not curtailing, and
+        # importing, drop to 1φ at once. Re-upshift stays average-gated, so this
+        # cannot thrash.
+        if (self._ev_modbus_phase == 3 and not override_3ph
+                and grid_import_kw > EV_MODBUS_IMPORT_DOWNSHIFT_KW):
+            phase_pref = 1
         if phase_pref != self._ev_modbus_phase and since_switch >= interval_s:
             _LOGGER.info(
-                "EV Modbus phase switch %dφ → %dφ (avg surplus %.2f kW, now %.2f kW)",
+                "EV Modbus phase switch %dφ → %dφ (avg surplus %.2f kW, now %.2f kW, "
+                "import %.2f kW)",
                 self._ev_modbus_phase, phase_pref, avg_avail_kw, available_kw,
+                grid_import_kw,
             )
             self._ev_modbus_phase = phase_pref
             self._ev_modbus_phase_since_ts = now_ts
