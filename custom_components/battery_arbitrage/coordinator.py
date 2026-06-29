@@ -556,6 +556,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # (PV < 4.14 kW), three-phase is blocked until this time and the override
         # falls back to single-phase; it retries three-phase afterwards.
         self._ev_modbus_override_3ph_blocked_until = None
+        # v0.70.0 — when on 3φ and importing, the timestamp the import started; the
+        # grid-import guard only drops to 1φ once import has been continuous for
+        # EV_MODBUS_IMPORT_SUSTAINED_SECONDS (filters brief battery-balancing blips).
+        self._ev_modbus_import_since_ts = None
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -4911,6 +4915,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             EV_MODBUS_MIN_AMPS, EV_MODBUS_MAX_AMPS,
             EV_MODBUS_UPSHIFT_KW, EV_MODBUS_DOWNSHIFT_KW, EV_MODBUS_SUSPEND_INTERVAL_MIN,
             EV_MODBUS_PHASE_AVG_WINDOW_SECONDS, EV_MODBUS_IMPORT_DOWNSHIFT_KW,
+            EV_MODBUS_DOWNSHIFT_DWELL_SECONDS, EV_MODBUS_IMPORT_SUSTAINED_SECONDS,
+            EV_MODBUS_MIN_DEADBAND_KW,
             CONF_EV_MODBUS_CURRENT_STEP, DEFAULT_EV_MODBUS_CURRENT_STEP,
         )
 
@@ -4951,6 +4957,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_modbus_phase_since_ts = None
             self._ev_modbus_avail_hist = []
             self._ev_modbus_phase_avg_hist = []
+            self._ev_modbus_import_since_ts = None
             self._ev_modbus_override_fail_since_ts = None
             self._ev_modbus_override_3ph_blocked_until = None
             self._ev_session_was_override_induced = False
@@ -5055,10 +5062,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             / len(self._ev_modbus_phase_avg_hist)
         )
         # Upshift threshold is dashboard-adjustable (v0.59.8); falls back to the
-        # const default. Clamp above the downshift threshold so the hysteresis
-        # band can't invert if a stored value somehow slips below it.
+        # const default. v0.70.0 — clamp it at least EV_MODBUS_MIN_DEADBAND_KW above
+        # the downshift line so the hysteresis band can never be made pathologically
+        # thin (the slider's 4.3 floor vs the 4.2 downshift gave a 0.1 kW band that
+        # flapped on any noise).
         upshift_kw = max(
-            EV_MODBUS_DOWNSHIFT_KW + 0.1,
+            EV_MODBUS_DOWNSHIFT_KW + EV_MODBUS_MIN_DEADBAND_KW,
             float(self._stored.get("ev_modbus_upshift_kw", EV_MODBUS_UPSHIFT_KW)),
         )
         # ── Battery-full override → three-phase escalation (v0.59.13) ─────────
@@ -5105,24 +5114,49 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         else:
             phase_pref = self._ev_modbus_phase   # within the hysteresis band — hold
         override_3ph = override_active and not override_3ph_blocked
-        # v0.68.0 — Buffer-aware fast downshift. The upshift acts only on the
-        # rolling average (it can't react to a single spike), so anti-flap needs
-        # nothing extra on the way up — the wide band carries it. On the way down
-        # the averaged `avg < downshift` test can lag a real surplus collapse;
-        # while it lags, a car on 3φ below the 4.14 kW floor buys from the grid. A
-        # house battery covers a brief dip (no import shows), so this only bites
-        # without one or with an empty battery: if we're on 3φ, not curtailing, and
-        # importing, drop to 1φ at once. Re-upshift stays average-gated, so this
-        # cannot thrash.
+        # Grid-import guard (v0.70.0 — now SUSTAINED). On 3φ and not curtailing, drop
+        # to 1φ when the car is genuinely buying from the grid (no battery, or an
+        # empty one, can't cover the shortfall). A full battery does brief
+        # charge/discharge balancing pulses that flip the meter to import for ~15 s
+        # even under steady sun, so an instantaneous check bounced the phase on those
+        # blips. Require the import to be CONTINUOUS for EV_MODBUS_IMPORT_SUSTAINED_
+        # SECONDS: the balancing blips reset the timer on each zero-import tick and
+        # never accumulate, while a real shortfall (continuous import) trips it.
+        import_sustained_s = max(0, int(float(self._stored.get(
+            "ev_modbus_import_sustained_sec", EV_MODBUS_IMPORT_SUSTAINED_SECONDS))))
         if (self._ev_modbus_phase == 3 and not override_3ph
                 and grid_import_kw > EV_MODBUS_IMPORT_DOWNSHIFT_KW):
+            if self._ev_modbus_import_since_ts is None:
+                self._ev_modbus_import_since_ts = now_ts
+            importing_on_3ph = (
+                (now_ts - self._ev_modbus_import_since_ts).total_seconds()
+                >= import_sustained_s)
+        else:
+            self._ev_modbus_import_since_ts = None
+            importing_on_3ph = False
+        if importing_on_3ph:
             phase_pref = 1
-        if phase_pref != self._ev_modbus_phase and since_switch >= interval_s:
+        # v0.69.0 — Asymmetric anti-flap dwell. UPSHIFT (→3φ) stays fast: only the
+        # rolling average gates it, so the car grabs solar immediately. DOWNSHIFT
+        # (→1φ) must see the low surplus persist this long since the last switch —
+        # because the surplus signal subtracts battery discharge, a passing cloud
+        # the battery harmlessly covers still collapses the signal below the
+        # downshift line; without the dwell that bounces 1φ↔3φ. Holding 3φ rides the
+        # dip out on battery cover. Exempt: the import guard (drop at once when truly
+        # buying) and the curtailment override (Regime A bump-up never delayed).
+        going_down = phase_pref < self._ev_modbus_phase
+        if going_down and not importing_on_3ph:
+            required_dwell = max(interval_s, int(60 * float(self._stored.get(
+                "ev_modbus_downshift_dwell_min",
+                EV_MODBUS_DOWNSHIFT_DWELL_SECONDS / 60))))
+        else:
+            required_dwell = interval_s
+        if phase_pref != self._ev_modbus_phase and since_switch >= required_dwell:
             _LOGGER.info(
                 "EV Modbus phase switch %dφ → %dφ (avg surplus %.2f kW, now %.2f kW, "
-                "import %.2f kW)",
+                "import %.2f kW, dwell %ds)",
                 self._ev_modbus_phase, phase_pref, avg_avail_kw, available_kw,
-                grid_import_kw,
+                grid_import_kw, required_dwell,
             )
             self._ev_modbus_phase = phase_pref
             self._ev_modbus_phase_since_ts = now_ts

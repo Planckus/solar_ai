@@ -9,6 +9,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.70.0] — 2026-06-29
+
+### Changed
+
+- **Phase-switch import-guard now requires *sustained* grid import.** v0.69.0 still flapped on a sunny but full-battery day. Cause (confirmed on live data): at ~100% SoC the house battery does brief charge/discharge balancing pulses that flip the meter to grid import for ~15 seconds at a time even while PV is rock-steady (measured 0.5–0.9 kW import blips with zero between, PV flat at 7.5 kW). The import-guard checked import instantaneously, so each blip dropped the car to single-phase, it re-upshifted, and bounced. The guard now drops to single-phase only when grid import is *continuous* for `EV_MODBUS_IMPORT_SUSTAINED_SECONDS` (default 90s, adjustable via `ev_modbus_import_sustained_sec`); the balancing blips reset the timer on each zero-import tick and never trip it, while a genuine shortfall (no battery / empty battery) imports continuously and still trips it.
+- **Minimum hysteresis band enforced.** The three-phase upshift threshold is dashboard-adjustable, but its slider minimum (4.3 kW) sat just above the 4.2 kW downshift line, giving a 0.1 kW band with effectively no hysteresis that flapped on any noise. The slider minimum and the runtime value are now floored at `downshift + EV_MODBUS_MIN_DEADBAND_KW` (0.8 kW), so the band can never be made pathologically thin.
+
+## [0.69.0] — 2026-06-29
+
+### Changed
+
+- **Asymmetric anti-flap dwell on the phase downshift.** v0.68.0's wider band did not stop the flapping on a partly-cloudy day. Cause: the EV surplus signal subtracts house-battery discharge, so when a passing cloud dips PV the battery covers the car (no grid import — the intended behaviour) but the signal still collapses (e.g. 5.9 → 3.1 kW) and crosses the downshift line, bouncing the charger 1φ↔3φ. The downshift now requires the low surplus to persist (~5 min, `EV_MODBUS_DOWNSHIFT_DWELL_SECONDS`, dashboard-adjustable via `ev_modbus_downshift_dwell_min`) before dropping to single-phase, so a brief cloud is ridden out on battery cover instead of triggering a switch. The upshift stays fast (rolling-average gated only), so the car still grabs solar immediately. Two exemptions keep it safe: the grid-import guard still drops to single-phase at once when actually buying from the grid (no battery / empty battery), and the curtailment override still bumps to three-phase without delay.
+
 ## [0.68.0] — 2026-06-28
 
 ### Changed
