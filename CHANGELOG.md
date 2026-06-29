@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.71.0] — 2026-06-29
+
+### Changed
+
+- **Phase-averaging window is now dashboard-adjustable and defaults to 3 minutes** (was a fixed 5). The window over which the solar surplus is averaged for the 1φ/3φ decision is exposed as a new control, *Phase-averaging window (min)* (1–10 min). A shorter window makes the **upshift** to three-phase snappier when the sun returns, reducing the lag before the car ramps up. This is safe to shorten because the window is only a secondary smoother — the anti-flap protection (wide hysteresis band, 90s sustained import-guard, and the downshift dwell) is independent of it, so the downshift stays sticky regardless.
+
 ## [0.70.0] — 2026-06-29
 
 ### Changed

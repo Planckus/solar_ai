@@ -489,6 +489,7 @@
       "ev_max_charge_kw": { "name": "EV maksimum opladningshastighed (kW)" },
       "ev_battery_priority_soc": { "name": "Batteri-først tærskel (%) — EV venter til husbatteriet når dette niveau" },
       "ev_modbus_upshift_kw": { "name": "Trefaset skift-tærskel (kW)" },
+      "ev_modbus_phase_avg_window_min": { "name": "Faseudjævnings-vindue (min)" },
       "ev_modbus_suspend_interval_min": { "name": "Faseskift-interval (min)" },
       "ev_override_ramp_interval_s": { "name": "Override rampe-trin (s)" },
       "solar_confidence_pct": { "name": "Sol-konfidens (%) — prognose-percentil optimeringen planlægger efter (50 = median)" },
