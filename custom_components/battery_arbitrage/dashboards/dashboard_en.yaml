@@ -572,6 +572,9 @@ views:
           - entity: number.solar_ai_trefaset_skift_taerskel_kw
             name: Three-phase switch threshold (kW)
             icon: mdi:sine-wave
+          - entity: number.solar_ai_faseudjaevnings_vindue_min
+            name: Phase-averaging window (min)
+            icon: mdi:chart-bell-curve
           - entity: select.solar_ai_stromtrin_opladning
             name: Charging current step
             icon: mdi:current-ac

@@ -38,6 +38,7 @@ from .const import (
     EV_MODBUS_UPSHIFT_KW,
     EV_MODBUS_DOWNSHIFT_KW,
     EV_MODBUS_MIN_DEADBAND_KW,
+    EV_MODBUS_PHASE_AVG_WINDOW_SECONDS,
     EV_MODBUS_SUSPEND_INTERVAL_MIN,
     EV_OVERRIDE_RAMP_INTERVAL_SECONDS,
     DEFAULT_EXPORT_FEE,
@@ -346,6 +347,25 @@ async def async_setup_entry(
             min_val=round(EV_MODBUS_DOWNSHIFT_KW + EV_MODBUS_MIN_DEADBAND_KW, 1),
             max_val=8.0,
             step=0.1,
+            mode=NumberMode.SLIDER,
+            display_precision=1,
+            available_when=_foxess_modbus_active,
+        ),
+        # Phase-averaging window (v0.71.0) — minutes the solar surplus is averaged
+        # over for the 1φ/3φ decision. Lower = snappier upshift when sun returns;
+        # higher = calmer / more smoothing on choppy days. Safe to keep short
+        # because the downshift dwell, sustained import-guard and wide band (all
+        # independent of this window) carry the anti-flap. FoxESS Modbus only.
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="ev_modbus_phase_avg_window_min",
+            translation_key="ev_modbus_phase_avg_window_min",
+            default=round(EV_MODBUS_PHASE_AVG_WINDOW_SECONDS / 60, 1),
+            icon="mdi:chart-bell-curve",
+            unit="min",
+            min_val=1,
+            max_val=10,
+            step=0.5,
             mode=NumberMode.SLIDER,
             display_precision=1,
             available_when=_foxess_modbus_active,

@@ -5052,8 +5052,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             if self._ev_modbus_phase_since_ts is not None else interval_s + 1
         )
         # Append this tick's surplus and drop samples older than the window.
+        # Window is dashboard-adjustable (v0.71.0); shorter = snappier upshift, the
+        # downshift stays sticky via its own dwell. Floored at 60 s.
+        phase_avg_window_s = max(60, int(60 * float(self._stored.get(
+            "ev_modbus_phase_avg_window_min",
+            EV_MODBUS_PHASE_AVG_WINDOW_SECONDS / 60))))
         self._ev_modbus_phase_avg_hist.append((now_ts, available_kw))
-        cutoff = now_ts - timedelta(seconds=EV_MODBUS_PHASE_AVG_WINDOW_SECONDS)
+        cutoff = now_ts - timedelta(seconds=phase_avg_window_s)
         self._ev_modbus_phase_avg_hist = [
             (t, v) for (t, v) in self._ev_modbus_phase_avg_hist if t >= cutoff
         ]
