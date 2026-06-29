@@ -572,6 +572,9 @@ views:
           - entity: number.solar_ai_trefaset_skift_taerskel_kw
             name: Trefaset skift-tærskel (kW)
             icon: mdi:sine-wave
+          - entity: number.solar_ai_faseudjaevnings_vindue_min
+            name: Faseudjævnings-vindue (min)
+            icon: mdi:chart-bell-curve
           - entity: select.solar_ai_stromtrin_opladning
             name: Strømtrin (opladning)
             icon: mdi:current-ac

@@ -227,13 +227,13 @@ EV_MODBUS_DOWNSHIFT_KW = 4.2   # avg surplus below this → single-phase
 # upshift = max(DOWNSHIFT + this, slider value).
 EV_MODBUS_MIN_DEADBAND_KW = 0.8
 # Window over which the available surplus is averaged for the phase decision.
-# Longer = more stable / slower to engage 3φ; long enough that a brief sun peak
-# on an otherwise choppy day does not pull the average over the upshift line.
-# The upshift acts only on this rolling average, so it can't thrash on a single
-# spike; the wide band above is what keeps the house battery's on/off charge pulse
-# — which below the EV-priority SoC swings the surplus signal ~2 kW through the
-# export term — from flipping the phase.
-EV_MODBUS_PHASE_AVG_WINDOW_SECONDS = 300
+# Longer = more stable / slower to engage 3φ; shorter = snappier upshift when sun
+# returns. v0.71.0 — default lowered 300→180 s (3 min) and made dashboard-adjustable
+# (ev_modbus_phase_avg_window_min). It can be this responsive because the window is
+# now only a secondary smoother: the anti-flap protection is the wide band, the
+# 90 s sustained import-guard, and the downshift dwell — all independent of the
+# window — so a shorter window speeds the UPSHIFT while the downshift stays sticky.
+EV_MODBUS_PHASE_AVG_WINDOW_SECONDS = 180
 # Buffer-aware fast downshift. On three-phase, a surplus that can't hold the 4.14 kW
 # 3φ floor shows up as grid import (a house battery covers a brief dip, so no import
 # appears; without a battery — or with an empty one — it does). Import above this kW
