@@ -220,6 +220,12 @@ EV_MODBUS_THREE_PHASE_CAP_KW = 11.0
 # 1φ-max and 3φ-min doesn't flap.
 EV_MODBUS_UPSHIFT_KW = 5.5     # avg surplus above this → three-phase (v0.68.0: 5.0→5.5, wider margin over the 4.14 kW 3φ floor to cut up/down flapping)
 EV_MODBUS_DOWNSHIFT_KW = 4.2   # avg surplus below this → single-phase
+# v0.70.0 — Minimum hysteresis band. The upshift threshold is dashboard-adjustable;
+# this floors how close it may sit to the downshift line, so the band can never be
+# made pathologically thin. A 0.1 kW band (slider at its 4.3 minimum vs the 4.2
+# downshift) gave effectively no hysteresis and flapped on any noise. Effective
+# upshift = max(DOWNSHIFT + this, slider value).
+EV_MODBUS_MIN_DEADBAND_KW = 0.8
 # Window over which the available surplus is averaged for the phase decision.
 # Longer = more stable / slower to engage 3φ; long enough that a brief sun peak
 # on an otherwise choppy day does not pull the average over the upshift line.
@@ -228,13 +234,32 @@ EV_MODBUS_DOWNSHIFT_KW = 4.2   # avg surplus below this → single-phase
 # — which below the EV-priority SoC swings the surplus signal ~2 kW through the
 # export term — from flipping the phase.
 EV_MODBUS_PHASE_AVG_WINDOW_SECONDS = 300
-# v0.68.0 — Buffer-aware fast downshift. On three-phase, a surplus that can't hold
-# the 4.14 kW 3φ floor shows up as grid import (a house battery covers a brief dip,
-# so no import appears; without a battery — or with an empty one — it does). Import
-# above this while on 3φ and NOT curtailing drops the car to 1φ at once so it stops
-# buying from the grid. Re-upshift is average-gated, so this cannot thrash. Set
-# above ordinary house-load noise.
+# Buffer-aware fast downshift. On three-phase, a surplus that can't hold the 4.14 kW
+# 3φ floor shows up as grid import (a house battery covers a brief dip, so no import
+# appears; without a battery — or with an empty one — it does). Import above this kW
+# threshold, SUSTAINED for the seconds below, while on 3φ and NOT curtailing drops
+# the car to 1φ. Set the kW above ordinary house-load noise.
 EV_MODBUS_IMPORT_DOWNSHIFT_KW = 0.5
+# v0.70.0 — Import must persist this long before the guard drops to 1φ. A full house
+# battery does brief charge/discharge balancing pulses at ~100% SoC that flip the
+# meter to import for ~15 s at a time even under perfectly steady sun; an
+# instantaneous check bounced the phase on those blips (verified on live data:
+# 0.5–0.9 kW import spikes with zero between, PV rock-steady at 7.5 kW). Requiring
+# the import to be CONTINUOUS for this window filters the blips while still
+# protecting a battery-less / empty-battery install, where a real shortfall imports
+# without interruption. Dashboard-adjustable via ev_modbus_import_sustained_sec.
+EV_MODBUS_IMPORT_SUSTAINED_SECONDS = 90
+# v0.69.0 — Asymmetric anti-flap dwell on the DOWNSHIFT. Upshift (→3φ) stays fast
+# (only the rolling average gates it) so the car grabs solar at once. Downshift
+# (→1φ) requires the low surplus to persist this long since the last switch. The
+# surplus signal SUBTRACTS battery discharge, so when a passing cloud dips PV the
+# battery covers the car (no grid import — good) but the signal collapses anyway
+# (e.g. 5.9→3.1 kW) and punches through the downshift line; without this dwell that
+# starts a 1φ↔3φ bounce. Holding 3φ rides the dip out on battery cover. Exempt: the
+# grid-import guard (no/empty battery → drop at once) and the curtailment override
+# (Regime A bump-up is never delayed). Dashboard-adjustable via
+# ev_modbus_downshift_dwell_min.
+EV_MODBUS_DOWNSHIFT_DWELL_SECONDS = 300
 # Charging-current step (v0.59.9). The Modbus current register (0x3001) has
 # 0.1 A resolution; we quantise the per-phase target to this step. 1.0 = the
 # historical whole-amp behaviour; finer steps track the solar surplus more
