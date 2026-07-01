@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.72.0] — 2026-07-01
+
+### Fixed
+
+- **Full-power (Hurtig) mode dropped to single-phase mid-charge.** The v0.70.0 sustained grid-import guard did not exempt `Full power` mode, whose entire purpose is to charge at maximum rate from the grid regardless of solar. After ~90 s of the intentional, continuous ~11 kW grid draw that mode produces, the guard mistook it for a shortfall and dropped the car to single-phase (~2.9 kW); once single-phase, the mode immediately forced it back to three-phase, repeating the cycle roughly every 1.5–2 minutes. Verified on live data: continuous import from the moment three-phase engaged, guard fired at the ~90 s mark, phase dropped, then re-engaged ~50 s later — a full stall/re-ramp loop rather than a steady full-power charge. The guard now skips Full mode entirely; `PV+Battery` mode keeps the protection, since it only draws the house battery to cover a shortfall and never intentionally imports.
+
 ## [0.71.0] — 2026-06-29
 
 ### Changed

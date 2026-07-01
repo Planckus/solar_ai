@@ -5127,9 +5127,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # blips. Require the import to be CONTINUOUS for EV_MODBUS_IMPORT_SUSTAINED_
         # SECONDS: the balancing blips reset the timer on each zero-import tick and
         # never accumulate, while a real shortfall (continuous import) trips it.
+        # v0.72.0 — exempt EV_MODE_FULL: that mode's entire purpose is to charge at
+        # max rate regardless of solar, so sustained grid import is intentional, not
+        # a shortfall. Without this exemption the guard tripped ~90 s into every
+        # full-power session (verified live: continuous ~11 kW import from 04:19:52,
+        # guard fired at 04:21:35, dropping the car to 1φ/~2.9 kW for ~50 s before
+        # Full mode forced it back to 3φ — a repeating ramp-up/drop-back cycle).
+        # PV_BATTERY is NOT exempt: it only draws the house battery to cover a
+        # shortfall, never the grid, so sustained import there still means the
+        # protection should fire.
         import_sustained_s = max(0, int(float(self._stored.get(
             "ev_modbus_import_sustained_sec", EV_MODBUS_IMPORT_SUSTAINED_SECONDS))))
         if (self._ev_modbus_phase == 3 and not override_3ph
+                and effective_mode != EV_MODE_FULL
                 and grid_import_kw > EV_MODBUS_IMPORT_DOWNSHIFT_KW):
             if self._ev_modbus_import_since_ts is None:
                 self._ev_modbus_import_since_ts = now_ts
