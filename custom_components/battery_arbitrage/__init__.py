@@ -365,6 +365,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register integration services (only once, even with multiple entries)
     _register_services(hass)
 
+    # v0.74.0 — serve + inject our own bundled Lovelace cards, unconditionally
+    # (not gated on CONF_CREATE_DASHBOARD — a user on a hand-built dashboard
+    # can still use `custom:solar-ai-*` cards). Must never block entry setup;
+    # wrapped internally in try/except.
+    from homeassistant.loader import async_get_integration
+    from .frontend import async_register_frontend
+    integration = await async_get_integration(hass, DOMAIN)
+    await async_register_frontend(hass, integration.version or "0.0.0")
+
     # v0.51.0 — opt-in: auto-create the bundled Solar AI dashboard, once.
     # Guarded by a stored flag so it never re-creates a dashboard the user
     # later deleted, and never blocks entry setup if Lovelace internals change.

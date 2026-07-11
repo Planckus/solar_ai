@@ -1,7 +1,7 @@
 {
   "domain": "battery_arbitrage",
   "name": "Solar AI",
-  "version": "0.73.0",
+  "version": "0.75.2",
   "documentation": "https://github.com/Planckus/solar_ai",
   "issue_tracker": "https://github.com/Planckus/solar_ai/issues",
   "codeowners": ["@planckus"],
