@@ -9,6 +9,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.75.2] — 2026-07-11
+
+### Added
+
+- **First-party dashboard cards — the integration no longer depends on any third-party Lovelace card.** Seven new custom elements ship inside the integration itself and register automatically at startup (no HACS install, no manual "Settings → Dashboards → Resources" step):
+  - `solar-ai-status-card` — the home/EV hero: mode badge, solar/battery/grid/EV energy-flow tiles (with a battery-floor marker), buy/sell/savings stats, solar today/tomorrow totals, an EV arming/cooling countdown banner, and the live mode/EV reasoning text.
+  - `solar-ai-mode-picker-card` — the EV charge-mode button row (Locked/Solar/Solar+Battery/Full/Scheduled), reading its options directly from the `select` entity so it stays correct if a mode is ever added or removed, each mode with its own icon color.
+  - `solar-ai-chart-card` — a hand-rolled SVG chart (bar, line, and bar+line combo, with a "now" marker) covering all five chart shapes the dashboard needs: the 24h price line, the 24h price bar, the 48h solar forecast (raw vs. adjusted), and the two 60-day money charts. Optional colored header icon.
+  - `solar-ai-grid-card` — a reusable 24-cell hour grid with three modes: toggle (blocked sell hours), heatmap (the buy/sell price matrices), and timeline. Optional colored header icon.
+  - `solar-ai-nav-card` — a colored icon button row for between-view navigation.
+  - `solar-ai-view-card` — hosts an arbitrary list of child cards (native HA cards and our own alike, via HA's public `loadCardHelpers()` API) and caps + centers the whole stack at one consistent width — this is what replaces `card-mod`'s `:host` width-cap trick, but applied uniformly so native cards (e.g. a plain `entities` list) line up with the custom ones instead of sitting flush against the screen edge next to a centered island.
+  - `solar-ai-entities-card` — a richer replacement for the native `entities` card: circular colored icon badges per row, larger type, and a proper on/off pill for switches and binary sensors instead of raw "on"/"off" text. Replaces all ~29 remaining native `entities` cards across Settings, History, Logs, Advanced, and EV — the last of the plain, unstyled list cards.
+  - The chart and status cards read `hass.language` and localize their own UI chrome (English/Danish) independently of which dashboard YAML file is loaded, so a Danish install doesn't get English text baked into the shared script.
+
+### Changed
+
+- **`dashboard_en.yaml` and `dashboard_da.yaml` rewritten** to use the new cards everywhere a third-party or plain native card was doing the job (mushroom, apexcharts-card, power-flow-card-plus, card-mod, and the native `entities` card). The remaining native cards genuinely suited to staying native (`markdown`, `history-graph`, `grid`, `conditional`, stacks) are untouched. Net third-party card usage: zero.
+- Every view uses the new `solar-ai-view-card` wrapper in place of a bare `vertical-stack`, so card widths stay consistent across native and custom cards on every page (this needed `panel: true` restored on every view — dropping it early in this rework, on the assumption the per-card width cap alone would be enough, was the direct cause of the layout looking broken partway through).
+- The two entities-card `type: navigate` rows (home-view nav bar, the Advanced-view "Open integration setup" link) are not a real HA entities row type and rendered as configuration errors — replaced by the new `solar-ai-nav-card`.
+- Every icon across every card now carries a deliberate color — the EV mode-picker buttons, the status card's grid tile, and every chart/grid card header. Colors are grouped by theme (amber for price/solar, blue for EV/battery, green for savings/income, purple for history/diagnostics, cyan for settings/grid-status) so a page reads as one coherent set rather than a mix of colored and default-grey icons.
+- All font sizes raised (smallest text was 9 px, now 12 px minimum; the house-load hero number is 32 px, up from 26) and tile/button padding increased to match, after two rounds of live feedback that the first pass was still too small to read comfortably.
+- Tile labels (the small text under an icon inside a colored tile) now use full-strength text color instead of the theme's secondary/muted color — stacked on the tile's own background tint, the muted color was dim enough to be genuinely hard to read. Labels are distinguished from the value below them by size, not color.
+- `dashboard_setup.py`'s `REQUIRED_CARDS` list (used to raise a Repairs issue for missing third-party cards) is now empty, since the dashboard has nothing left to depend on.
+- README: removed the "install five HACS cards" setup step and the "Dashboard dependencies" table; the remaining install steps are renumbered. Historical release notes mentioning the old third-party cards are left as an accurate record of past versions.
+
+### Fixed
+
+- Registering the bundled script via `frontend.add_extra_js_url` did not make the custom elements available in time for Lovelace's card-creation pass, and failed silently (no error, no console output — a successful module load is silent by default). Switched to registering the script in the Lovelace **resources storage collection** instead — the exact mechanism every other working custom card on the dashboard already used, confirmed by inspecting the live resource list.
+- The hour-grid's 24 columns shrank to fit whatever width they were given, making the price-matrix text unreadable on narrower screens. Columns now have a fixed minimum width (46 px heatmap / 40 px toggle) and the grid scrolls horizontally instead of compressing below that — the same pattern the original price-matrix table already used (`overflow-x: auto` with a fixed minimum column width), just applied to the new component. Heatmap cells now use black text on the amber tier instead of white, for better contrast.
+- **Blocked-sell-hours toggle grid appeared to randomly fail to block/unblock an hour.** Tapping a cell called the toggle service but gave no visual feedback until the full round trip (service call → coordinator update → re-render) completed; a second tap on the same cell in that gap was a genuine second toggle, silently cancelling the first. Fixed with an immediate optimistic color flip on tap and a short (1.2 s) per-cell click guard so a fast double-tap can't undo itself.
+- A card-creation error occurring during the hass-update change-detection step (before a card's own render logic even runs) bypassed every card's error handling and fell through to Home Assistant's generic, textless "Konfigurationsfejl" card. Widened the try/catch to cover that step too, so any future failure shows the actual error message and stack trace directly on the card instead of a dead end.
+- The price-matrix heatmap grid (Købspris-matrix / Salgspris-matrix) had no hour-axis labels, unlike the markdown table it replaced. Added a 24-cell hour header row (00–23, current hour outlined) above the today/tomorrow rows.
+
+Built and shipped live-iteratively against a real installation (HA snapshot taken first): the resource-registration mechanism, the view width/centering, the nav row styling, icon colors, font sizing, and the entities-card rollout each went through rounds of live deploy → visual check → fix before landing on the design above.
+
 ## [0.73.0] — 2026-07-11
 
 ### Changed
