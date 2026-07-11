@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.73.0] — 2026-07-11
+
+### Changed
+
+- **Lowered the three-phase switch threshold's minimum from 5.0 to 4.5 kW.** The downshift threshold is fixed at 4.2 kW (60 W above the 4.14 kW hardware floor for three-phase) and is not user-adjustable, so the upshift threshold can't coherently go below it — doing so would collapse the hysteresis band to a single crossing point with no anti-flap protection at all. 4.5 kW gives a 0.3 kW band, letting the threshold be tuned closer to the physical minimum than the previous 0.8 kW floor while staying well clear of the 0.1 kW band that caused severe flapping (12–21 switches/hour, measured live) before v0.70.0.
+
 ## [0.72.0] — 2026-07-01
 
 ### Fixed
