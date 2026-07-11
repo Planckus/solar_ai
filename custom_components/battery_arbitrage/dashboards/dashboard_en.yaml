@@ -5,1943 +5,1129 @@ views:
   icon: mdi:home
   panel: true
   cards:
-  - type: custom:mod-card
-    card_mod:
-      style: ':host { max-width: 1000px; margin: 0 auto; display: block; }
-
-        '
-    card:
-      type: vertical-stack
-      cards:
-      - type: horizontal-stack
-        cards:
-        - type: custom:mushroom-template-card
-          primary: '{{ states(''sensor.battery_arbitrage_driftstilstand'') | title }}'
-          secondary: '{{ states(''sensor.battery_arbitrage_begrundelse_for_tilstand'') }}'
-          icon: mdi:sine-wave
-          icon_color: amber
-          multiline_secondary: true
-          entity: sensor.battery_arbitrage_driftstilstand
-          tap_action:
-            action: more-info
-          fill_container: true
-        - type: custom:mushroom-entity-card
-          entity: switch.battery_arbitrage_arbitrage_aktiv
-          name: Solar AI
-          icon: mdi:flash-auto
-          icon_color: amber
-          tap_action:
-            action: toggle
-          fill_container: true
-      - type: horizontal-stack
-        cards:
-        - type: custom:mushroom-template-card
-          primary: '{{ ''%.2f'' | format(states(''sensor.solar_ai_indkobspris_opdeling'') | float(0)) }} kr'
-          secondary: Buy now · DKK/kWh
-          icon: mdi:flash
-          icon_color: red
-          entity: sensor.solar_ai_indkobspris_opdeling
-          tap_action:
-            action: navigate
-            navigation_path: /battery-arbitrage/priser
-          fill_container: true
-        - type: custom:mushroom-template-card
-          primary: '{{ ''%.2f'' | format(states(''sensor.battery_arbitrage_eksportpris'') | float(0)) }} kr'
-          secondary: Sell now · DKK/kWh
-          icon: mdi:cash-fast
-          icon_color: green
-          entity: sensor.battery_arbitrage_eksportpris
-          tap_action:
-            action: navigate
-            navigation_path: /battery-arbitrage/priser
-          fill_container: true
-      - type: custom:mushroom-template-card
-        primary: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% set p = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% if s == ''Charging'' %}Oplader — {{ ''%.1f'' | format(p) }} kW{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}Car connected{% elif s == ''Available'' %}No car{% else %}{{ s }}{% endif %}'
-        secondary: '{% set en = state_attr(''sensor.solar_ai_ev_status'',''enabled'') %}{% set r = state_attr(''sensor.solar_ai_ev_status'',''reason'') %}{% if not en %}EV control off{% else %}{{ r }}{% endif %}'
-        icon: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}mdi:battery-charging{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}mdi:ev-plug-type2{% else %}mdi:car-electric-outline{% endif %}'
-        icon_color: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}green{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}blue{% else %}grey{% endif %}'
-        multiline_secondary: true
-        entity: sensor.solar_ai_ev_status
-        tap_action:
-          action: more-info
-        fill_container: true
-      - type: custom:mushroom-title-card
-        title: Charge mode
-        card_mod:
-          style: ':host { --title-padding: 8px 12px 0px; }
-
-            .title { text-align: center; }
-
-            '
-      - type: custom:mushroom-chips-card
-        alignment: center
-        chips:
-        - type: template
-          icon: mdi:lock
-          content: false
-          icon_color: '{{ ''blue'' if states(''select.solar_ai_ev_opladningstilstand'') == ''locked'' else ''grey'' }}'
-          tap_action:
-            action: call-service
-            service: select.select_option
-            data:
-              option: locked
-            target:
-              entity_id: select.solar_ai_ev_opladningstilstand
-        - type: template
-          icon: mdi:weather-sunny
-          content: Solar
-          icon_color: '{{ ''blue'' if states(''select.solar_ai_ev_opladningstilstand'') == ''pv'' else ''grey'' }}'
-          tap_action:
-            action: call-service
-            service: select.select_option
-            data:
-              option: pv
-            target:
-              entity_id: select.solar_ai_ev_opladningstilstand
-        - type: template
-          icon: mdi:weather-sunny-alert
-          content: Solar+Bat
-          icon_color: '{{ ''blue'' if states(''select.solar_ai_ev_opladningstilstand'') == ''pv_battery'' else ''grey'' }}'
-          tap_action:
-            action: call-service
-            service: select.select_option
-            data:
-              option: pv_battery
-            target:
-              entity_id: select.solar_ai_ev_opladningstilstand
-        - type: template
-          icon: mdi:rocket-launch
-          content: Fast
-          icon_color: '{{ ''blue'' if states(''select.solar_ai_ev_opladningstilstand'') == ''full'' else ''grey'' }}'
-          tap_action:
-            action: call-service
-            service: select.select_option
-            data:
-              option: full
-            target:
-              entity_id: select.solar_ai_ev_opladningstilstand
-        - type: template
-          icon: mdi:calendar-clock
-          content: Scheduled
-          icon_color: '{{ ''blue'' if states(''select.solar_ai_ev_opladningstilstand'') == ''scheduled'' else ''grey'' }}'
-          tap_action:
-            action: call-service
-            service: select.select_option
-            data:
-              option: scheduled
-            target:
-              entity_id: select.solar_ai_ev_opladningstilstand
-        card_mod:
-          style: 'ha-card { --chip-height: 54px; --chip-font-size: 15px; --chip-icon-size: 22px; --chip-border-radius: 14px; --chip-spacing: 6px; }
-
-            '
-      - type: custom:power-flow-card-plus
-        title: Energi-flow
-        entities:
-          grid:
-            entity:
-              consumption: sensor.foxessmodbus_grid_consumption
-              production: sensor.foxessmodbus_feed_in
-            name: Grid
-          solar:
-            entity: sensor.pv_power_foxessmodbus
-            name: Solar
-          battery:
-            entity:
-              consumption: sensor.foxessmodbus_battery_discharge
-              production: sensor.foxessmodbus_battery_charge
-            state_of_charge: sensor.foxessmodbus_battery_soc_1
-            name: Battery
-          home:
-            entity: sensor.foxessmodbus_load_power
-            name: Home
-            subtract_individual: true
-          individual:
-          - entity: sensor.solar_ai_lader_effekt
-            name: Car
-            icon: mdi:car-electric
-            display_zero: true
-            display_zero_tolerance: 0.01
-            color:
-            - 84
-            - 149
-            - 230
-        clickable_entities: true
-        use_new_flow_rate_model: true
-        kw_decimals: 2
-        min_flow_rate: 2
-        max_flow_rate: 10
-      - type: custom:mushroom-chips-card
-        alignment: center
-        chips:
-        - type: conditional
-          conditions:
-          - condition: numeric_state
-            entity: sensor.solar_ai_ev_status
-            attribute: cooling_seconds_left
-            above: 0
-          chip:
-            type: template
-            entity: sensor.solar_ai_ev_status
-            icon: mdi:timer-sand
-            icon_color: orange
-            content: EV stops in {{ state_attr('sensor.solar_ai_ev_status','cooling_seconds_left') | int(0) }} s — low sun
-            tap_action:
-              action: more-info
-        - type: template
-          entity: sensor.battery_arbitrage_batteritemperatur_laveste_celle
-          icon: mdi:thermometer
-          content: Battery temp {{ states('sensor.battery_arbitrage_batteritemperatur_laveste_celle') }} °C
-          icon_color: '{% set t = states(''sensor.battery_arbitrage_batteritemperatur_laveste_celle'') | float(0) %}{% if t < 10 %}blue{% elif t > 40 %}red{% else %}green{% endif %}'
-          tap_action:
-            action: more-info
-      - type: custom:apexcharts-card
-        header:
-          title: Prices and battery (24h)
-          show: true
-        graph_span: 24h
-        span:
-          start: day
-        apex_config:
-          chart:
-            height: 260
-          legend:
-            position: bottom
-          stroke:
-            curve: stepline
-        yaxis:
-        - id: price
-          decimals: 2
-          apex_config:
-            title:
-              text: DKK/kWh
-        - id: soc
-          opposite: true
-          min: 0
-          max: 100
-          decimals: 0
-        series:
-        - entity: sensor.solar_ai_24h_priskort
-          name: Buy
-          yaxis_id: price
-          type: line
-          color: '#e8453c'
-          stroke_width: 2
-          data_generator: 'const slots = entity.attributes.slots || [];
-
-            const today = new Date();
-
-            today.setHours(0,0,0,0);
-
-            return slots.map(s => [today.getTime() + s.h*3600*1000 + (s.m||0)*60*1000, s.buy]);'
-        - entity: sensor.solar_ai_24h_priskort
-          name: Sell
-          yaxis_id: price
-          type: line
-          color: '#3e9c4d'
-          stroke_width: 2
-          data_generator: 'const slots = entity.attributes.slots || [];
-
-            const today = new Date();
-
-            today.setHours(0,0,0,0);
-
-            return slots.map(s => [today.getTime() + s.h*3600*1000 + (s.m||0)*60*1000, s.sell]);'
-        - entity: sensor.foxessmodbus_battery_soc_1
-          name: SoC
-          yaxis_id: soc
-          type: area
-          color: '#5995e6'
-          stroke_width: 2
-          opacity: 0.12
-      - type: vertical-stack
-        cards:
-        - type: custom:mushroom-title-card
-          title: Solar forecast
-        - type: markdown
-          content: '{% set today = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_kwh'') | float(0) %}{% set today_raw = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_raw_kwh'') | float(0) %}{% set tom = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_kwh'') | float(0) %}{% set tom_raw = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_raw_kwh'') | float(0) %}{% set actual = states(''sensor.foxessmodbus_solar_energy_today'') | float(0) %}<!-- 🌞 Solar forecast — totals -->
-
-            | | | |
-
-            |---|---:|---:|
-
-            | ☀️ **Today total** | Produced **{{ ''%.1f'' | format(actual) }} kWh** + rest **{{ ''%.1f'' | format(today) }} kWh** | = **{{ ''%.1f'' | format(actual + today) }} kWh** |
-
-            | 🔆 **Rest of today** | Adjusted forecast: **{{ ''%.1f'' | format(today) }} kWh** | _Raw forecast: {{ ''%.1f'' | format(today_raw) }} kWh_ |
-
-            | 📅 **I morgen** | Adjusted forecast: **{{ ''%.1f'' | format(tom) }} kWh** | _Raw forecast: {{ ''%.1f'' | format(tom_raw) }} kWh_ |
-
-            '
-        - type: custom:mushroom-template-card
-          primary: Live solar correction
-          secondary: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}Waiting for first 15-min slot…{% else %}{{ ''%+.0f'' | format(p) }}%  ·  {{ n }} slot{{ ''s'' if n != 1 else '''' }}  ·  damping over 2 h{% endif %}'
-          icon: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}mdi:timer-sand{% elif p > 10 %}mdi:weather-sunny{% elif p < -10 %}mdi:weather-cloudy{% else %}mdi:chart-bell-curve{% endif %}'
-          icon_color: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}grey{% elif p > 10 %}green{% elif p > -10 %}grey{% elif p > -25 %}amber{% else %}red{% endif %}'
-          entity: sensor.solar_ai_solcelleprognose_fejl_nu
-          tap_action:
-            action: more-info
-        - type: custom:apexcharts-card
-          header:
-            show: true
-            title: Solar forecast (48 h)
-            show_states: false
-          graph_span: 48h
-          span:
-            start: hour
-            offset: -0h
-          now:
-            show: true
-            label: Nu
-            color: '#9aa0a6'
-          yaxis:
-          - min: 0
-            decimals: 1
-            apex_config:
-              title:
-                text: kW
-              forceNiceScale: true
-          apex_config:
-            chart:
-              height: 280
-            legend:
-              show: true
-              position: top
-            xaxis:
-              labels:
-                datetimeUTC: false
-                format: ddd HH
-            stroke:
-              curve: smooth
-              width:
-              - 0
-              - 3
-          series:
-          - entity: sensor.solar_ai_solcelleprognose_48t_graf
-            name: Raw forecast (Solcast)
-            type: column
-            color: '#b0bec5'
-            opacity: 0.55
-            show:
-              in_header: false
-              legend_value: false
-            data_generator: return (entity.attributes.slots || []).map(s => [new Date(s.start).getTime(), s.raw_kw]);
-          - entity: sensor.solar_ai_solcelleprognose_48t_graf
-            name: Adjusted (solar forecast)
-            type: line
-            color: '#f9a825'
-            stroke_width: 3
-            show:
-              in_header: false
-              legend_value: false
-            data_generator: return (entity.attributes.slots || []).map(s => [new Date(s.start).getTime(), s.adj_kw]);
-      - type: custom:mushroom-chips-card
-        alignment: center
-        card_mod:
-          style: |
-            ha-card {
-              --chip-height: 46px;
-              --chip-font-size: 1.05rem;
-              --chip-icon-size: 1.2rem;
-            }
-        chips:
-        - type: template
-          icon: mdi:car-electric
-          icon_color: blue
-          content: EV
-          tap_action:
-            action: navigate
-            navigation_path: /battery-arbitrage/ev
-        - type: template
-          icon: mdi:currency-eur
-          icon_color: amber
-          content: Prices
-          tap_action:
-            action: navigate
-            navigation_path: /battery-arbitrage/priser
-        - type: template
-          icon: mdi:chart-timeline-variant
-          icon_color: purple
-          content: History
-          tap_action:
-            action: navigate
-            navigation_path: /battery-arbitrage/historik
-        - type: template
-          icon: mdi:cog
-          icon_color: cyan
-          content: Settings
-          tap_action:
-            action: navigate
-            navigation_path: /battery-arbitrage/indstillinger
-        - type: template
-          icon: mdi:format-list-bulleted-square
-          icon_color: green
-          content: Logs
-          tap_action:
-            action: navigate
-            navigation_path: /battery-arbitrage/logs
-        - type: template
-          icon: mdi:tune-variant
-          icon_color: blue-grey
-          content: Advanced
-          tap_action:
-            action: navigate
-            navigation_path: /battery-arbitrage/advanced
+  - type: custom:solar-ai-view-card
+    cards:
+    - type: custom:solar-ai-status-card
+      mode_entity: sensor.battery_arbitrage_driftstilstand
+      mode_reason_entity: sensor.battery_arbitrage_begrundelse_for_tilstand
+      enabled_entity: switch.battery_arbitrage_arbitrage_aktiv
+      house_load_entity: sensor.foxessmodbus_load_power
+      solar_entity: sensor.pv_power_foxessmodbus
+      battery_charge_entity: sensor.foxessmodbus_battery_charge
+      battery_discharge_entity: sensor.foxessmodbus_battery_discharge
+      battery_soc_entity: sensor.foxessmodbus_battery_soc_1
+      battery_floor_entity: sensor.solar_ai_effektivt_afladningsgulv
+      grid_import_entity: sensor.foxessmodbus_grid_consumption
+      grid_export_entity: sensor.foxessmodbus_feed_in
+      ev_power_entity: sensor.solar_ai_lader_effekt
+      ev_status_entity: sensor.solar_ai_ev_status
+      buy_price_entity: sensor.solar_ai_indkobspris_opdeling
+      sell_price_entity: sensor.battery_arbitrage_eksportpris
+      savings_today_entity: sensor.solar_ai_samlet_besparelse_i_dag
+      solar_forecast_entity: sensor.solar_ai_solcelleprognose_48t_graf
+      solar_actual_today_entity: sensor.foxessmodbus_solar_energy_today
+      prices_navigate_path: /battery-arbitrage/priser
+    - type: custom:solar-ai-mode-picker-card
+      title: Charge mode
+      entity: select.solar_ai_ev_opladningstilstand
+    - type: custom:solar-ai-entities-card
+      title: Solar forecast accuracy
+      icon_color: amber
+      show_header_toggle: false
+      entities:
+      - entity: sensor.solar_ai_solcelleprognose_fejl_nu
+        name: Live solar correction
+    - type: custom:solar-ai-chart-card
+      title: Prices (24h)
+      icon: mdi:currency-eur
+      icon_color: amber
+      height: 180
+      x_type: hour_offset
+      unit: kr
+      series:
+      - entity: sensor.solar_ai_24h_priskort
+        path: slots
+        x: h
+        y: buy
+        type: line
+        curve: step
+        color: var(--error-color)
+        name: Buy
+      - entity: sensor.solar_ai_24h_priskort
+        path: slots
+        x: h
+        y: sell
+        type: line
+        curve: step
+        color: var(--success-color)
+        name: Sell
+    - type: custom:solar-ai-chart-card
+      title: Solar forecast (48h)
+      icon: mdi:weather-partly-cloudy
+      icon_color: amber
+      height: 220
+      x_type: timestamp
+      unit: kW
+      now_marker: true
+      series:
+      - entity: sensor.solar_ai_solcelleprognose_48t_graf
+        path: slots
+        x: start
+        y: raw_kw
+        type: bar
+        color: '#b0bec580'
+        name: Raw (Solcast)
+      - entity: sensor.solar_ai_solcelleprognose_48t_graf
+        path: slots
+        x: start
+        y: adj_kw
+        type: line
+        curve: smooth
+        color: var(--warning-color)
+        name: Adjusted
+    - type: custom:solar-ai-nav-card
+      items:
+      - icon: mdi:car-electric
+        icon_color: blue
+        label: EV
+        path: /battery-arbitrage/ev
+      - icon: mdi:currency-eur
+        icon_color: amber
+        label: Prices
+        path: /battery-arbitrage/priser
+      - icon: mdi:chart-timeline-variant
+        icon_color: purple
+        label: History
+        path: /battery-arbitrage/historik
+      - icon: mdi:cog
+        icon_color: cyan
+        label: Settings
+        path: /battery-arbitrage/indstillinger
+      - icon: mdi:format-list-bulleted-square
+        icon_color: green
+        label: Logs
+        path: /battery-arbitrage/logs
+      - icon: mdi:tune-variant
+        icon_color: blue-grey
+        label: Advanced
+        path: /battery-arbitrage/advanced
 - title: EV
   path: ev
   icon: mdi:car-electric
   subview: true
   panel: true
   cards:
-  - type: custom:mod-card
-    card_mod:
-      style: ':host { max-width: 1000px; margin: 0 auto; display: block; }
+  - type: custom:solar-ai-view-card
+    cards:
+    - type: conditional
+      conditions:
+      - condition: state
+        entity: binary_sensor.solar_ai_eksport_stop_aktiv
+        state: 'on'
+      card:
+        type: markdown
+        content: '## 🛑 Export-stop active
 
-        '
-    card:
-      type: vertical-stack
-      cards:
-      - type: conditional
-        conditions:
-        - condition: state
-          entity: binary_sensor.solar_ai_eksport_stop_aktiv
-          state: 'on'
-        card:
-          type: custom:mushroom-template-card
-          primary: 🛑 Export-stop active
-          secondary: '{% set since = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''since'') %}{% set floor = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''floor'') %}{% set price = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''price_at_start'') | float(0) %}The sell price is below the floor ({% if floor is not none %}{{ ''%.2f'' | format(floor) }}{% else %}–{% endif %} DKK/kWh). Solar export is blocked.{% if price %} Price at start: {{ ''%.3f'' | format(price) }} DKK/kWh.{% endif %}{% if since %} Active since {{ since[11:16] }}.{% endif %}'
-          icon: mdi:transmission-tower-off
-          icon_color: red
-          fill_container: true
-          multiline_secondary: true
-          entity: binary_sensor.solar_ai_eksport_stop_aktiv
-          tap_action:
-            action: more-info
-      - type: vertical-stack
-        cards:
-        - type: vertical-stack
-          cards:
-          - type: custom:mushroom-title-card
-            title: EV charge mode
-          - type: horizontal-stack
-            cards:
-            - type: custom:mushroom-template-card
-              primary: false
-              icon: mdi:lock
-              icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''locked'' %}blue{% else %}grey{% endif %}'
-              fill_container: true
-              layout: vertical
-              tap_action:
-                action: call-service
-                service: select.select_option
-                service_data:
-                  option: locked
-                target:
-                  entity_id: select.solar_ai_ev_opladningstilstand
-              hold_action:
-                action: none
-            - type: custom:mushroom-template-card
-              primary: Solar
-              icon: mdi:weather-sunny
-              icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''pv'' %}blue{% else %}grey{% endif %}'
-              fill_container: true
-              layout: vertical
-              tap_action:
-                action: call-service
-                service: select.select_option
-                service_data:
-                  option: pv
-                target:
-                  entity_id: select.solar_ai_ev_opladningstilstand
-              hold_action:
-                action: none
-            - type: custom:mushroom-template-card
-              primary: Solar+Bat
-              icon: mdi:weather-sunny-alert
-              icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''pv_battery'' %}blue{% else %}grey{% endif %}'
-              fill_container: true
-              layout: vertical
-              tap_action:
-                action: call-service
-                service: select.select_option
-                service_data:
-                  option: pv_battery
-                target:
-                  entity_id: select.solar_ai_ev_opladningstilstand
-              hold_action:
-                action: none
-            - type: custom:mushroom-template-card
-              primary: Fast
-              icon: mdi:rocket-launch
-              icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''full'' %}blue{% else %}grey{% endif %}'
-              fill_container: true
-              layout: vertical
-              tap_action:
-                action: call-service
-                service: select.select_option
-                service_data:
-                  option: full
-                target:
-                  entity_id: select.solar_ai_ev_opladningstilstand
-              hold_action:
-                action: none
-            - type: custom:mushroom-template-card
-              primary: Scheduled
-              icon: mdi:calendar-clock
-              icon_color: '{% if states(''select.solar_ai_ev_opladningstilstand'') == ''scheduled'' %}blue{% else %}grey{% endif %}'
-              fill_container: true
-              layout: vertical
-              tap_action:
-                action: call-service
-                service: select.select_option
-                service_data:
-                  option: scheduled
-                target:
-                  entity_id: select.solar_ai_ev_opladningstilstand
-              hold_action:
-                action: none
-        - type: horizontal-stack
-          cards:
-          - type: custom:mushroom-template-card
-            primary: Car connected
-            secondary: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s in [''Charging''] %}🔋 Charging now — {{ states(''sensor.solar_ai_lader_effekt'') }} kW{% elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE'', ''Finishing''] %}🔌 Car connected ({{ s }}){% elif s == ''Available'' %}⚪ No car connected{% elif s in [''Disconnected'', ''Unavailable'', ''Unknown'', ''unavailable'', ''unknown''] %}❌ Charger not connected{% else %}{{ s }}{% endif %}'
-            icon: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}mdi:battery-charging{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}mdi:ev-plug-type2{% elif s == ''Available'' %}mdi:car-electric-outline{% else %}mdi:lan-disconnect{% endif %}'
-            icon_color: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}green{% elif s in [''Preparing'',''SuspendedEV'',''SuspendedEVSE'',''Finishing''] %}blue{% elif s == ''Available'' %}grey{% else %}red{% endif %}'
-            entity: sensor.solar_ai_lader_status
-            tap_action:
-              action: more-info
-            fill_container: true
-          - type: custom:mushroom-template-card
-            primary: EV-charger
-            secondary: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% set seen = state_attr(''sensor.solar_ai_lader_status'', ''seconds_since_seen'') %}{% if s in [''Disconnected'', ''Unavailable''] %}❌ Disconnected{% elif s in [''Unknown'', ''unknown'', ''unavailable''] %}⏳ Waiting for status{% else %}✅ {{ s }}{% if seen %} · {{ seen | int }}s ago{% endif %}{% endif %}'
-            icon: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}mdi:battery-charging-high{% elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE''] %}mdi:ev-plug-type2{% elif s == ''Finishing'' %}mdi:battery-charging-50{% elif s == ''Available'' %}mdi:ev-station{% elif s == ''Reserved'' %}mdi:calendar-clock{% elif s == ''Faulted'' %}mdi:alert-circle{% elif s in [''Disconnected'', ''Unavailable''] %}mdi:lan-disconnect{% else %}mdi:ev-station{% endif %}'
-            icon_color: '{% set s = states(''sensor.solar_ai_lader_status'') %}{% if s == ''Charging'' %}green{% elif s in [''Preparing'', ''SuspendedEV'', ''SuspendedEVSE''] %}amber{% elif s == ''Finishing'' %}cyan{% elif s == ''Available'' %}blue{% elif s == ''Reserved'' %}purple{% elif s == ''Faulted'' %}red{% elif s in [''Disconnected'', ''Unavailable''] %}grey{% else %}grey{% endif %}'
-            fill_container: true
-        - type: horizontal-stack
-          cards:
-          - type: custom:mushroom-template-card
-            primary: '{{ states(''sensor.solar_ai_lader_effekt'') }} kW'
-            secondary: EFFEKT
-            icon: mdi:flash
-            icon_color: '{% set p = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% if p > 0.1 %}green{% else %}grey{% endif %}'
-            fill_container: true
-          - type: custom:mushroom-template-card
-            primary: '{% set surp = state_attr(''sensor.solar_ai_ev_status'', ''surplus_kw'') | float(0) %}{{ ''%.2f'' | format(surp) }} kW'
-            secondary: SURPLUS TO EV
-            icon: mdi:solar-power-variant
-            icon_color: '{% set surp = state_attr(''sensor.solar_ai_ev_status'', ''surplus_kw'') | float(0) %}{% if surp > 0.1 %}amber{% else %}grey{% endif %}'
-            fill_container: true
-        - type: markdown
-          content: '{% set st = states(''sensor.solar_ai_ev_status'') %}{% set en = state_attr(''sensor.solar_ai_ev_status'', ''enabled'') %}{% set reason = state_attr(''sensor.solar_ai_ev_status'', ''reason'') %}{% set arm_iso = state_attr(''sensor.solar_ai_ev_status'',''arming_until'') %}{% set arm_raw = ((as_timestamp(arm_iso) - as_timestamp(now())) | int(0)) if arm_iso else 0 %}{% set arm = [arm_raw, 0] | max %}{% set cool_iso = state_attr(''sensor.solar_ai_ev_status'',''cooling_until'') %}{% set cool_raw = ((as_timestamp(cool_iso) - as_timestamp(now())) | int(0)) if cool_iso else 0 %}{% set cool = [cool_raw, 0] | max %}{% set kw = state_attr(''sensor.solar_ai_ev_status'',''target_kw'') | float(0) %}{% set amps = state_attr(''sensor.solar_ai_ev_status'',''target_amps'') | int(0) %}{% set bat_locked = state_attr(''sensor.solar_ai_ev_status'',''battery_locked'') %}{% if not en %}🔒 **EV-controller slået fra.**{% elif st == ''CHARGING'' %}🔋 **Oplader: {{ ''%.1f'' | format(kw) }} kW · {{ amps }} A**{% if bat_locked %}  ·  🔒 House battery locked{% endif %}{% elif st == ''ARMING'' %}⏳ **Starter om {{ arm }} sek**{% elif st == ''COOLING'' %}⏳ **Stopper om {{ cool }} sek**{% else %}💤 **Inaktiv**{% if reason %}
+          {% set since = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''since'') %}{% set floor = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''floor'') %}{% set price = state_attr(''binary_sensor.solar_ai_eksport_stop_aktiv'', ''price_at_start'') | float(0) %}The sell price is below the floor ({% if floor is not none %}{{ ''%.2f'' | format(floor) }}{% else %}–{% endif %} DKK/kWh). Solar export is blocked.{% if price %} Price at start: {{ ''%.3f'' | format(price) }} DKK/kWh.{% endif %}{% if since %} Active since {{ since[11:16] }}.{% endif %}'
+    - type: custom:solar-ai-mode-picker-card
+      title: EV charge mode
+      entity: select.solar_ai_ev_opladningstilstand
+    - type: custom:solar-ai-status-card
+      mode_entity: sensor.battery_arbitrage_driftstilstand
+      mode_reason_entity: sensor.battery_arbitrage_begrundelse_for_tilstand
+      enabled_entity: switch.battery_arbitrage_arbitrage_aktiv
+      house_load_entity: sensor.foxessmodbus_load_power
+      solar_entity: sensor.pv_power_foxessmodbus
+      battery_charge_entity: sensor.foxessmodbus_battery_charge
+      battery_discharge_entity: sensor.foxessmodbus_battery_discharge
+      battery_soc_entity: sensor.foxessmodbus_battery_soc_1
+      battery_floor_entity: sensor.solar_ai_effektivt_afladningsgulv
+      grid_import_entity: sensor.foxessmodbus_grid_consumption
+      grid_export_entity: sensor.foxessmodbus_feed_in
+      ev_power_entity: sensor.solar_ai_lader_effekt
+      ev_status_entity: sensor.solar_ai_ev_status
+      buy_price_entity: sensor.solar_ai_indkobspris_opdeling
+      sell_price_entity: sensor.battery_arbitrage_eksportpris
+      savings_today_entity: sensor.solar_ai_samlet_besparelse_i_dag
+      solar_forecast_entity: sensor.solar_ai_solcelleprognose_48t_graf
+      solar_actual_today_entity: sensor.foxessmodbus_solar_energy_today
+      prices_navigate_path: /battery-arbitrage/priser
+    - type: markdown
+      content: '### Settings'
+    - type: custom:solar-ai-entities-card
+      icon: mdi:tune
+      icon_color: blue
+      show_header_toggle: false
+      entities:
+      - entity: select.solar_ai_ev_minimum_opladningshastighed
+        name: Minimum charge rate
+        icon: mdi:battery-charging-low
+      - entity: select.solar_ai_ev_maksimum_opladningshastighed
+        name: Maximum charge rate
+        icon: mdi:battery-charging-high
+      - entity: number.solar_ai_batteri_forst_taerskel_ev_venter_til_husbatteriet_nar_dette_niveau
+        name: Battery-first threshold (%)
+        icon: mdi:battery-arrow-up
+      - entity: number.solar_ai_trefaset_skift_taerskel_kw
+        name: Three-phase switch threshold (kW)
+        icon: mdi:sine-wave
+      - entity: number.solar_ai_faseudjaevnings_vindue_min
+        name: Phase-averaging window (min)
+        icon: mdi:chart-bell-curve
+      - entity: select.solar_ai_stromtrin_opladning
+        name: Charging current step
+        icon: mdi:current-ac
+      - entity: number.solar_ai_faseskift_interval_min
+        name: Phase-switch interval (min)
+        icon: mdi:timer-sync-outline
+      - entity: number.solar_ai_override_rampe_trin_s
+        name: Override ramp step (s)
+        icon: mdi:speedometer
+      - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
+        name: Default mode on connect
+        icon: mdi:car-connected
+    - type: markdown
+      content: '### Charger info'
+    - type: markdown
+      content: '{% set i = states.sensor.solar_ai_lader_info %}{% if i is none or i.state in [''unavailable'',''unknown'',''Unknown''] %}*Charger not connected yet*{% else %}* Vendor: **{{ i.attributes.vendor }}** · Model: **{{ i.attributes.model }}**
 
+        * Firmware: {{ i.attributes.firmware }}
 
-            _{{ reason }}_{% endif %}{% endif %}'
-      - type: markdown
-        content: '{% set pv = states(''sensor.pv_power_foxessmodbus'') | float(0) %}{% set load = states(''sensor.foxessmodbus_load_power'') | float(0) %}{% set bat_c = states(''sensor.foxessmodbus_battery_charge'') | float(0) %}{% set bat_d = states(''sensor.foxessmodbus_battery_discharge'') | float(0) %}{% set imp = states(''sensor.foxessmodbus_grid_consumption'') | float(0) %}{% set exp = states(''sensor.foxessmodbus_feed_in'') | float(0) %}{% set ev = states(''sensor.solar_ai_lader_effekt'') | float(0) %}{% set soc = states(''sensor.foxessmodbus_battery_soc_1'') | int(0) %}{% set ev_status = states(''sensor.solar_ai_lader_status'') %}{# load incl. EV — subtract EV for true household load #}{% set house = [load - ev, 0] | max %}{% set total_in = pv + bat_d + imp %}{% set total_out = house + ev + bat_c + exp %}
+        * Sidst kontaktet: {{ i.attributes.seconds_since_seen }} sec ago{% endif %}'
+    - type: custom:solar-ai-entities-card
+      title: Solar forecast accuracy
+      icon_color: amber
+      show_header_toggle: false
+      entities:
+      - entity: sensor.solar_ai_solcelleprognose_fejl_nu
+        name: Live solar correction
+    - type: custom:solar-ai-chart-card
+      title: Solar forecast (48h)
+      icon: mdi:weather-partly-cloudy
+      icon_color: amber
+      height: 220
+      x_type: timestamp
+      unit: kW
+      now_marker: true
+      series:
+      - entity: sensor.solar_ai_solcelleprognose_48t_graf
+        path: slots
+        x: start
+        y: raw_kw
+        type: bar
+        color: '#b0bec580'
+        name: Raw (Solcast)
+      - entity: sensor.solar_ai_solcelleprognose_48t_graf
+        path: slots
+        x: start
+        y: adj_kw
+        type: line
+        curve: smooth
+        color: var(--warning-color)
+        name: Adjusted
+    - type: conditional
+      conditions:
+      - condition: state
+        entity: select.solar_ai_ev_opladningstilstand
+        state_not: scheduled
+      card:
+        type: markdown
+        content: '## ⚠️ Schedules are inactive right now
 
-          ## ⚡ Energi-flow  ·  🔋 {{ soc }}%  ·  ☀️ {{ ''%.2f'' | format(pv) }} kW
+          Schedules only control charging when EV mode is "Scheduled". Current mode: {{ states(''sensor.solar_ai_ev_aktuel_tilstand'') }}. Changes here do not affect active charging — select "Scheduled" above to use the schedules.'
+    - type: markdown
+      content: '### Scheduled charging
 
+        4 schedules. Enable one or more and set EV mode to "Scheduled" to use them.'
+    - type: markdown
+      content: '{% set slots = [1, 2, 3, 4] %}
 
-          | **⬇️ Ind ({{ ''%.2f'' | format(total_in) }} kW)** | | **⬆️ Ud ({{ ''%.2f'' | format(total_out) }} kW)** | |
+        | # | Active | Mode | Start | End |
 
-          |---|---:|---|---:|
+        |:-:|:-----:|:---------|:------|:-----|
 
-          | ☀️ Solceller | {{ ''%.2f'' | format(pv) }} | 🏠 Load (ekskl. EV) | {{ ''%.2f'' | format(house) }} |
+        {% for n in slots %}{% set enabled = is_state(''switch.solar_ai_skema_'' ~ n ~ ''_aktiveret'', ''on'') %}{% set mode = states(''select.solar_ai_skema_'' ~ n ~ ''_mode'') %}{% set start = states(''time.solar_ai_skema_'' ~ n ~ ''_starttid'') %}{% set end = states(''time.solar_ai_skema_'' ~ n ~ ''_sluttid'') %}{% set mark = ''✅'' if enabled else ''⛔'' %}
 
-          | 🔋 Battery aflader | {{ ''%.2f'' | format(bat_d) }} | 🚗 EV-lader | {{ ''%.2f'' | format(ev) }} |
-
-          | ⚡ Import fra elnet | {{ ''%.2f'' | format(imp) }} | 🔋 Battery oplader | {{ ''%.2f'' | format(bat_c) }} |
-
-          | | | ↗ Export til elnet | {{ ''%.2f'' | format(exp) }} |'
-      - type: vertical-stack
-        cards:
-        - type: custom:mushroom-title-card
-          title: Settings
-        - type: entities
-          icon: mdi:tune
-          show_header_toggle: false
-          entities:
-          - entity: select.solar_ai_ev_minimum_opladningshastighed
-            name: Minimum charge rate
-            icon: mdi:battery-charging-low
-          - entity: select.solar_ai_ev_maksimum_opladningshastighed
-            name: Maximum charge rate
-            icon: mdi:battery-charging-high
-          - entity: number.solar_ai_batteri_forst_taerskel_ev_venter_til_husbatteriet_nar_dette_niveau
-            name: Battery-first threshold (%)
-            icon: mdi:battery-arrow-up
-          - entity: number.solar_ai_trefaset_skift_taerskel_kw
-            name: Three-phase switch threshold (kW)
-            icon: mdi:sine-wave
-          - entity: number.solar_ai_faseudjaevnings_vindue_min
-            name: Phase-averaging window (min)
-            icon: mdi:chart-bell-curve
-          - entity: select.solar_ai_stromtrin_opladning
-            name: Charging current step
-            icon: mdi:current-ac
-          - entity: number.solar_ai_faseskift_interval_min
-            name: Phase-switch interval (min)
-            icon: mdi:timer-sync-outline
-          - entity: number.solar_ai_override_rampe_trin_s
-            name: Override ramp step (s)
-            icon: mdi:speedometer
-          - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
-            name: Default mode on connect
-            icon: mdi:car-connected
-      - type: vertical-stack
-        cards:
-        - type: custom:mushroom-title-card
-          title: Charger info
-        - type: markdown
-          content: '{% set i = states.sensor.solar_ai_lader_info %}{% if i is none or i.state in [''unavailable'',''unknown'',''Unknown''] %}*Charger not connected yet*{% else %}* Vendor: **{{ i.attributes.vendor }}** · Model: **{{ i.attributes.model }}**
-
-            * Firmware: {{ i.attributes.firmware }}
-
-            * Sidst kontaktet: {{ i.attributes.seconds_since_seen }} sec ago{% endif %}'
-        - type: custom:mushroom-title-card
-          title: Solar forecast
-        - type: markdown
-          content: '{% set today = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_kwh'') | float(0) %}{% set today_raw = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''today_remaining_raw_kwh'') | float(0) %}{% set tom = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_kwh'') | float(0) %}{% set tom_raw = state_attr(''sensor.solar_ai_solcelleprognose_48t_graf'',''tomorrow_raw_kwh'') | float(0) %}{% set actual = states(''sensor.foxessmodbus_solar_energy_today'') | float(0) %}<!-- 🌞 Solar forecast — totals -->
-
-            | | | |
-
-            |---|---:|---:|
-
-            | ☀️ **Today total** | Produced **{{ ''%.1f'' | format(actual) }} kWh** + rest **{{ ''%.1f'' | format(today) }} kWh** | = **{{ ''%.1f'' | format(actual + today) }} kWh** |
-
-            | 🔆 **Rest of today** | Adjusted forecast: **{{ ''%.1f'' | format(today) }} kWh** | _Raw forecast: {{ ''%.1f'' | format(today_raw) }} kWh_ |
-
-            | 📅 **I morgen** | Adjusted forecast: **{{ ''%.1f'' | format(tom) }} kWh** | _Raw forecast: {{ ''%.1f'' | format(tom_raw) }} kWh_ |
-
-            '
-        - type: custom:mushroom-template-card
-          primary: Live solar correction
-          secondary: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}Waiting for first 15-min slot…{% else %}{{ ''%+.0f'' | format(p) }}%  ·  {{ n }} slot{{ ''s'' if n != 1 else '''' }}  ·  damping over 2 h{% endif %}'
-          icon: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}mdi:timer-sand{% elif p > 10 %}mdi:weather-sunny{% elif p < -10 %}mdi:weather-cloudy{% else %}mdi:chart-bell-curve{% endif %}'
-          icon_color: '{% set p = states(''sensor.solar_ai_solcelleprognose_fejl_nu'') | float(0) %}{% set n = state_attr(''sensor.solar_ai_solcelleprognose_fejl_nu'',''samples'') | int(0) %}{% if n == 0 %}grey{% elif p > 10 %}green{% elif p > -10 %}grey{% elif p > -25 %}amber{% else %}red{% endif %}'
-          entity: sensor.solar_ai_solcelleprognose_fejl_nu
-          tap_action:
-            action: more-info
-      - type: custom:apexcharts-card
-        header:
-          show: true
-          title: Solar forecast (48 h)
-          show_states: false
-        graph_span: 48h
-        span:
-          start: hour
-          offset: -0h
-        now:
-          show: true
-          label: Nu
-          color: '#9aa0a6'
-        yaxis:
-        - min: 0
-          decimals: 1
-          apex_config:
-            title:
-              text: kW
-            forceNiceScale: true
-        apex_config:
-          chart:
-            height: 280
-          legend:
-            show: true
-            position: top
-          xaxis:
-            labels:
-              datetimeUTC: false
-              format: ddd HH
-          stroke:
-            curve: smooth
-            width:
-            - 0
-            - 3
-        series:
-        - entity: sensor.solar_ai_solcelleprognose_48t_graf
-          name: Raw forecast (Solcast)
-          type: column
-          color: '#b0bec5'
-          opacity: 0.55
-          show:
-            in_header: false
-            legend_value: false
-          data_generator: return (entity.attributes.slots || []).map(s => [new Date(s.start).getTime(), s.raw_kw]);
-        - entity: sensor.solar_ai_solcelleprognose_48t_graf
-          name: Adjusted (solar forecast)
-          type: line
-          color: '#f9a825'
-          stroke_width: 3
-          show:
-            in_header: false
-            legend_value: false
-          data_generator: return (entity.attributes.slots || []).map(s => [new Date(s.start).getTime(), s.adj_kw]);
-      - type: conditional
-        conditions:
-        - condition: state
-          entity: select.solar_ai_ev_opladningstilstand
-          state_not: scheduled
-        card:
-          type: custom:mushroom-template-card
-          primary: Schedules are inactive right now
-          secondary: 'Schedules only control charging when EV mode is "Scheduled". Current mode: {{ states(''sensor.solar_ai_ev_aktuel_tilstand'') }}. Changes here do not affect active charging — select "Scheduled" above to use the schedules.'
-          icon: mdi:calendar-alert
-          icon_color: orange
-          multiline_secondary: true
-          fill_container: true
-      - type: custom:mushroom-title-card
-        title: Scheduled charging
-        subtitle: 4 schedules. Enable one or more and set EV mode to "Scheduled" to use them.
-      - type: markdown
-        content: '{% set slots = [1, 2, 3, 4] %}
-
-          | # | Active | Mode | Start | End |
-
-          |:-:|:-----:|:---------|:------|:-----|
-
-          {% for n in slots %}{% set enabled = is_state(''switch.solar_ai_skema_'' ~ n ~ ''_aktiveret'', ''on'') %}{% set mode = states(''select.solar_ai_skema_'' ~ n ~ ''_mode'') %}{% set start = states(''time.solar_ai_skema_'' ~ n ~ ''_starttid'') %}{% set end = states(''time.solar_ai_skema_'' ~ n ~ ''_sluttid'') %}{% set mark = ''✅'' if enabled else ''⛔'' %}
-
-          | {{ n }} | {{ mark }} | {{ mode }} | {{ start[:5] }} | {{ end[:5] }} |{% endfor %}'
-      - type: entities
-        title: Schedule 1
-        icon: mdi:calendar-clock
-        show_header_toggle: false
-        entities:
-        - entity: switch.solar_ai_skema_1_aktiveret
-          name: Enabled
-        - entity: select.solar_ai_skema_1_tilstand
-          name: Mode
-        - entity: time.solar_ai_skema_1_starttid
-          name: Start time
-        - entity: time.solar_ai_skema_1_sluttid
-          name: End time
-        - entity: switch.solar_ai_skema_1_mandag
-          name: Monday
-        - entity: switch.solar_ai_skema_1_tirsdag
-          name: Tuesday
-        - entity: switch.solar_ai_skema_1_onsdag
-          name: Wednesday
-        - entity: switch.solar_ai_skema_1_torsdag
-          name: Thursday
-        - entity: switch.solar_ai_skema_1_fredag
-          name: Friday
-        - entity: switch.solar_ai_skema_1_lordag
-          name: Saturday
-        - entity: switch.solar_ai_skema_1_sondag
-          name: Sunday
-      - type: entities
-        title: Schedule 2
-        icon: mdi:calendar-clock
-        show_header_toggle: false
-        entities:
-        - entity: switch.solar_ai_skema_2_aktiveret
-          name: Enabled
-        - entity: select.solar_ai_skema_2_tilstand
-          name: Mode
-        - entity: time.solar_ai_skema_2_starttid
-          name: Start time
-        - entity: time.solar_ai_skema_2_sluttid
-          name: End time
-        - entity: switch.solar_ai_skema_2_mandag
-          name: Monday
-        - entity: switch.solar_ai_skema_2_tirsdag
-          name: Tuesday
-        - entity: switch.solar_ai_skema_2_onsdag
-          name: Wednesday
-        - entity: switch.solar_ai_skema_2_torsdag
-          name: Thursday
-        - entity: switch.solar_ai_skema_2_fredag
-          name: Friday
-        - entity: switch.solar_ai_skema_2_lordag
-          name: Saturday
-        - entity: switch.solar_ai_skema_2_sondag
-          name: Sunday
-      - type: entities
-        title: Schedule 3
-        icon: mdi:calendar-clock
-        show_header_toggle: false
-        entities:
-        - entity: switch.solar_ai_skema_3_aktiveret
-          name: Enabled
-        - entity: select.solar_ai_skema_3_tilstand
-          name: Mode
-        - entity: time.solar_ai_skema_3_starttid
-          name: Start time
-        - entity: time.solar_ai_skema_3_sluttid
-          name: End time
-        - entity: switch.solar_ai_skema_3_mandag
-          name: Monday
-        - entity: switch.solar_ai_skema_3_tirsdag
-          name: Tuesday
-        - entity: switch.solar_ai_skema_3_onsdag
-          name: Wednesday
-        - entity: switch.solar_ai_skema_3_torsdag
-          name: Thursday
-        - entity: switch.solar_ai_skema_3_fredag
-          name: Friday
-        - entity: switch.solar_ai_skema_3_lordag
-          name: Saturday
-        - entity: switch.solar_ai_skema_3_sondag
-          name: Sunday
-      - type: entities
-        title: Schedule 4
-        icon: mdi:calendar-clock
-        show_header_toggle: false
-        entities:
-        - entity: switch.solar_ai_skema_4_aktiveret
-          name: Enabled
-        - entity: select.solar_ai_skema_4_tilstand
-          name: Mode
-        - entity: time.solar_ai_skema_4_starttid
-          name: Start time
-        - entity: time.solar_ai_skema_4_sluttid
-          name: End time
-        - entity: switch.solar_ai_skema_4_mandag
-          name: Monday
-        - entity: switch.solar_ai_skema_4_tirsdag
-          name: Tuesday
-        - entity: switch.solar_ai_skema_4_onsdag
-          name: Wednesday
-        - entity: switch.solar_ai_skema_4_torsdag
-          name: Thursday
-        - entity: switch.solar_ai_skema_4_fredag
-          name: Friday
-        - entity: switch.solar_ai_skema_4_lordag
-          name: Saturday
-        - entity: switch.solar_ai_skema_4_sondag
-          name: Sunday
+        | {{ n }} | {{ mark }} | {{ mode }} | {{ start[:5] }} | {{ end[:5] }} |{% endfor %}'
+    - type: custom:solar-ai-entities-card
+      title: Schedule 1
+      icon_color: purple
+      icon: mdi:calendar-clock
+      show_header_toggle: false
+      entities:
+      - entity: switch.solar_ai_skema_1_aktiveret
+        name: Enabled
+      - entity: select.solar_ai_skema_1_tilstand
+        name: Mode
+      - entity: time.solar_ai_skema_1_starttid
+        name: Start time
+      - entity: time.solar_ai_skema_1_sluttid
+        name: End time
+      - entity: switch.solar_ai_skema_1_mandag
+        name: Monday
+      - entity: switch.solar_ai_skema_1_tirsdag
+        name: Tuesday
+      - entity: switch.solar_ai_skema_1_onsdag
+        name: Wednesday
+      - entity: switch.solar_ai_skema_1_torsdag
+        name: Thursday
+      - entity: switch.solar_ai_skema_1_fredag
+        name: Friday
+      - entity: switch.solar_ai_skema_1_lordag
+        name: Saturday
+      - entity: switch.solar_ai_skema_1_sondag
+        name: Sunday
+    - type: custom:solar-ai-entities-card
+      title: Schedule 2
+      icon_color: purple
+      icon: mdi:calendar-clock
+      show_header_toggle: false
+      entities:
+      - entity: switch.solar_ai_skema_2_aktiveret
+        name: Enabled
+      - entity: select.solar_ai_skema_2_tilstand
+        name: Mode
+      - entity: time.solar_ai_skema_2_starttid
+        name: Start time
+      - entity: time.solar_ai_skema_2_sluttid
+        name: End time
+      - entity: switch.solar_ai_skema_2_mandag
+        name: Monday
+      - entity: switch.solar_ai_skema_2_tirsdag
+        name: Tuesday
+      - entity: switch.solar_ai_skema_2_onsdag
+        name: Wednesday
+      - entity: switch.solar_ai_skema_2_torsdag
+        name: Thursday
+      - entity: switch.solar_ai_skema_2_fredag
+        name: Friday
+      - entity: switch.solar_ai_skema_2_lordag
+        name: Saturday
+      - entity: switch.solar_ai_skema_2_sondag
+        name: Sunday
+    - type: custom:solar-ai-entities-card
+      title: Schedule 3
+      icon_color: purple
+      icon: mdi:calendar-clock
+      show_header_toggle: false
+      entities:
+      - entity: switch.solar_ai_skema_3_aktiveret
+        name: Enabled
+      - entity: select.solar_ai_skema_3_tilstand
+        name: Mode
+      - entity: time.solar_ai_skema_3_starttid
+        name: Start time
+      - entity: time.solar_ai_skema_3_sluttid
+        name: End time
+      - entity: switch.solar_ai_skema_3_mandag
+        name: Monday
+      - entity: switch.solar_ai_skema_3_tirsdag
+        name: Tuesday
+      - entity: switch.solar_ai_skema_3_onsdag
+        name: Wednesday
+      - entity: switch.solar_ai_skema_3_torsdag
+        name: Thursday
+      - entity: switch.solar_ai_skema_3_fredag
+        name: Friday
+      - entity: switch.solar_ai_skema_3_lordag
+        name: Saturday
+      - entity: switch.solar_ai_skema_3_sondag
+        name: Sunday
+    - type: custom:solar-ai-entities-card
+      title: Schedule 4
+      icon_color: purple
+      icon: mdi:calendar-clock
+      show_header_toggle: false
+      entities:
+      - entity: switch.solar_ai_skema_4_aktiveret
+        name: Enabled
+      - entity: select.solar_ai_skema_4_tilstand
+        name: Mode
+      - entity: time.solar_ai_skema_4_starttid
+        name: Start time
+      - entity: time.solar_ai_skema_4_sluttid
+        name: End time
+      - entity: switch.solar_ai_skema_4_mandag
+        name: Monday
+      - entity: switch.solar_ai_skema_4_tirsdag
+        name: Tuesday
+      - entity: switch.solar_ai_skema_4_onsdag
+        name: Wednesday
+      - entity: switch.solar_ai_skema_4_torsdag
+        name: Thursday
+      - entity: switch.solar_ai_skema_4_fredag
+        name: Friday
+      - entity: switch.solar_ai_skema_4_lordag
+        name: Saturday
+      - entity: switch.solar_ai_skema_4_sondag
+        name: Sunday
 - title: Prices & Plan
   path: priser
   icon: mdi:currency-eur
   subview: true
   panel: true
   cards:
-  - type: custom:mod-card
-    card_mod:
-      style: ':host { max-width: 1000px; margin: 0 auto; display: block; }
+  - type: custom:solar-ai-view-card
+    cards:
+    - type: markdown
+      title: Price breakdown
+      content: '{% set spot_markup = states(''number.solar_ai_spotpris_tillaeg_elhandlertillaeg'') | float(0) %}
 
-        '
-    card:
-      type: vertical-stack
-      cards:
-      - type: markdown
-        title: Price breakdown
-        content: '{% set spot_markup = states(''number.solar_ai_spotpris_tillaeg_elhandlertillaeg'') | float(0) %}
+        {% set export_fee = states(''number.solar_ai_salgsgebyr_pr_kwh'') | float(0) %}
 
-          {% set export_fee = states(''number.solar_ai_salgsgebyr_pr_kwh'') | float(0) %}
+        {% set feed_in = states(''sensor.solar_ai_indfodningstarif_dso_energinet'') | float(0) %}
 
-          {% set feed_in = states(''sensor.solar_ai_indfodningstarif_dso_energinet'') | float(0) %}
+        {% set export_price = states(''sensor.battery_arbitrage_eksportpris'') | float(0) %}
 
-          {% set export_price = states(''sensor.battery_arbitrage_eksportpris'') | float(0) %}
+        {% set spot_ex_vat = export_price + export_fee + feed_in %}
 
-          {% set spot_ex_vat = export_price + export_fee + feed_in %}
+        {% set tariff_total = states(''sensor.solar_ai_nettarif_denne_time'') | float(0) %}
 
-          {% set tariff_total = states(''sensor.solar_ai_nettarif_denne_time'') | float(0) %}
+        {% set elafgift = states(''number.solar_ai_elafgift_dkk_kwh'') | float(0) %}
 
-          {% set elafgift = states(''number.solar_ai_elafgift_dkk_kwh'') | float(0) %}
+        {% set network_tariff = tariff_total - elafgift %}
 
-          {% set network_tariff = tariff_total - elafgift %}
+        {% set vat_pct = states(''number.solar_ai_moms_pa_kob'') | float(25) %}
 
-          {% set vat_pct = states(''number.solar_ai_moms_pa_kob'') | float(25) %}
+        {% set vat_factor = 1 + vat_pct / 100 %}
 
-          {% set vat_factor = 1 + vat_pct / 100 %}
+        {% set pretax_buy = spot_ex_vat + spot_markup + tariff_total %}
 
-          {% set pretax_buy = spot_ex_vat + spot_markup + tariff_total %}
+        {% set total_buy = pretax_buy * vat_factor %}
 
-          {% set total_buy = pretax_buy * vat_factor %}
+        {% set spread = states(''sensor.battery_arbitrage_net_arbitrage_spread'') | float(0) %}
 
-          {% set spread = states(''sensor.battery_arbitrage_net_arbitrage_spread'') | float(0) %}
+        {% set min_spread = states(''number.solar_ai_minimum_arbitrage_spread'') | float(0.30) %}
 
-          {% set min_spread = states(''number.solar_ai_minimum_arbitrage_spread'') | float(0.30) %}
+        {% set min_export = states(''sensor.solar_ai_minimum_eksportpris'') | float(0) %}
 
-          {% set min_export = states(''sensor.solar_ai_minimum_eksportpris'') | float(0) %}
 
+        #### 📈 Sell price (export)
 
-          #### 📈 Sell price (export)
+        | | DKK/kWh |
 
-          | | DKK/kWh |
+        |:---|---:|
 
-          |:---|---:|
+        | Spot price (excl. VAT) | {{ ''%.3f'' | format(spot_ex_vat) }} |
+
+        | − Sell fee | {{ ''%.3f'' | format(export_fee) }} |
+
+        | − Feed-in tariff | {{ ''%.3f'' | format(feed_in) }} |
+
+        | **Net export price** | **{{ ''%.3f'' | format(export_price) }}** |
 
-          | Spot price (excl. VAT) | {{ ''%.3f'' | format(spot_ex_vat) }} |
 
-          | − Sell fee | {{ ''%.3f'' | format(export_fee) }} |
+        #### 🔌 Buy price (this hour)
 
-          | − Feed-in tariff | {{ ''%.3f'' | format(feed_in) }} |
+        | | DKK/kWh |
 
-          | **Net export price** | **{{ ''%.3f'' | format(export_price) }}** |
+        |:---|---:|
 
+        | Spot price (excl. VAT) | {{ ''%.3f'' | format(spot_ex_vat) }} |
 
-          #### 🔌 Buy price (this hour)
+        | + Spot-price markup | {{ ''%.3f'' | format(spot_markup) }} |
 
-          | | DKK/kWh |
+        | + Grid tariff | {{ ''%.3f'' | format(network_tariff) }} |
 
-          |:---|---:|
+        | + Electricity duty | {{ ''%.3f'' | format(elafgift) }} |
 
-          | Spot price (excl. VAT) | {{ ''%.3f'' | format(spot_ex_vat) }} |
+        | + VAT ({{ vat_pct | int }} %) | {{ ''%.3f'' | format(pretax_buy * vat_pct / 100) }} |
 
-          | + Spot-price markup | {{ ''%.3f'' | format(spot_markup) }} |
+        | **Total buy price** | **{{ ''%.3f'' | format(total_buy) }}** |
 
-          | + Grid tariff | {{ ''%.3f'' | format(network_tariff) }} |
 
-          | + Electricity duty | {{ ''%.3f'' | format(elafgift) }} |
+        #### ⚖️ Arbitrage spread
 
-          | + VAT ({{ vat_pct | int }} %) | {{ ''%.3f'' | format(pretax_buy * vat_pct / 100) }} |
-
-          | **Total buy price** | **{{ ''%.3f'' | format(total_buy) }}** |
-
-
-          #### ⚖️ Arbitrage spread
-
-          **{{ ''%.3f'' | format(spread) }} DKK/kWh** {% if spread >= min_spread %}✅ above threshold ({{ ''%.2f'' | format(min_spread) }}){% else %}⛔ below threshold ({{ ''%.2f'' | format(min_spread) }}){% endif %}'
-      - type: custom:apexcharts-card
-        header:
-          title: 24h priskort
-          show: true
-        graph_span: 24h
-        span:
-          start: day
-        apex_config:
-          chart:
-            height: 380
-            type: bar
-          plotOptions:
-            bar:
-              borderRadius: 3
-              columnWidth: 80%
-          legend:
-            position: bottom
-          dataLabels:
-            enabled: false
-          stroke:
-            width: 0
-          xaxis:
-            type: datetime
-            labels:
-              datetimeFormatter:
-                hour: HH:mm
-          tooltip:
-            x:
-              format: HH:mm
-            y:
-              formatter: EVAL:function(value) { if (value == null || isNaN(value)) return ''; return value.toFixed(2).replace('.', ',') + ' DKK/kWh'; }
-        yaxis:
-        - id: price
-          decimals: 2
-          apex_config:
-            title:
-              text: DKK/kWh
-            labels:
-              formatter: EVAL:function(value) { if (value == null || isNaN(value)) return ''; return value.toFixed(2).replace('.', ','); }
-        series:
-        - entity: sensor.solar_ai_24h_priskort
-          name: Buy (incl. VAT + tariff)
-          type: column
-          color: '#e8453c'
-          data_generator: "const slots = entity.attributes.slots || [];\nconst today = new Date();\ntoday.setHours(0, 0, 0, 0);\nreturn slots.map(s => [\n  today.getTime() + s.h * 3600 * 1000 + (s.m || 0) * 60 * 1000,\n  s.buy\n]);"
-        - entity: sensor.solar_ai_24h_priskort
-          name: Sell (export)
-          type: column
-          color: '#3e9c4d'
-          data_generator: "const slots = entity.attributes.slots || [];\nconst today = new Date();\ntoday.setHours(0, 0, 0, 0);\nreturn slots.map(s => [\n  today.getTime() + s.h * 3600 * 1000 + (s.m || 0) * 60 * 1000,\n  s.sell\n]);"
-      - type: markdown
-        content: '## Buy-price matrix (DKK/kWh)
-
-          {% set slots = state_attr(''sensor.solar_ai_kobspris_prognose'',''slots'') or [] %}{% set today = now().date() %}{% set tom = today + timedelta(days=1) %}{% macro cell(v) %}{% if v is none %}·{% elif v<1.0 %}🟢{{''%.2f''|format(v)}}{% elif v<1.5 %}🟡{{''%.2f''|format(v)}}{% elif v<2.0 %}🟠{{''%.2f''|format(v)}}{% else %}🔴{{''%.2f''|format(v)}}{% endif %}{% endmacro %}
-
-          | | {% for h in range(24) %}{{''%02d''|format(h)}} | {% endfor %}
-
-          |--|{% for h in range(24) %}:--:|{% endfor %}
-
-          | **Today** | {% for h in range(24) %}{% set v=namespace(b=none) %}{% for s in slots %}{% set d=s.iso|as_datetime|as_local %}{% if d.hour==h and d.date()==today %}{% set v.b=s.buy %}{% endif %}{% endfor %}{{ cell(v.b) }} | {% endfor %}
-
-          | **Tomorrow** | {% for h in range(24) %}{% set v=namespace(b=none) %}{% for s in slots %}{% set d=s.iso|as_datetime|as_local %}{% if d.hour==h and d.date()==tom %}{% set v.b=s.buy %}{% endif %}{% endfor %}{{ cell(v.b) }} | {% endfor %}'
-        card_mod:
-          style:
-            .: 'ha-card { overflow-x: auto; }'
-            ha-markdown $: 'table { font-size: 13px; white-space: nowrap; border-collapse: collapse; min-width: max-content; }
-
-              th, td { padding: 4px 8px; text-align: center; }
-
-              td:first-child, th:first-child { position: sticky; left: 0; background: var(--ha-card-background, var(--card-background-color, white)); font-weight: 600; }'
-      - type: markdown
-        content: '## Sell-price matrix (DKK/kWh)
-
-          {% set slots = state_attr(''sensor.solar_ai_kobspris_prognose'',''slots'') or [] %}{% set today = now().date() %}{% set tom = today + timedelta(days=1) %}{% macro cell(v) %}{% if v is none %}·{% elif v>=1.0 %}🟢{{''%.2f''|format(v)}}{% elif v>=0.7 %}🟡{{''%.2f''|format(v)}}{% elif v>=0.4 %}🟠{{''%.2f''|format(v)}}{% else %}🔴{{''%.2f''|format(v)}}{% endif %}{% endmacro %}
-
-          | | {% for h in range(24) %}{{''%02d''|format(h)}} | {% endfor %}
-
-          |--|{% for h in range(24) %}:--:|{% endfor %}
-
-          | **Today** | {% for h in range(24) %}{% set v=namespace(b=none) %}{% for s in slots %}{% set d=s.iso|as_datetime|as_local %}{% if d.hour==h and d.date()==today %}{% set v.b=s.sell %}{% endif %}{% endfor %}{{ cell(v.b) }} | {% endfor %}
-
-          | **Tomorrow** | {% for h in range(24) %}{% set v=namespace(b=none) %}{% for s in slots %}{% set d=s.iso|as_datetime|as_local %}{% if d.hour==h and d.date()==tom %}{% set v.b=s.sell %}{% endif %}{% endfor %}{{ cell(v.b) }} | {% endfor %}'
-        card_mod:
-          style:
-            .: 'ha-card { overflow-x: auto; }'
-            ha-markdown $: 'table { font-size: 13px; white-space: nowrap; border-collapse: collapse; min-width: max-content; }
-
-              th, td { padding: 4px 8px; text-align: center; }
-
-              td:first-child, th:first-child { position: sticky; left: 0; background: var(--ha-card-background, var(--card-background-color, white)); font-weight: 600; }'
-      - type: entities
-        title: 24h prisstatistik
-        icon: mdi:chart-bar
-        show_header_toggle: false
-        entities:
-        - entity: binary_sensor.solar_ai_prisdata_forringet
-          name: Price-data status
-        - entity: sensor.battery_arbitrage_24h_prisminimum
-          name: Minimum
-        - entity: sensor.battery_arbitrage_24h_prismaksimum
-          name: Maximum
-        - entity: sensor.battery_arbitrage_24h_prisgennemsnit
-          name: Average
-        - entity: sensor.battery_arbitrage_24h_pris_25_percentil
-          name: 25th percentile
-        - entity: sensor.battery_arbitrage_24h_pris_75_percentil
-          name: 75th percentile
-        - type: divider
-        - entity: sensor.battery_arbitrage_eksportpris
-          name: Export price now
-        - entity: sensor.battery_arbitrage_naeste_slots_pris
-          name: Next slot price
-        - entity: sensor.battery_arbitrage_net_arbitrage_spread
-          name: Net arbitrage spread
-      - type: markdown
-        title: Plan for today
-        content: '**{{ states(''sensor.solar_ai_dagens_plan'') }}**
-
-
-          {% set charge_hrs = state_attr(''sensor.solar_ai_dagens_plan'', ''charge_hours_today'') | default([]) %}
-
-          {% set export_hrs = state_attr(''sensor.solar_ai_dagens_plan'', ''export_hours_today'') | default([]) %}
-
-          {% set ex_m = state_attr(''sensor.solar_ai_dagens_plan'', ''export_hours_tomorrow'') | default([]) %}
-
-          {% set ch_m = state_attr(''sensor.solar_ai_dagens_plan'', ''charge_hours_tomorrow'') | default([]) %}
-
-          {% set cur_h = now().hour %}
-
-          {% if charge_hrs or export_hrs %}
-
-          | ⚡ Opladning | 💰 Export |
-
-          | :-- | :-- |
-
-          {% set nrows = [charge_hrs | length, export_hrs | length] | max %}{% for i in range(nrows) %}{% set ch = ''**'' + (''%02d:00'' | format(charge_hrs[i])) + ''**'' if i < (charge_hrs | length) else '''' %}{% set ex = ''**'' + (''%02d:00'' | format(export_hrs[i])) + ''**'' if i < (export_hrs | length) else '''' %}
-
-          | {{ ch }} | {{ ex }} |{% endfor %}
-
-
-          | 00 | 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08 | 09 | 10 | 11 |
-
-          |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-
-          {% set ns = namespace(r='''') %}{% for h in range(12) %}{% set sym = ''⚡'' if h in charge_hrs else (''💰'' if h in export_hrs else (''◀'' if h == cur_h else ''·'')) %}{% set ns.r = ns.r + ''| '' + sym + '' '' %}{% endfor %}{{ ns.r }}|
-
-          | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 |
-
-          |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-
-          {% set ns = namespace(r='''') %}{% for h in range(12, 24) %}{% set sym = ''⚡'' if h in charge_hrs else (''💰'' if h in export_hrs else (''◀'' if h == cur_h else ''·'')) %}{% set ns.r = ns.r + ''| '' + sym + '' '' %}{% endfor %}{{ ns.r }}|
-
-
-          *Timeline shows **today** · ⚡ charging · 💰 export · ◀ now*
-
-          {% if ch_m or ex_m %}**Tomorrow:**{% if ch_m %} ⚡ {{ ch_m | join(''h, '') }}h{% endif %}{% if ex_m %} 💰 {{ ex_m | join(''h, '') }}h{% endif %}{% endif %}
-
-          {% else %}
-
-          *No plan data*
-
-          {% endif %}'
-      - type: entities
-        title: Decision conditions
-        icon: mdi:checkbox-marked-circle-outline
-        show_header_toggle: false
-        entities:
-        - entity: binary_sensor.battery_arbitrage_bor_eksportere
-          name: Should export
-        - entity: binary_sensor.battery_arbitrage_bor_net_oplade
-          name: Should grid-charge
-        - entity: binary_sensor.battery_arbitrage_sol_fylder_batteri
-          name: Solar filling battery
-        - entity: binary_sensor.battery_arbitrage_tilstedevaerelse
-          name: Presence
-      - type: custom:mushroom-title-card
-        title: Export income
-        subtitle: Use the Energy dashboard for arbitrary from/to periods.
-      - type: custom:mushroom-chips-card
-        alignment: center
-        chips:
-        - type: template
-          icon: mdi:cash-clock
-          icon_color: green
-          entity: sensor.solar_ai_eksport_indtaegt
-          content: Today {{ '%.0f' | format(state_attr('sensor.solar_ai_eksport_indtaegt','today') | float(0)) }} DKK
-          tap_action:
-            action: more-info
-        - type: template
-          icon: mdi:calendar-week
-          icon_color: green
-          entity: sensor.solar_ai_eksport_indtaegt
-          content: 7 d {{ '%.0f' | format(state_attr('sensor.solar_ai_eksport_indtaegt','last_7_days') | float(0)) }} DKK
-          tap_action:
-            action: more-info
-        - type: template
-          icon: mdi:calendar-month
-          icon_color: green
-          entity: sensor.solar_ai_eksport_indtaegt
-          content: Month {{ '%.0f' | format(state_attr('sensor.solar_ai_eksport_indtaegt','this_month') | float(0)) }} DKK
-          tap_action:
-            action: more-info
-        - type: template
-          icon: mdi:calendar
-          icon_color: green
-          entity: sensor.solar_ai_eksport_indtaegt
-          content: Year {{ '%.0f' | format(state_attr('sensor.solar_ai_eksport_indtaegt','this_year') | float(0)) }} DKK
-          tap_action:
-            action: more-info
-      - type: custom:apexcharts-card
-        header:
-          show: true
-          title: Daily export income
-          show_states: false
-        graph_span: 60d
-        span:
-          end: day
-        apex_config:
-          chart:
-            height: 250
-          legend:
-            show: false
-          xaxis:
-            labels:
-              datetimeUTC: false
-        yaxis:
-        - decimals: 0
-          apex_config:
-            title:
-              text: DKK
-        series:
-        - entity: sensor.solar_ai_eksport_indtaegt
-          name: Income
-          type: column
-          color: '#3e9c4d'
-          data_generator: return (entity.attributes.daily || []).map(e => [new Date(e.date).getTime(), e.dkk]);
-      - type: custom:mushroom-title-card
-        title: Net grid balance
-        subtitle: Export income − all grid import (house + charging).
-      - type: custom:mushroom-chips-card
-        alignment: center
-        chips:
-        - type: template
-          icon: mdi:scale-balance
-          icon_color: blue
-          entity: sensor.solar_ai_netto_el_balance
-          content: Today {{ '%+.0f' | format(state_attr('sensor.solar_ai_netto_el_balance','today') | float(0)) }} DKK
-          tap_action:
-            action: more-info
-        - type: template
-          icon: mdi:scale-balance
-          icon_color: blue
-          entity: sensor.solar_ai_netto_el_balance
-          content: 7 d {{ '%+.0f' | format(state_attr('sensor.solar_ai_netto_el_balance','last_7_days') | float(0)) }} DKK
-          tap_action:
-            action: more-info
-        - type: template
-          icon: mdi:scale-balance
-          icon_color: blue
-          entity: sensor.solar_ai_netto_el_balance
-          content: Month {{ '%+.0f' | format(state_attr('sensor.solar_ai_netto_el_balance','this_month') | float(0)) }} DKK
-          tap_action:
-            action: more-info
-        - type: template
-          icon: mdi:scale-balance
-          icon_color: blue
-          entity: sensor.solar_ai_netto_el_balance
-          content: Year {{ '%+.0f' | format(state_attr('sensor.solar_ai_netto_el_balance','this_year') | float(0)) }} DKK
-          tap_action:
-            action: more-info
-      - type: custom:apexcharts-card
-        header:
-          show: true
-          title: Daily net balance
-          show_states: false
-        graph_span: 60d
-        span:
-          end: day
-        apex_config:
-          chart:
-            height: 250
-          legend:
-            show: false
-          xaxis:
-            labels:
-              datetimeUTC: false
-        yaxis:
-        - decimals: 0
-          apex_config:
-            title:
-              text: DKK
-        series:
-        - entity: sensor.solar_ai_netto_el_balance
-          name: Net
-          type: column
-          color: '#3d6fb4'
-          data_generator: return (entity.attributes.daily || []).map(e => [new Date(e.date).getTime(), e.dkk]);
+        **{{ ''%.3f'' | format(spread) }} DKK/kWh** {% if spread >= min_spread %}✅ above threshold ({{ ''%.2f'' | format(min_spread) }}){% else %}⛔ below threshold ({{ ''%.2f'' | format(min_spread) }}){% endif %}'
+    - type: custom:solar-ai-chart-card
+      title: 24h price card
+      icon: mdi:chart-bar
+      icon_color: amber
+      height: 260
+      x_type: hour_offset
+      unit: kr
+      series:
+      - entity: sensor.solar_ai_24h_priskort
+        path: slots
+        x: h
+        y: buy
+        type: bar
+        color: var(--error-color)
+        name: Buy (incl. VAT + tariff)
+      - entity: sensor.solar_ai_24h_priskort
+        path: slots
+        x: h
+        y: sell
+        type: bar
+        color: var(--success-color)
+        name: Sell (export)
+    - type: custom:solar-ai-grid-card
+      title: Buy-price matrix
+      icon: mdi:chart-bar
+      icon_color: red
+      subtitle: Today (top row) and tomorrow (bottom row), DKK/kWh.
+      mode: heatmap
+      entity: sensor.solar_ai_kobspris_prognose
+      path: slots
+      x_field: iso
+      value_field: buy
+      thresholds: [1.0, 1.5, 2.0]
+    - type: custom:solar-ai-grid-card
+      title: Sell-price matrix
+      icon: mdi:chart-bar
+      icon_color: green
+      subtitle: Today (top row) and tomorrow (bottom row), DKK/kWh.
+      mode: heatmap
+      entity: sensor.solar_ai_kobspris_prognose
+      path: slots
+      x_field: iso
+      value_field: sell
+      thresholds: [0.4, 0.7, 1.0]
+      invert: true
+    - type: custom:solar-ai-entities-card
+      title: 24h prisstatistik
+      icon_color: amber
+      icon: mdi:chart-bar
+      show_header_toggle: false
+      entities:
+      - entity: binary_sensor.solar_ai_prisdata_forringet
+        name: Price-data status
+      - entity: sensor.battery_arbitrage_24h_prisminimum
+        name: Minimum
+      - entity: sensor.battery_arbitrage_24h_prismaksimum
+        name: Maximum
+      - entity: sensor.battery_arbitrage_24h_prisgennemsnit
+        name: Average
+      - entity: sensor.battery_arbitrage_24h_pris_25_percentil
+        name: 25th percentile
+      - entity: sensor.battery_arbitrage_24h_pris_75_percentil
+        name: 75th percentile
+      - type: divider
+      - entity: sensor.battery_arbitrage_eksportpris
+        name: Export price now
+      - entity: sensor.battery_arbitrage_naeste_slots_pris
+        name: Next slot price
+      - entity: sensor.battery_arbitrage_net_arbitrage_spread
+        name: Net arbitrage spread
+    - type: markdown
+      title: Plan for today
+      content: '**{{ states(''sensor.solar_ai_dagens_plan'') }}**
+
+
+        {% set charge_hrs = state_attr(''sensor.solar_ai_dagens_plan'', ''charge_hours_today'') | default([]) %}
+
+        {% set export_hrs = state_attr(''sensor.solar_ai_dagens_plan'', ''export_hours_today'') | default([]) %}
+
+        {% set ex_m = state_attr(''sensor.solar_ai_dagens_plan'', ''export_hours_tomorrow'') | default([]) %}
+
+        {% set ch_m = state_attr(''sensor.solar_ai_dagens_plan'', ''charge_hours_tomorrow'') | default([]) %}
+
+        {% set cur_h = now().hour %}
+
+        {% if charge_hrs or export_hrs %}
+
+        | ⚡ Opladning | 💰 Export |
+
+        | :-- | :-- |
+
+        {% set nrows = [charge_hrs | length, export_hrs | length] | max %}{% for i in range(nrows) %}{% set ch = ''**'' + (''%02d:00'' | format(charge_hrs[i])) + ''**'' if i < (charge_hrs | length) else '''' %}{% set ex = ''**'' + (''%02d:00'' | format(export_hrs[i])) + ''**'' if i < (export_hrs | length) else '''' %}
+
+        | {{ ch }} | {{ ex }} |{% endfor %}
+
+
+        | 00 | 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08 | 09 | 10 | 11 |
+
+        |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+
+        {% set ns = namespace(r='''') %}{% for h in range(12) %}{% set sym = ''⚡'' if h in charge_hrs else (''💰'' if h in export_hrs else (''◀'' if h == cur_h else ''·'')) %}{% set ns.r = ns.r + ''| '' + sym + '' '' %}{% endfor %}{{ ns.r }}|
+
+        | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 |
+
+        |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+
+        {% set ns = namespace(r='''') %}{% for h in range(12, 24) %}{% set sym = ''⚡'' if h in charge_hrs else (''💰'' if h in export_hrs else (''◀'' if h == cur_h else ''·'')) %}{% set ns.r = ns.r + ''| '' + sym + '' '' %}{% endfor %}{{ ns.r }}|
+
+
+        *Timeline shows **today** · ⚡ charging · 💰 export · ◀ now*
+
+        {% if ch_m or ex_m %}**Tomorrow:**{% if ch_m %} ⚡ {{ ch_m | join(''h, '') }}h{% endif %}{% if ex_m %} 💰 {{ ex_m | join(''h, '') }}h{% endif %}{% endif %}
+
+        {% else %}
+
+        *No plan data*
+
+        {% endif %}'
+    - type: custom:solar-ai-entities-card
+      title: Decision conditions
+      icon_color: cyan
+      icon: mdi:checkbox-marked-circle-outline
+      show_header_toggle: false
+      entities:
+      - entity: binary_sensor.battery_arbitrage_bor_eksportere
+        name: Should export
+      - entity: binary_sensor.battery_arbitrage_bor_net_oplade
+        name: Should grid-charge
+      - entity: binary_sensor.battery_arbitrage_sol_fylder_batteri
+        name: Solar filling battery
+      - entity: binary_sensor.battery_arbitrage_tilstedevaerelse
+        name: Presence
+    - type: markdown
+      content: '### Export income
+
+        Use the Energy dashboard for arbitrary from/to periods.
+
+        | Today | 7 days | Month | Year |
+
+        |---:|---:|---:|---:|
+
+        | {{ ''%.0f'' | format(state_attr(''sensor.solar_ai_eksport_indtaegt'',''today'') | float(0)) }} kr | {{ ''%.0f'' | format(state_attr(''sensor.solar_ai_eksport_indtaegt'',''last_7_days'') | float(0)) }} kr | {{ ''%.0f'' | format(state_attr(''sensor.solar_ai_eksport_indtaegt'',''this_month'') | float(0)) }} kr | {{ ''%.0f'' | format(state_attr(''sensor.solar_ai_eksport_indtaegt'',''this_year'') | float(0)) }} kr |'
+    - type: custom:solar-ai-chart-card
+      title: Daily export income
+      icon: mdi:cash-multiple
+      icon_color: green
+      height: 220
+      x_type: category
+      unit: kr
+      series:
+      - entity: sensor.solar_ai_eksport_indtaegt
+        path: daily
+        x: date
+        y: dkk
+        type: bar
+        color: var(--success-color)
+        name: Income
+    - type: markdown
+      content: '### Net grid balance
+
+        Export income − all grid import (house + charging).
+
+        | Today | 7 days | Month | Year |
+
+        |---:|---:|---:|---:|
+
+        | {{ ''%+.0f'' | format(state_attr(''sensor.solar_ai_netto_el_balance'',''today'') | float(0)) }} kr | {{ ''%+.0f'' | format(state_attr(''sensor.solar_ai_netto_el_balance'',''last_7_days'') | float(0)) }} kr | {{ ''%+.0f'' | format(state_attr(''sensor.solar_ai_netto_el_balance'',''this_month'') | float(0)) }} kr | {{ ''%+.0f'' | format(state_attr(''sensor.solar_ai_netto_el_balance'',''this_year'') | float(0)) }} kr |'
+    - type: custom:solar-ai-chart-card
+      title: Daily net balance
+      icon: mdi:scale-balance
+      icon_color: blue
+      height: 220
+      x_type: category
+      unit: kr
+      series:
+      - entity: sensor.solar_ai_netto_el_balance
+        path: daily
+        x: date
+        y: dkk
+        type: bar
+        color: '#3d6fb4'
+        name: Net
 - title: History
   path: historik
   icon: mdi:chart-timeline-variant
   subview: true
   panel: true
   cards:
-  - type: custom:mod-card
-    card_mod:
-      style: ':host { max-width: 1000px; margin: 0 auto; display: block; }
+  - type: custom:solar-ai-view-card
+    cards:
+    - type: custom:solar-ai-entities-card
+      title: Total savings
+      icon_color: green
+      icon: mdi:piggy-bank
+      show_header_toggle: false
+      entities:
+      - entity: sensor.solar_ai_samlet_besparelse_i_dag
+        name: Today (live)
+      - entity: sensor.solar_ai_samlet_besparelse_i_alt
+        name: Total since start
+      - type: section
+        label: Select period
+      - entity: date.solar_ai_besparelsesperiode_fra
+        name: From
+      - entity: date.solar_ai_besparelsesperiode_til
+        name: To
+      - entity: sensor.solar_ai_samlet_besparelse_i_periode
+        name: Savings in period
+    - type: custom:solar-ai-entities-card
+      title: Savings (DKK)
+      icon_color: green
+      icon: mdi:cash
+      show_header_toggle: false
+      entities:
+      - entity: sensor.solar_ai_faktisk_besparelse_i_dag
+        name: Today — actual
+      - entity: sensor.solar_ai_forpasset_besparelse_i_dag
+        name: Today — missed
+      - type: divider
+      - entity: sensor.solar_ai_faktisk_besparelse_7_dage
+        name: 7 days — actual
+      - entity: sensor.solar_ai_forpasset_besparelse_7_dage
+        name: 7 days — missed
+      - type: divider
+      - entity: sensor.solar_ai_faktisk_besparelse_30_dage
+        name: 30 days — actual
+      - entity: sensor.solar_ai_forpasset_besparelse_30_dage
+        name: 30 days — missed
+    - type: history-graph
+      title: Battery SoC — 24 timer
+      hours_to_show: 24
+      entities:
+      - entity: sensor.foxessmodbus_battery_soc_1
+        name: SoC
+    - type: history-graph
+      title: Effekt — 24 timer
+      hours_to_show: 24
+      entities:
+      - entity: sensor.foxessmodbus_battery_charge
+        name: Charge
+      - entity: sensor.foxessmodbus_battery_discharge
+        name: Discharge
+      - entity: sensor.foxessmodbus_feed_in
+        name: Export
+      - entity: sensor.foxessmodbus_load_power
+        name: House load
+    - type: history-graph
+      title: Savings — 7 dage
+      hours_to_show: 168
+      entities:
+      - entity: sensor.solar_ai_faktisk_besparelse_i_dag
+        name: Actual today
+      - entity: sensor.solar_ai_forpasset_besparelse_i_dag
+        name: Missed today
+    - type: history-graph
+      title: Solar forecast accuracy
+      icon_color: amber
+      hours_to_show: 168
+      entities:
+      - entity: sensor.battery_arbitrage_solcelle_prognose_nojagtighed
+        name: Accuracy %
+    - type: markdown
+      title: Complete session log
+      content: '{% set sessions = state_attr(''sensor.solar_ai_sessionslog'', ''sessions'') | default([]) %}
 
-        '
-    card:
-      type: vertical-stack
-      cards:
-      - type: entities
-        title: Total savings
-        icon: mdi:piggy-bank
-        show_header_toggle: false
-        entities:
-        - entity: sensor.solar_ai_samlet_besparelse_i_dag
-          name: Today (live)
-        - entity: sensor.solar_ai_samlet_besparelse_i_alt
-          name: Total since start
-        - type: section
-          label: Select period
-        - entity: date.solar_ai_besparelsesperiode_fra
-          name: From
-        - entity: date.solar_ai_besparelsesperiode_til
-          name: To
-        - entity: sensor.solar_ai_samlet_besparelse_i_periode
-          name: Savings in period
-      - type: entities
-        title: Savings (DKK)
-        icon: mdi:cash
-        show_header_toggle: false
-        entities:
-        - entity: sensor.solar_ai_faktisk_besparelse_i_dag
-          name: Today — actual
-        - entity: sensor.solar_ai_forpasset_besparelse_i_dag
-          name: Today — missed
-        - type: divider
-        - entity: sensor.solar_ai_faktisk_besparelse_7_dage
-          name: 7 days — actual
-        - entity: sensor.solar_ai_forpasset_besparelse_7_dage
-          name: 7 days — missed
-        - type: divider
-        - entity: sensor.solar_ai_faktisk_besparelse_30_dage
-          name: 30 days — actual
-        - entity: sensor.solar_ai_forpasset_besparelse_30_dage
-          name: 30 days — missed
-      - type: history-graph
-        title: Battery SoC — 24 timer
-        hours_to_show: 24
-        entities:
-        - entity: sensor.foxessmodbus_battery_soc_1
-          name: SoC
-      - type: history-graph
-        title: Effekt — 24 timer
-        hours_to_show: 24
-        entities:
-        - entity: sensor.foxessmodbus_battery_charge
-          name: Charge
-        - entity: sensor.foxessmodbus_battery_discharge
-          name: Discharge
-        - entity: sensor.foxessmodbus_feed_in
-          name: Export
-        - entity: sensor.foxessmodbus_load_power
-          name: House load
-      - type: history-graph
-        title: Savings — 7 dage
-        hours_to_show: 168
-        entities:
-        - entity: sensor.solar_ai_faktisk_besparelse_i_dag
-          name: Actual today
-        - entity: sensor.solar_ai_forpasset_besparelse_i_dag
-          name: Missed today
-      - type: history-graph
-        title: Solar forecast accuracy
-        hours_to_show: 168
-        entities:
-        - entity: sensor.battery_arbitrage_solcelle_prognose_nojagtighed
-          name: Accuracy %
-      - type: markdown
-        title: Complete session log
-        content: '{% set sessions = state_attr(''sensor.solar_ai_sessionslog'', ''sessions'') | default([]) %}
+        {% if sessions %}
 
-          {% if sessions %}
+        | Start | End | Type | SoC | Duration | kWh | DKK |
 
-          | Start | End | Type | SoC | Duration | kWh | DKK |
+        |:------|:-----|:-----|:----|:---------|:----|:----|
 
-          |:------|:-----|:-----|:----|:---------|:----|:----|
+        {% for s in sessions[:15] %}{% set icon = ''💰'' if s.type == ''export'' else ''⚡'' %}{% set label = ''Export'' if s.type == ''export'' else ''Charge'' %}
 
-          {% for s in sessions[:15] %}{% set icon = ''💰'' if s.type == ''export'' else ''⚡'' %}{% set label = ''Export'' if s.type == ''export'' else ''Charge'' %}
+        | {{ s.start_ts[11:16] }} | {{ s.end_ts[11:16] }} | {{ icon }} {{ label }} | {{ s.soc_start | round(0) | int }}→{{ s.soc_end | round(0) | int }}% | {{ s.duration_min }} min | {{ s.kwh }} | {{ s.dkk }} |{% endfor %}
 
-          | {{ s.start_ts[11:16] }} | {{ s.end_ts[11:16] }} | {{ icon }} {{ label }} | {{ s.soc_start | round(0) | int }}→{{ s.soc_end | round(0) | int }}% | {{ s.duration_min }} min | {{ s.kwh }} | {{ s.dkk }} |{% endfor %}
+        {% else %}
 
-          {% else %}
+        *No sessions yet — enable Solar AI to record export and charging.*
 
-          *No sessions yet — enable Solar AI to record export and charging.*
-
-          {% endif %}'
+        {% endif %}'
 - title: Settings
   path: indstillinger
   icon: mdi:cog
   subview: true
   panel: true
   cards:
-  - type: custom:mod-card
-    card_mod:
-      style: ':host { max-width: 1000px; margin: 0 auto; display: block; }
+  - type: custom:solar-ai-view-card
+    cards:
+    - type: custom:solar-ai-entities-card
+      title: Main switches
+      icon_color: blue-grey
+      icon: mdi:toggle-switch
+      show_header_toggle: false
+      entities:
+      - entity: switch.battery_arbitrage_arbitrage_aktiv
+        name: Solar AI on/off
+      - entity: switch.solar_ai_notifikationer_ved_tilstandsskift
+        name: Notifications on mode change
+      - entity: switch.solar_ai_15_minutters_prisoplosning
+        name: 15-min price resolution
+      - entity: switch.solar_ai_auto_fuld_ved_negativ_pris
+        name: 'EV: Auto-Full on negative price'
+    - type: custom:solar-ai-entities-card
+      title: Battery limits
+      icon_color: blue
+      icon: mdi:battery-charging-50
+      show_header_toggle: false
+      entities:
+      - entity: number.solar_ai_batterikapacitet_kwh
+        name: Battery capacity (kWh)
+      - entity: number.solar_ai_minimum_soc_eksport
+        name: Minimum SoC (export)
+      - entity: number.solar_ai_maksimum_soc_netopladning
+        name: Maximum SoC (grid charge)
+      - entity: number.solar_ai_eksporteffekt_graense_0_ingen
+        name: Export-power limit (kW)
+      - entity: number.solar_ai_net_importgraense
+        name: Grid-import limit (kW)
+      - entity: switch.solar_ai_dynamisk_afladningsgulv_selvlaerende
+        name: Dynamic discharge floor (auto)
+      - entity: sensor.solar_ai_effektivt_afladningsgulv
+        name: Effective floor (active)
+      - entity: number.solar_ai_reserve_sikkerhedsfaktor
+        name: Reserve safety factor
+      - entity: binary_sensor.solar_ai_modelhelbred
+        name: Model health
+    - type: custom:solar-ai-entities-card
+      title: Price parameters
+      icon_color: amber
+      icon: mdi:currency-eur
+      show_header_toggle: false
+      entities:
+      - entity: number.solar_ai_moms_pa_kob
+        name: VAT (%)
+      - entity: number.solar_ai_elafgift_dkk_kwh
+        name: Electricity duty
+      - entity: number.solar_ai_spotpris_tillaeg_elhandlertillaeg
+        name: Spot-price markup
+      - entity: number.solar_ai_salgsgebyr_pr_kwh
+        name: Sell fee (export)
+      - entity: number.solar_ai_minimum_eksportpris_0_tillad_negativ
+        name: Minimum export price
+    - type: custom:solar-ai-entities-card
+      title: Optimizer
+      icon_color: purple
+      icon: mdi:chart-line
+      show_header_toggle: false
+      entities:
+      - entity: number.solar_ai_minimum_arbitrage_spread
+        name: Minimum gain per kWh
+      - entity: number.solar_ai_batteri_slidomkostning_dkk_kwh_cyklet
+        name: Battery wear cost
+    - type: custom:solar-ai-entities-card
+      title: System
+      icon_color: grey
+      icon: mdi:harddisk
+      show_header_toggle: false
+      entities:
+      - entity: sensor.solar_ai_ledig_diskplads
+        name: Free disk space
+      - entity: binary_sensor.solar_ai_lav_diskplads
+        name: Low disk space (alarm)
+      - entity: number.solar_ai_alarmgraense_for_lav_diskplads_ledig
+        name: Alarm threshold (% free)
+    - type: custom:solar-ai-entities-card
+      title: Notifikationer
+      icon_color: orange
+      icon: mdi:bell-outline
+      show_header_toggle: false
+      entities:
+      - entity: switch.solar_ai_notifikation_eksport_startet
+        name: Export started
+      - entity: switch.solar_ai_notifikation_eksport_stoppet
+        name: Export stopped
+      - entity: switch.solar_ai_notifikation_opladning_startet
+        name: Charging started
+      - entity: switch.solar_ai_notifikation_opladning_stoppet
+        name: Charging stopped
+      - entity: switch.solar_ai_notifikation_solareksport_blokeret_prisgulv
+        name: Solar export blocked (price floor)
+      - entity: switch.solar_ai_notifikation_solareksport_genoptaget
+        name: Solar export resumed
+      - entity: switch.solar_ai_notifikation_lav_diskplads
+        name: Low disk space
+      - type: divider
+      - entity: switch.solar_ai_notifikation_iphone
+        name: 📱 Telefon
+      - entity: switch.solar_ai_notifikation_ipad_air
+        name: 📱 Tablet
+    - type: markdown
+      content: '### Diagnostics & learned models
 
-        '
-    card:
-      type: vertical-stack
-      cards:
-      - type: entities
-        title: Main switches
-        icon: mdi:toggle-switch
-        show_header_toggle: false
-        entities:
-        - entity: switch.battery_arbitrage_arbitrage_aktiv
-          name: Solar AI on/off
-        - entity: switch.solar_ai_notifikationer_ved_tilstandsskift
-          name: Notifications on mode change
-        - entity: switch.solar_ai_15_minutters_prisoplosning
-          name: 15-min price resolution
-        - entity: switch.solar_ai_auto_fuld_ved_negativ_pris
-          name: 'EV: Auto-Full on negative price'
-      - type: entities
-        title: Battery limits
-        icon: mdi:battery-charging-50
-        show_header_toggle: false
-        entities:
-        - entity: number.solar_ai_batterikapacitet_kwh
-          name: Battery capacity (kWh)
-        - entity: number.solar_ai_minimum_soc_eksport
-          name: Minimum SoC (export)
-        - entity: number.solar_ai_maksimum_soc_netopladning
-          name: Maximum SoC (grid charge)
-        - entity: number.solar_ai_eksporteffekt_graense_0_ingen
-          name: Export-power limit (kW)
-        - entity: number.solar_ai_net_importgraense
-          name: Grid-import limit (kW)
-        - entity: switch.solar_ai_dynamisk_afladningsgulv_selvlaerende
-          name: Dynamic discharge floor (auto)
-        - entity: sensor.solar_ai_effektivt_afladningsgulv
-          name: Effective floor (active)
-        - entity: number.solar_ai_reserve_sikkerhedsfaktor
-          name: Reserve safety factor
-        - entity: binary_sensor.solar_ai_modelhelbred
-          name: Model health
-      - type: entities
-        title: Price parameters
-        icon: mdi:currency-eur
-        show_header_toggle: false
-        entities:
-        - entity: number.solar_ai_moms_pa_kob
-          name: VAT (%)
-        - entity: number.solar_ai_elafgift_dkk_kwh
-          name: Electricity duty
-        - entity: number.solar_ai_spotpris_tillaeg_elhandlertillaeg
-          name: Spot-price markup
-        - entity: number.solar_ai_salgsgebyr_pr_kwh
-          name: Sell fee (export)
-        - entity: number.solar_ai_minimum_eksportpris_0_tillad_negativ
-          name: Minimum export price
-      - type: entities
-        title: Optimizer
-        icon: mdi:chart-line
-        show_header_toggle: false
-        entities:
-        - entity: number.solar_ai_minimum_arbitrage_spread
-          name: Minimum gain per kWh
-        - entity: number.solar_ai_batteri_slidomkostning_dkk_kwh_cyklet
-          name: Battery wear cost
-      - type: entities
-        title: System
-        icon: mdi:harddisk
-        show_header_toggle: false
-        entities:
-        - entity: sensor.solar_ai_ledig_diskplads
-          name: Free disk space
-        - entity: binary_sensor.solar_ai_lav_diskplads
-          name: Low disk space (alarm)
-        - entity: number.solar_ai_alarmgraense_for_lav_diskplads_ledig
-          name: Alarm threshold (% free)
-      - type: entities
-        title: Notifikationer
-        icon: mdi:bell-outline
-        show_header_toggle: false
-        entities:
-        - entity: switch.solar_ai_notifikation_eksport_startet
-          name: Export started
-        - entity: switch.solar_ai_notifikation_eksport_stoppet
-          name: Export stopped
-        - entity: switch.solar_ai_notifikation_opladning_startet
-          name: Charging started
-        - entity: switch.solar_ai_notifikation_opladning_stoppet
-          name: Charging stopped
-        - entity: switch.solar_ai_notifikation_solareksport_blokeret_prisgulv
-          name: Solar export blocked (price floor)
-        - entity: switch.solar_ai_notifikation_solareksport_genoptaget
-          name: Solar export resumed
-        - entity: switch.solar_ai_notifikation_lav_diskplads
-          name: Low disk space
-        - type: divider
-        - entity: switch.solar_ai_notifikation_iphone
-          name: 📱 Telefon
-        - entity: switch.solar_ai_notifikation_ipad_air
-          name: 📱 Tablet
-      - type: custom:mushroom-title-card
-        title: Diagnostics & learned models
-        subtitle: For troubleshooting and insight
-      - type: entities
-        title: Auto-detected battery parameters
-        icon: mdi:battery-heart-variant
-        show_header_toggle: false
-        entities:
-        - entity: sensor.battery_arbitrage_batteritemperatur_laveste_celle
-          name: Cell temp (lowest)
-        - entity: sensor.solar_ai_auto_detekteret_effektivitet
-          name: Auto-detected efficiency
-        - entity: sensor.battery_arbitrage_eksporterbar_energi
-          name: Exportable energy
-        - entity: sensor.battery_arbitrage_importerbar_energi
-          name: Importable energy
-        - entity: sensor.battery_arbitrage_tid_til_fuld_opladning
-          name: Time to full
-      - type: entities
-        title: Learned charge rates
-        icon: mdi:thermometer-lines
-        show_header_toggle: false
-        entities:
-        - entity: sensor.battery_arbitrage_laert_opladningshastighed_aktuel_temp
-          name: Current temp
-        - type: divider
-        - entity: sensor.battery_arbitrage_laert_opladningshastighed_under_0degc
-          name: Under 0°C
-        - entity: sensor.solar_ai_laert_opladningshastighed_0_5degc
-          name: 0–5°C
-        - entity: sensor.solar_ai_laert_opladningshastighed_6_15degc
-          name: 6–15°C
-        - entity: sensor.solar_ai_laert_opladningshastighed_16_21degc
-          name: 16–21°C
-        - entity: sensor.solar_ai_laert_opladningshastighed_21_35degc
-          name: 21–35°C
-        - entity: sensor.solar_ai_laert_opladningshastighed_35_50degc
-          name: 35–50°C
-        - entity: sensor.solar_ai_laert_opladningshastighed_over_50degc
-          name: Over 50°C
-      - type: entities
-        title: Consumption model
-        icon: mdi:home-lightning-bolt
-        show_header_toggle: false
-        entities:
-        - entity: sensor.battery_arbitrage_husstand_forbrug_2h_gennemsnit
-          name: House load 2h average
-        - entity: sensor.battery_arbitrage_husstand_forbrug_28_dages_gennemsnit
-          name: House load 28-day average
-        - entity: sensor.battery_arbitrage_forudsagt_husstand_forbrug_24h
-          name: Predicted house load 24h
-        - entity: sensor.foxessmodbus_load_power
-          name: Current house load
-      - type: entities
-        title: Solar forecast
-        icon: mdi:solar-power
-        show_header_toggle: false
-        entities:
-        - entity: sensor.battery_arbitrage_solcelle_prognose_24h
-          name: Forecast 24h
-        - entity: sensor.battery_arbitrage_solcelle_prognose_24h_justeret
-          name: Forecast 24h adjusted
-        - entity: sensor.battery_arbitrage_solcelle_prognose_6h
-          name: Forecast 6h
-        - entity: sensor.battery_arbitrage_solcelle_prognose_6h_justeret
-          name: Forecast 6h adjusted
-        - entity: sensor.battery_arbitrage_solcelle_prognose_nojagtighed
-          name: Accuracy
-      - type: entities
-        title: Grid status
-        icon: mdi:transmission-tower
-        show_header_toggle: false
-        entities:
-        - entity: sensor.solar_ai_net_importeffekt
-          name: Grid import power
-        - entity: sensor.solar_ai_net_raderum
-          name: Grid headroom
-        - entity: sensor.solar_ai_nettarif_denne_time
-          name: Grid tariff this hour
-        - entity: sensor.solar_ai_indfodningstarif_dso_energinet
-          name: Feed-in tariff
-      - type: entities
-        title: EV status
-        icon: mdi:car-electric
-        show_header_toggle: false
-        entities:
-        - entity: sensor.solar_ai_lader_status
-          name: Charger status
-        - entity: sensor.solar_ai_lader_effekt
-          name: Charger power
-        - entity: sensor.solar_ai_ev_status
-          name: EV controller state
-        - entity: binary_sensor.solar_ai_ev_oplader_solenergi
-          name: EV on solar
-      - type: entities
-        title: FoxESS inverter
-        icon: mdi:solar-panel
-        show_header_toggle: false
-        entities:
-        - entity: select.foxessmodbus_work_mode
-          name: Operating mode
-        - entity: sensor.foxessmodbus_battery_soc_1
-          name: Battery SoC
-        - entity: sensor.foxessmodbus_battery_charge
-          name: Charge power
-        - entity: sensor.foxessmodbus_battery_discharge
-          name: Discharge power
-        - entity: sensor.foxessmodbus_feed_in
-          name: Export power
-        - entity: sensor.foxessmodbus_load_power
-          name: House load
-      - type: vertical-stack
-        cards:
-        - type: markdown
-          content: '#### 🚫 Block sell hours (tap to toggle)
-
-            Red = the battery is not sold in that hour. Solar export and self-consumption are unaffected.'
-        - type: grid
-          columns: 6
-          square: true
-          cards:
-          - type: custom:mushroom-template-card
-            primary: '00'
-            icon: '{% if ''0'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''0'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 0
-          - type: custom:mushroom-template-card
-            primary: '01'
-            icon: '{% if ''1'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''1'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 1
-          - type: custom:mushroom-template-card
-            primary: '02'
-            icon: '{% if ''2'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''2'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 2
-          - type: custom:mushroom-template-card
-            primary: '03'
-            icon: '{% if ''3'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''3'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 3
-          - type: custom:mushroom-template-card
-            primary: '04'
-            icon: '{% if ''4'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''4'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 4
-          - type: custom:mushroom-template-card
-            primary: '05'
-            icon: '{% if ''5'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''5'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 5
-          - type: custom:mushroom-template-card
-            primary: '06'
-            icon: '{% if ''6'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''6'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 6
-          - type: custom:mushroom-template-card
-            primary: '07'
-            icon: '{% if ''7'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''7'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 7
-          - type: custom:mushroom-template-card
-            primary: 08
-            icon: '{% if ''8'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''8'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 8
-          - type: custom:mushroom-template-card
-            primary: 09
-            icon: '{% if ''9'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''9'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 9
-          - type: custom:mushroom-template-card
-            primary: '10'
-            icon: '{% if ''10'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''10'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 10
-          - type: custom:mushroom-template-card
-            primary: '11'
-            icon: '{% if ''11'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''11'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 11
-          - type: custom:mushroom-template-card
-            primary: '12'
-            icon: '{% if ''12'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''12'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 12
-          - type: custom:mushroom-template-card
-            primary: '13'
-            icon: '{% if ''13'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''13'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 13
-          - type: custom:mushroom-template-card
-            primary: '14'
-            icon: '{% if ''14'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''14'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 14
-          - type: custom:mushroom-template-card
-            primary: '15'
-            icon: '{% if ''15'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''15'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 15
-          - type: custom:mushroom-template-card
-            primary: '16'
-            icon: '{% if ''16'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''16'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 16
-          - type: custom:mushroom-template-card
-            primary: '17'
-            icon: '{% if ''17'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''17'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 17
-          - type: custom:mushroom-template-card
-            primary: '18'
-            icon: '{% if ''18'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''18'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 18
-          - type: custom:mushroom-template-card
-            primary: '19'
-            icon: '{% if ''19'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''19'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 19
-          - type: custom:mushroom-template-card
-            primary: '20'
-            icon: '{% if ''20'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''20'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 20
-          - type: custom:mushroom-template-card
-            primary: '21'
-            icon: '{% if ''21'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''21'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 21
-          - type: custom:mushroom-template-card
-            primary: '22'
-            icon: '{% if ''22'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''22'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 22
-          - type: custom:mushroom-template-card
-            primary: '23'
-            icon: '{% if ''23'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}mdi:cancel{% else %}mdi:cash{% endif %}'
-            icon_color: '{% if ''23'' in states(''text.solar_ai_blokerede_salgstimer'').split('','') %}red{% else %}grey{% endif %}'
-            layout: vertical
-            tap_action:
-              action: call-service
-              service: battery_arbitrage.toggle_blocked_sell_hour
-              data:
-                hour: 23
-        - type: entities
-          entities:
-          - entity: text.solar_ai_blokerede_salgstimer
-            name: Blocked hours (text)
+        For troubleshooting and insight'
+    - type: custom:solar-ai-entities-card
+      title: Auto-detected battery parameters
+      icon_color: blue
+      icon: mdi:battery-heart-variant
+      show_header_toggle: false
+      entities:
+      - entity: sensor.battery_arbitrage_batteritemperatur_laveste_celle
+        name: Cell temp (lowest)
+      - entity: sensor.solar_ai_auto_detekteret_effektivitet
+        name: Auto-detected efficiency
+      - entity: sensor.battery_arbitrage_eksporterbar_energi
+        name: Exportable energy
+      - entity: sensor.battery_arbitrage_importerbar_energi
+        name: Importable energy
+      - entity: sensor.battery_arbitrage_tid_til_fuld_opladning
+        name: Time to full
+    - type: custom:solar-ai-entities-card
+      title: Learned charge rates
+      icon_color: orange
+      icon: mdi:thermometer-lines
+      show_header_toggle: false
+      entities:
+      - entity: sensor.battery_arbitrage_laert_opladningshastighed_aktuel_temp
+        name: Current temp
+      - type: divider
+      - entity: sensor.battery_arbitrage_laert_opladningshastighed_under_0degc
+        name: Under 0°C
+      - entity: sensor.solar_ai_laert_opladningshastighed_0_5degc
+        name: 0–5°C
+      - entity: sensor.solar_ai_laert_opladningshastighed_6_15degc
+        name: 6–15°C
+      - entity: sensor.solar_ai_laert_opladningshastighed_16_21degc
+        name: 16–21°C
+      - entity: sensor.solar_ai_laert_opladningshastighed_21_35degc
+        name: 21–35°C
+      - entity: sensor.solar_ai_laert_opladningshastighed_35_50degc
+        name: 35–50°C
+      - entity: sensor.solar_ai_laert_opladningshastighed_over_50degc
+        name: Over 50°C
+    - type: custom:solar-ai-entities-card
+      title: Consumption model
+      icon_color: teal
+      icon: mdi:home-lightning-bolt
+      show_header_toggle: false
+      entities:
+      - entity: sensor.battery_arbitrage_husstand_forbrug_2h_gennemsnit
+        name: House load 2h average
+      - entity: sensor.battery_arbitrage_husstand_forbrug_28_dages_gennemsnit
+        name: House load 28-day average
+      - entity: sensor.battery_arbitrage_forudsagt_husstand_forbrug_24h
+        name: Predicted house load 24h
+      - entity: sensor.foxessmodbus_load_power
+        name: Current house load
+    - type: custom:solar-ai-entities-card
+      title: Solar forecast
+      icon_color: amber
+      icon: mdi:solar-power
+      show_header_toggle: false
+      entities:
+      - entity: sensor.battery_arbitrage_solcelle_prognose_24h
+        name: Forecast 24h
+      - entity: sensor.battery_arbitrage_solcelle_prognose_24h_justeret
+        name: Forecast 24h adjusted
+      - entity: sensor.battery_arbitrage_solcelle_prognose_6h
+        name: Forecast 6h
+      - entity: sensor.battery_arbitrage_solcelle_prognose_6h_justeret
+        name: Forecast 6h adjusted
+      - entity: sensor.battery_arbitrage_solcelle_prognose_nojagtighed
+        name: Accuracy
+    - type: custom:solar-ai-entities-card
+      title: Grid status
+      icon_color: cyan
+      icon: mdi:transmission-tower
+      show_header_toggle: false
+      entities:
+      - entity: sensor.solar_ai_net_importeffekt
+        name: Grid import power
+      - entity: sensor.solar_ai_net_raderum
+        name: Grid headroom
+      - entity: sensor.solar_ai_nettarif_denne_time
+        name: Grid tariff this hour
+      - entity: sensor.solar_ai_indfodningstarif_dso_energinet
+        name: Feed-in tariff
+    - type: custom:solar-ai-entities-card
+      title: EV status
+      icon_color: blue
+      icon: mdi:car-electric
+      show_header_toggle: false
+      entities:
+      - entity: sensor.solar_ai_lader_status
+        name: Charger status
+      - entity: sensor.solar_ai_lader_effekt
+        name: Charger power
+      - entity: sensor.solar_ai_ev_status
+        name: EV controller state
+      - entity: binary_sensor.solar_ai_ev_oplader_solenergi
+        name: EV on solar
+    - type: custom:solar-ai-entities-card
+      title: FoxESS inverter
+      icon_color: green
+      icon: mdi:solar-panel
+      show_header_toggle: false
+      entities:
+      - entity: select.foxessmodbus_work_mode
+        name: Operating mode
+      - entity: sensor.foxessmodbus_battery_soc_1
+        name: Battery SoC
+      - entity: sensor.foxessmodbus_battery_charge
+        name: Charge power
+      - entity: sensor.foxessmodbus_battery_discharge
+        name: Discharge power
+      - entity: sensor.foxessmodbus_feed_in
+        name: Export power
+      - entity: sensor.foxessmodbus_load_power
+        name: House load
+    - type: custom:solar-ai-grid-card
+      title: Block sell hours (tap to toggle)
+      icon: mdi:cancel
+      icon_color: red
+      subtitle: Red = the battery is not sold in that hour. Solar export and self-consumption are unaffected.
+      mode: toggle
+      entity: text.solar_ai_blokerede_salgstimer
+      toggle_service: battery_arbitrage.toggle_blocked_sell_hour
+    - type: custom:solar-ai-entities-card
+      entities:
+      - entity: text.solar_ai_blokerede_salgstimer
+        name: Blocked hours (text)
 - title: Advanced setup
   path: advanced
   icon: mdi:tune-variant
   subview: true
   panel: true
   cards:
-  - type: custom:mod-card
-    card_mod:
-      style: |
-        :host { max-width: 1000px; margin: 0 auto; display: block; }
-    card:
-      type: vertical-stack
-      cards:
-      - type: custom:mushroom-title-card
-        title: Advanced setup
-        subtitle: Structural configuration — data sources, price model and price area
-      - type: custom:mushroom-template-card
-        primary: Open integration setup (Configure)
-        secondary: FoxESS sensors, sources & OCPP — fields that can't be dashboard controls
-        icon: mdi:cog-outline
+  - type: custom:solar-ai-view-card
+    cards:
+    - type: markdown
+      content: '### Advanced setup
+
+        Structural configuration — data sources, price model and price area'
+    - type: custom:solar-ai-nav-card
+      items:
+      - icon: mdi:cog-outline
         icon_color: blue
-        tap_action:
-          action: navigate
-          navigation_path: /config/integrations/integration/battery_arbitrage
-      - type: entities
-        title: Data sources & price model
-        icon: mdi:database-cog
-        show_header_toggle: false
-        entities:
-        - entity: select.solar_ai_live_data_source
-          name: Live data source
-        - entity: select.solar_ai_solar_forecast_source
-          name: Solar forecast source
-        - entity: select.solar_ai_buy_price_mode
-          name: Buy-price mode
-        - entity: switch.solar_ai_kryds_kilde_prisfallback_stromligning_eds
-          name: Cross-source price fallback
-        - entity: select.solar_ai_electricity_product_provider
-          name: Electricity product (provider)
-        - entity: select.solar_ai_price_area
-          name: Price area
-      - type: entities
-        title: EV charger
-        icon: mdi:ev-station
-        show_header_toggle: false
-        entities:
-        - entity: select.solar_ai_ev_charger_backend
-          name: Charger backend
-        - entity: text.solar_ai_foxess_charger_host_ip
-          name: FoxESS charger IP (Modbus only)
-        - entity: switch.solar_ai_embedded_ocpp_server
-          name: Embedded OCPP server (other brands)
-        - entity: number.solar_ai_ev_control_interval
-          name: Control interval (sec)
-      - type: entities
-        title: Diagnostics & learned models
-        icon: mdi:chart-bell-curve
-        show_header_toggle: false
-        entities:
-        - entity: sensor.solar_ai_laert_batterikapacitet
-          name: Learned battery capacity
-        - entity: sensor.solar_ai_auto_detekteret_effektivitet
-          name: Auto-detected efficiency
-        - entity: sensor.battery_arbitrage_laert_opladningshastighed_aktuel_temp
-          name: Learned charge rate (now)
-        - entity: sensor.battery_arbitrage_solcelle_prognose_nojagtighed
-          name: Solar forecast accuracy
-        - entity: sensor.solar_ai_effektivt_afladningsgulv
-          name: Effective discharge floor
+        label: Open integration setup (Configure)
+        path: /config/integrations/integration/battery_arbitrage
+    - type: custom:solar-ai-entities-card
+      title: Data sources & price model
+      icon_color: blue-grey
+      icon: mdi:database-cog
+      show_header_toggle: false
+      entities:
+      - entity: select.solar_ai_live_data_source
+        name: Live data source
+      - entity: select.solar_ai_solar_forecast_source
+        name: Solar forecast source
+      - entity: select.solar_ai_buy_price_mode
+        name: Buy-price mode
+      - entity: switch.solar_ai_kryds_kilde_prisfallback_stromligning_eds
+        name: Cross-source price fallback
+      - entity: select.solar_ai_electricity_product_provider
+        name: Electricity product (provider)
+      - entity: select.solar_ai_price_area
+        name: Price area
+    - type: custom:solar-ai-entities-card
+      title: EV charger
+      icon_color: blue
+      icon: mdi:ev-station
+      show_header_toggle: false
+      entities:
+      - entity: select.solar_ai_ev_charger_backend
+        name: Charger backend
+      - entity: text.solar_ai_foxess_charger_host_ip
+        name: FoxESS charger IP (Modbus only)
+      - entity: switch.solar_ai_embedded_ocpp_server
+        name: Embedded OCPP server (other brands)
+      - entity: number.solar_ai_ev_control_interval
+        name: Control interval (sec)
+    - type: custom:solar-ai-entities-card
+      title: Diagnostics & learned models
+      icon_color: purple
+      icon: mdi:chart-bell-curve
+      show_header_toggle: false
+      entities:
+      - entity: sensor.solar_ai_laert_batterikapacitet
+        name: Learned battery capacity
+      - entity: sensor.solar_ai_auto_detekteret_effektivitet
+        name: Auto-detected efficiency
+      - entity: sensor.battery_arbitrage_laert_opladningshastighed_aktuel_temp
+        name: Learned charge rate (now)
+      - entity: sensor.battery_arbitrage_solcelle_prognose_nojagtighed
+        name: Solar forecast accuracy
+      - entity: sensor.solar_ai_effektivt_afladningsgulv
+        name: Effective discharge floor
 - title: Logs
   path: logs
   icon: mdi:format-list-bulleted-square
   subview: true
   panel: true
   cards:
-  - type: custom:mod-card
-    card_mod:
-      style: ':host { max-width: 1000px; margin: 0 auto; display: block; }
-
-        '
-    card:
-      type: vertical-stack
+  - type: custom:solar-ai-view-card
+    cards:
+    - type: vertical-stack
       cards:
-      - type: vertical-stack
-        cards:
-        - type: markdown
-          content: '<!-- 🚗 Charger session history -->
-
-            ## 🚗 Charger session history
-
-
-            {% set sessions = state_attr(''sensor.solar_ai_lader_sessions_log'', ''sessions'') or [] %}{% if sessions | length == 0 %}_No completed sessions yet. When a car is plugged in and charging,
-
-            start/end times and the energy-source split are shown here._
-
-            {% else %}| Start | Duration | Total | ☀️ Solar | ⚡ Net |
-
-            |---|---:|---:|---:|---:|
-
-            {% for s in sessions %}| {{ as_datetime(s.start_ts).astimezone() | as_timestamp | timestamp_custom(''%a %d/%m %H:%M'', true) }} | {{ ''%.0f'' | format(s.duration_min) }} min | **{{ ''%.2f'' | format(s.energy_kwh) }} kWh** | {{ ''%.2f'' | format(s.energy_kwh_solar | default(0)) }} | {{ ''%.2f'' | format(s.energy_kwh_grid | default(0)) }} |
-
-            {% endfor %}
-
-            _Times are local. The solar/grid split is integrated per tick from live PV surplus and can differ a few percent from the charger total meter value._{% endif %}'
-        - type: markdown
-          content: '## 📋 Logs
-
-
-            Complete history of everything Solar AI has recorded. Each log keeps up to 500 entries; the latest 50 are shown here.
-
-            '
       - type: markdown
-        title: 🔋 Session log (export + grid charging)
-        content: '{% set sessions = state_attr(''sensor.solar_ai_sessionslog'', ''sessions'') | default([]) %}
+        content: '<!-- 🚗 Charger session history -->
 
-          {% if sessions %}
-
-          **{{ sessions | length }} af {{ states(''sensor.solar_ai_sessionslog'') }} sessions** (newest first)
+          ## 🚗 Charger session history
 
 
-          | Start | End | Type | SoC | Duration | kWh | DKK |
+          {% set sessions = state_attr(''sensor.solar_ai_lader_sessions_log'', ''sessions'') or [] %}{% if sessions | length == 0 %}_No completed sessions yet. When a car is plugged in and charging,
 
-          |:------|:-----|:-----|:----|:---------|:----|:----|
+          start/end times and the energy-source split are shown here._
 
-          {% for s in sessions[:50] %}{% set icon = ''💰'' if s.type == ''export'' else ''⚡'' %}{% set label = ''Export'' if s.type == ''export'' else ''Charge'' %}
+          {% else %}| Start | Duration | Total | ☀️ Solar | ⚡ Net |
 
-          | {{ s.start_ts[11:16] }} | {{ s.end_ts[11:16] }} | {{ icon }} {{ label }} | {{ s.soc_start | round(0) | int }}→{{ s.soc_end | round(0) | int }}% | {{ s.duration_min }} min | {{ s.kwh }} | {{ s.dkk }} |{% endfor %}
+          |---|---:|---:|---:|---:|
 
-          {% else %}
+          {% for s in sessions %}| {{ as_datetime(s.start_ts).astimezone() | as_timestamp | timestamp_custom(''%a %d/%m %H:%M'', true) }} | {{ ''%.0f'' | format(s.duration_min) }} min | **{{ ''%.2f'' | format(s.energy_kwh) }} kWh** | {{ ''%.2f'' | format(s.energy_kwh_solar | default(0)) }} | {{ ''%.2f'' | format(s.energy_kwh_grid | default(0)) }} |
 
-          *No sessions recorded yet.*
+          {% endfor %}
 
-
-          Sessions are recorded when Solar AI actively switches the inverter to **Feed-in First** (export) or **Force Charge** (grid charging). With the main switch off, no sessions are recorded.
-
-          {% endif %}'
+          _Times are local. The solar/grid split is integrated per tick from live PV surplus and can differ a few percent from the charger total meter value._{% endif %}'
       - type: markdown
-        title: ☀️ Price-floor blocks (low prices)
-        content: '{% set events = state_attr(''sensor.solar_ai_solgulv_log_blokering'', ''events'') | default([]) %}
-
-          {% if events %}
-
-          **{{ events | length }} af {{ states(''sensor.solar_ai_solgulv_log_blokering'') }} blocks** (newest first)
+        content: '## 📋 Logs
 
 
-          | Start | End | Duration | Price start | Price end | Floor |
+          Complete history of everything Solar AI has recorded. Each log keeps up to 500 entries; the latest 50 are shown here.
 
-          |:------|:-----|:---------|:-----------|:----------|:-----|
+          '
+    - type: markdown
+      title: 🔋 Session log (export + grid charging)
+      content: '{% set sessions = state_attr(''sensor.solar_ai_sessionslog'', ''sessions'') | default([]) %}
 
-          {% for e in events[:50] %}
+        {% if sessions %}
 
-          | {{ e.start_ts[11:16] }} | {{ e.end_ts[11:16] }} | {{ e.duration_min }} min | {{ ''%.3f'' | format(e.price_at_start) }} | {{ ''%.3f'' | format(e.price_at_end) }} | {{ ''%.2f'' | format(e.floor) }} |{% endfor %}
-
-          {% else %}
-
-          *No price-floor blocks recorded yet.*
+        **{{ sessions | length }} af {{ states(''sensor.solar_ai_sessionslog'') }} sessions** (newest first)
 
 
-          A block is recorded when the sell price falls below the configured minimum (`Minimum export price` in Settings), and ends when the price rises again.
+        | Start | End | Type | SoC | Duration | kWh | DKK |
 
-          {% endif %}'
-      - type: entities
-        title: 💰 Savings
-        icon: mdi:cash
-        show_header_toggle: false
-        entities:
-        - entity: sensor.solar_ai_faktisk_besparelse_i_dag
-          name: Today — actual
-        - entity: sensor.solar_ai_forpasset_besparelse_i_dag
-          name: Today — missed
-        - type: divider
-        - entity: sensor.solar_ai_faktisk_besparelse_7_dage
-          name: 7 days — actual
-        - entity: sensor.solar_ai_forpasset_besparelse_7_dage
-          name: 7 days — missed
-        - type: divider
-        - entity: sensor.solar_ai_faktisk_besparelse_30_dage
-          name: 30 days — actual
-        - entity: sensor.solar_ai_forpasset_besparelse_30_dage
-          name: 30 days — missed
+        |:------|:-----|:-----|:----|:---------|:----|:----|
+
+        {% for s in sessions[:50] %}{% set icon = ''💰'' if s.type == ''export'' else ''⚡'' %}{% set label = ''Export'' if s.type == ''export'' else ''Charge'' %}
+
+        | {{ s.start_ts[11:16] }} | {{ s.end_ts[11:16] }} | {{ icon }} {{ label }} | {{ s.soc_start | round(0) | int }}→{{ s.soc_end | round(0) | int }}% | {{ s.duration_min }} min | {{ s.kwh }} | {{ s.dkk }} |{% endfor %}
+
+        {% else %}
+
+        *No sessions recorded yet.*
+
+
+        Sessions are recorded when Solar AI actively switches the inverter to **Feed-in First** (export) or **Force Charge** (grid charging). With the main switch off, no sessions are recorded.
+
+        {% endif %}'
+    - type: markdown
+      title: ☀️ Price-floor blocks (low prices)
+      content: '{% set events = state_attr(''sensor.solar_ai_solgulv_log_blokering'', ''events'') | default([]) %}
+
+        {% if events %}
+
+        **{{ events | length }} af {{ states(''sensor.solar_ai_solgulv_log_blokering'') }} blocks** (newest first)
+
+
+        | Start | End | Duration | Price start | Price end | Floor |
+
+        |:------|:-----|:---------|:-----------|:----------|:-----|
+
+        {% for e in events[:50] %}
+
+        | {{ e.start_ts[11:16] }} | {{ e.end_ts[11:16] }} | {{ e.duration_min }} min | {{ ''%.3f'' | format(e.price_at_start) }} | {{ ''%.3f'' | format(e.price_at_end) }} | {{ ''%.2f'' | format(e.floor) }} |{% endfor %}
+
+        {% else %}
+
+        *No price-floor blocks recorded yet.*
+
+
+        A block is recorded when the sell price falls below the configured minimum (`Minimum export price` in Settings), and ends when the price rises again.
+
+        {% endif %}'
+    - type: custom:solar-ai-entities-card
+      title: 💰 Savings
+      icon_color: green
+      icon: mdi:cash
+      show_header_toggle: false
+      entities:
+      - entity: sensor.solar_ai_faktisk_besparelse_i_dag
+        name: Today — actual
+      - entity: sensor.solar_ai_forpasset_besparelse_i_dag
+        name: Today — missed
+      - type: divider
+      - entity: sensor.solar_ai_faktisk_besparelse_7_dage
+        name: 7 days — actual
+      - entity: sensor.solar_ai_forpasset_besparelse_7_dage
+        name: 7 days — missed
+      - type: divider
+      - entity: sensor.solar_ai_faktisk_besparelse_30_dage
+        name: 30 days — actual
+      - entity: sensor.solar_ai_forpasset_besparelse_30_dage
+        name: 30 days — missed

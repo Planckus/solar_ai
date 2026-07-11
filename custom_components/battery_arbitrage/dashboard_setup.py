@@ -31,15 +31,12 @@ _DASHBOARDS_DIR = Path(__file__).parent / "dashboards"
 
 _MISSING_CARDS_ISSUE = "missing_dashboard_cards"
 
-# Custom Lovelace cards the bundled dashboard needs. Each: (display name,
-# substring expected in the registered resource URL, install link).
-REQUIRED_CARDS: list[tuple[str, str, str]] = [
-    ("Mushroom", "mushroom", "https://github.com/piitaya/lovelace-mushroom"),
-    ("ApexCharts Card", "apexcharts-card", "https://github.com/RomRider/apexcharts-card"),
-    ("Power Flow Card Plus", "power-flow-card-plus", "https://github.com/flixlix/power-flow-card-plus"),
-    ("card-mod", "card-mod", "https://github.com/thomasloven/lovelace-card-mod"),
-    ("button-card", "button-card", "https://github.com/custom-cards/button-card"),
-]
+# v0.74.0 — the bundled dashboard now ships its own cards (registered
+# automatically by frontend.py, no HACS install needed), so this list is
+# empty. Kept as a list (not deleted) since async_check_dashboard_cards below
+# is still useful infrastructure if a future card is ever added that isn't
+# self-hosted.
+REQUIRED_CARDS: list[tuple[str, str, str]] = []
 
 
 def _load_dashboard_yaml(language: str) -> dict[str, Any] | None:
