@@ -223,9 +223,12 @@ EV_MODBUS_DOWNSHIFT_KW = 4.2   # avg surplus below this → single-phase
 # v0.70.0 — Minimum hysteresis band. The upshift threshold is dashboard-adjustable;
 # this floors how close it may sit to the downshift line, so the band can never be
 # made pathologically thin. A 0.1 kW band (slider at its 4.3 minimum vs the 4.2
-# downshift) gave effectively no hysteresis and flapped on any noise. Effective
-# upshift = max(DOWNSHIFT + this, slider value).
-EV_MODBUS_MIN_DEADBAND_KW = 0.8
+# downshift) gave effectively no hysteresis and flapped on any noise (12-21
+# switches/hour, verified live). v0.73.0 — narrowed 0.8→0.3 (slider min 5.0→4.5) so
+# users can tune closer to the 4.14 kW hardware floor; 0.3 kW is still well clear of
+# the proven-bad 0.1 kW band. Effective upshift = max(DOWNSHIFT + this, slider
+# value); downshift itself stays fixed (already only 60 W above the hardware floor).
+EV_MODBUS_MIN_DEADBAND_KW = 0.3
 # Window over which the available surplus is averaged for the phase decision.
 # Longer = more stable / slower to engage 3φ; shorter = snappier upshift when sun
 # returns. v0.71.0 — default lowered 300→180 s (3 min) and made dashboard-adjustable
