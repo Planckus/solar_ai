@@ -223,6 +223,7 @@ from .const import (
     EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW,
     EV_OVERRIDE_RAMP_FREEZE_SECONDS,
     EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW,
+    EV_OVERRIDE_NEAR_FULL_SOC,
     EV_OVERRIDE_3PH_RETRY_SECONDS,
     EV_STOP_RECOVERY_SECONDS,
     EV_START_DROP_TIMEOUT_SECONDS,
@@ -5092,9 +5093,17 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # absorb it. Fires when the inverter is actively curtailing PV (reg 49251:
         # export-limited with nowhere to store the surplus — covers a full battery,
         # a physical export cap, AND installs with no battery / an empty one), OR
-        # the legacy case of a price export-block with the battery full. The flag
-        # path carries no SoC gate, so battery-less installs still grab curtailed
-        # solar instead of clipping it.
+        # the legacy case of a price export-block with the battery near full. The
+        # flag path carries no SoC gate, so battery-less installs still grab
+        # curtailed solar instead of clipping it.
+        #
+        # v0.75.3 — the near-full gate used `battery_max_soc - 2` (98% with the
+        # default 100% max), which missed a confirmed real case at 97% SoC on
+        # 2026-07-12: export blocked (price floor active), PV suppressed to
+        # ~1-2.7 kW despite clear evidence it could do 5-6 kW, battery genuinely
+        # tapering. Switched to a fixed EV_OVERRIDE_NEAR_FULL_SOC (96%), measured
+        # directly against this battery's actual charge-taper onset rather than
+        # derived from the configurable max-SoC setting.
         override_active = (
             effective_mode == EV_MODE_PV
             and solar_kw > 0.1
@@ -5103,7 +5112,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and (
                 self._pv_power_limited_flag
                 or (self._current_floor_block is not None
-                    and battery_soc >= (ovr_max_soc - 2))
+                    and battery_soc >= EV_OVERRIDE_NEAR_FULL_SOC)
             ))
         override_3ph_blocked = (
             self._ev_modbus_override_3ph_blocked_until is not None

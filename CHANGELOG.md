@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.75.3] — 2026-07-12
+
+### Changed
+
+- **Curtailment-override "battery near full" trigger loosened from a relative 98% (`battery_max_soc - 2`) to a fixed 96%.** Live case on 2026-07-12: export blocked by the price floor, battery at 97% SoC, PV suppressed to ~1-2.7 kW for 25+ minutes despite clearly being capable of 5-6 kW (confirmed once a manual Full-mode EV session gave the inverter a real sink and PV climbed within ~40 seconds). The 98% gate missed this by one point. Replaced with a fixed `EV_OVERRIDE_NEAR_FULL_SOC = 96`, matching the SoC at which this battery's charge acceptance is confirmed to taper. The existing safety net (stop_window + 15-minute cooldown, worst case ≈0.2-0.3 kWh per failed attempt) is unchanged — a wider trigger costs nothing extra when it guesses wrong, since the mechanism already bails out cheaply either way.
+
 ## [0.75.2] — 2026-07-11
 
 ### Added

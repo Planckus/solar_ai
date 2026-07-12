@@ -341,6 +341,13 @@ EV_OVERRIDE_3PH_RETRY_SECONDS = 300
 # the gap, so the grid-import back-off above never fires).
 EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW = 0.3
 
+# v0.75.3 — fixed SoC floor for the Regime A "battery near-full" curtailment
+# trigger, replacing the previous `battery_max_soc - 2` (98%) relative gate.
+# Measured directly on live hardware: this battery's charge acceptance tapers
+# starting around 96%, one point below what the old gate required, which
+# missed a confirmed real curtailment case at 97% SoC on 2026-07-12.
+EV_OVERRIDE_NEAR_FULL_SOC = 96
+
 # v0.38.3 — Once the EV stop-window is armed (surplus dipped below min
 # and we're counting down to actually stop), require this many seconds
 # of sustained ABOVE-min surplus before clearing the stop timer. Without
