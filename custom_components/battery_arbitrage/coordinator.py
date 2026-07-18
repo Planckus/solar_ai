@@ -5327,7 +5327,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # charges from solar only), and at most one suspend interval (~5 min)
         # elapses before that downshift takes effect. Replaces the old guard that
         # stopped the car cleanly (which on a choppy day meant long stalls).
-        if PHASES == 3 and target_amps == 0:
+        # v0.75.5 — skip the brief-dip hold on the tick right after a mode
+        # change. The hold's premise is "this is a momentary cloud dip inside
+        # an already-established 3-phase session", which doesn't apply the
+        # instant the mode itself just changed — `_ev_modbus_phase` can still
+        # read 3 from whatever mode was active a moment ago (e.g. Full),
+        # forcing the new mode's correctly-computed 0 target back up to the
+        # 3-phase minimum and defeating the same-version mode-change bypass
+        # in _apply_ev_time_window below.
+        if PHASES == 3 and target_amps == 0 and not self._ev_mode_change_pending:
             target_amps = min_amps_sel
             reason = self._msg(
                 f"PV: surplus {available_kw:.1f} kW < 3φ floor — "
