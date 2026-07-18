@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.75.5] — 2026-07-18
+
+### Fixed
+
+- **v0.75.4's mode-change fix didn't fully take effect on the FoxESS Modbus backend.** A separate "brief-dip hold" (distinct from the anti-flap windows v0.75.4 addressed) runs earlier in the same tick: when already on three-phase and the freshly-computed target is 0, it unconditionally raises that back to the three-phase minimum (4.14 kW) to ride out a momentary cloud dip mid-session. Right after a mode switch the phase can still read 3 (carried over from whatever mode was active a moment before, e.g. Full), so this substituted a non-zero target before the mode-change bypass ever ran — same symptom as before (battery covering the gap), different cause. Now skipped specifically on the tick right after a mode change, using the same flag introduced in v0.75.4.
+
 ## [0.75.4] — 2026-07-18
 
 ### Fixed
