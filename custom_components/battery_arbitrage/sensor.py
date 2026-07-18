@@ -552,16 +552,17 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "alarm_threshold_pct": d.get("disk_alarm_threshold_pct"),
         },
     ),
-    # v0.42.0 — cumulative income from exported energy (DKK). TOTAL_INCREASING
-    # + MONETARY so HA records long-term statistics (use the Energy dashboard
-    # for arbitrary from/to sums); attributes give at-a-glance period totals
-    # and the daily series for the in-dashboard chart.
+    # v0.42.0 — cumulative income from exported energy (DKK). TOTAL + MONETARY
+    # so HA records long-term statistics (use the Energy dashboard for
+    # arbitrary from/to sums); attributes give at-a-glance period totals and
+    # the daily series for the in-dashboard chart. TOTAL_INCREASING is not
+    # valid for device_class=monetary, hence TOTAL.
     BatteryArbitrageSensorDescription(
         key="export_income",
         translation_key="export_income",
         icon="mdi:cash-plus",
         device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         native_unit_of_measurement="DKK",
         value_fn=lambda d: d.get("export_income_total", 0.0),
         attrs_fn=lambda d: {
@@ -579,7 +580,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         translation_key="import_cost",
         icon="mdi:cash-minus",
         device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         native_unit_of_measurement="DKK",
         value_fn=lambda d: d.get("import_cost_total", 0.0),
         attrs_fn=lambda d: {
@@ -592,13 +593,14 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         },
     ),
     # v0.48.0 — NET grid balance = export income − import cost. Can be negative
-    # (net buyer). MEASUREMENT, not total_increasing, since it moves both ways.
+    # (net buyer) and moves both ways, so TOTAL (not total_increasing, which
+    # is invalid for device_class=monetary anyway).
     BatteryArbitrageSensorDescription(
         key="net_grid_balance",
         translation_key="net_grid_balance",
         icon="mdi:scale-balance",
         device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.MEASUREMENT,
+        state_class=SensorStateClass.TOTAL,
         native_unit_of_measurement="DKK",
         value_fn=lambda d: d.get("net_grid_total", 0.0),
         attrs_fn=lambda d: {
@@ -630,7 +632,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         translation_key="total_savings_all",
         icon="mdi:piggy-bank-outline",
         device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         native_unit_of_measurement="DKK",
         value_fn=lambda d: d.get("actual_savings_total", 0.0),
         attrs_fn=lambda d: {"tracked_days": d.get("actual_savings_days", 0)},
@@ -1077,8 +1079,11 @@ class BatteryArbitrageBuyPriceBreakdownSensor(
     _attr_has_entity_name = True
     _attr_translation_key = "buy_price_breakdown"
     _attr_icon = "mdi:receipt-text-outline"
+    # A per-kWh price snapshot, not a monetary total — device_class=monetary
+    # only permits state_class None/"total", neither of which fits a price.
+    # Matches the other per-kWh price sensors (export_price, price_min, ...)
+    # which also omit device_class.
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_device_class = SensorDeviceClass.MONETARY
 
     def __init__(
         self,

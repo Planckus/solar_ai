@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  console.info('%c SOLAR AI CARDS %c v0.74.0 loading… ', 'color:white;background:#BA7517;font-weight:bold;', 'color:#BA7517;background:white;font-weight:bold;');
+  console.info('%c SOLAR AI CARDS %c v1.10.0 loading… ', 'color:white;background:#BA7517;font-weight:bold;', 'color:#BA7517;background:white;font-weight:bold;');
 
   // ---------------------------------------------------------------- helpers
 
@@ -30,6 +30,36 @@
   function moreInfo(el, entityId) {
     if (!entityId) return;
     fireEvent(el, 'hass-more-info', { entityId });
+  }
+
+  // Setting-explainer popup (v0.75.14, fixed v0.75.16). A fresh <ha-dialog>
+  // is created and appended to the document body on every open, then removed
+  // on close — ha-dialog (HA's bundled mwc-dialog wrapper) is already a
+  // registered custom element once the HA frontend has loaded, so this needs
+  // no import or extra registration step, matching the file's zero-dependency
+  // design. v0.75.14 originally reused one dialog instance across opens; that
+  // left it unable to reopen after the first close (reported live: only the
+  // first "?" worked, every subsequent one needed a full page reload).
+  // Create-fresh/remove-on-close sidesteps whatever internal open/close state
+  // the shared instance was getting stuck in.
+  function showHelpDialog(hass, title, text) {
+    const closeLabel = hass && hass.language && hass.language.slice(0, 2) === 'da' ? 'Luk' : 'Close';
+    const dlg = document.createElement('ha-dialog');
+    dlg.heading = title;
+    dlg.innerHTML = `
+      <div style="min-width:240px;max-width:420px;font-size:14px;line-height:1.6;color:var(--primary-text-color);padding:4px 2px 8px;white-space:pre-line;">${escapeHtml(text)}</div>
+      <mwc-button slot="primaryAction" data-sa-help-close>${escapeHtml(closeLabel)}</mwc-button>
+    `;
+    const remove = () => dlg.remove();
+    dlg.addEventListener('closed', remove);
+    dlg.addEventListener('click', (e) => {
+      if (e.target && e.target.closest && e.target.closest('[data-sa-help-close]')) {
+        if (typeof dlg.close === 'function') dlg.close();
+        else dlg.open = false;
+      }
+    });
+    document.body.appendChild(dlg);
+    dlg.open = true;
   }
 
   function navigate(path) {
@@ -142,6 +172,15 @@
     button.sa-btn.active { border-color: var(--primary-color); color: var(--primary-color); }
     button.sa-btn ha-icon { --mdc-icon-size: 20px; }
     ha-icon.lg { --mdc-icon-size: 24px; }
+    button.sa-help-btn {
+      all: unset; cursor: pointer; box-sizing: border-box;
+      width: 16px; height: 16px; min-width: 16px; border-radius: 50%;
+      border: 1px solid var(--secondary-text-color);
+      color: var(--secondary-text-color); font-size: 11px; font-weight: 600;
+      line-height: 14px; text-align: center; display: inline-flex;
+      align-items: center; justify-content: center; opacity: 0.6; flex-shrink: 0;
+    }
+    button.sa-help-btn:hover { opacity: 1; border-color: var(--primary-color); color: var(--primary-color); }
   `;
 
   // -------------------------------------------------------------- base card
@@ -827,6 +866,10 @@
       if (!hass) return;
       const cardColorRaw = NAMED_COLORS[c.icon_color] || c.icon_color || 'var(--primary-color)';
 
+      // Help texts are kept in a side array and referenced by index (not
+      // embedded in a data-* attribute) so arbitrary punctuation/length in
+      // the explainer text can't break HTML attribute quoting.
+      const helpTexts = [];
       const rowsHtml = (c.entities || []).map((row) => {
         if (typeof row === 'string') row = { entity: row };
         if (row.type === 'divider') return '<div style="border-top:1px solid var(--divider-color);margin:6px 0;"></div>';
@@ -842,12 +885,21 @@
         const valueHtml = pill
           ? `<span style="font-size:13px;padding:2px 10px;border-radius:10px;background:${pill.on ? 'var(--success-color)' : 'var(--secondary-background-color, rgba(127,127,127,0.15))'};color:${pill.on ? 'white' : 'var(--secondary-text-color)'};">${pill.label}</span>`
           : `<span style="font-size:15px;">${escapeHtml(text)}</span>`;
+        let helpBtnHtml = '';
+        if (row.help) {
+          const idx = helpTexts.length;
+          helpTexts.push({ title: name, text: row.help });
+          helpBtnHtml = `<button class="sa-help-btn" type="button" data-help-idx="${idx}" aria-label="Help">?</button>`;
+        }
         return `
           <div class="sa-erow" data-entity="${escapeHtml(row.entity || '')}" style="display:flex;align-items:center;gap:12px;padding:8px 0;cursor:pointer;">
             <div style="width:34px;height:34px;min-width:34px;border-radius:50%;background:color-mix(in srgb, ${rowColor} 18%, transparent);display:flex;align-items:center;justify-content:center;">
               <ha-icon icon="${escapeHtml(icon)}" style="color:${rowColor};--mdc-icon-size:19px;"></ha-icon>
             </div>
-            <div style="flex:1;min-width:0;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(name)}</div>
+            <div style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;">
+              <span style="font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(name)}</span>
+              ${helpBtnHtml}
+            </div>
             <div style="text-align:right;">${valueHtml}</div>
           </div>`;
       }).join('');
@@ -865,6 +917,13 @@
 
       this._root.querySelectorAll('.sa-erow[data-entity]').forEach((row) => {
         row.addEventListener('click', () => moreInfo(this, row.dataset.entity));
+      });
+      this._root.querySelectorAll('.sa-help-btn[data-help-idx]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();  // don't also trigger the row's moreInfo
+          const item = helpTexts[Number(btn.dataset.helpIdx)];
+          if (item) showHelpDialog(hass, item.title, item.text);
+        });
       });
     }
   }

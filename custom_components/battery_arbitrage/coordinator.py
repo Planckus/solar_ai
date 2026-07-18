@@ -109,7 +109,7 @@ from .const import (
     OVERNIGHT_MIN_TICKS,
     OVERNIGHT_SAMPLES_MAX,
     OVERNIGHT_MIN_NIGHTS,
-    OVERNIGHT_PERCENTILE,
+    DEFAULT_RESERVE_PERCENTILE_PCT,
     RESERVE_FACTOR_MIN,
     RESERVE_FACTOR_MAX,
     RESERVE_RATIO_SANE_LO,
@@ -339,6 +339,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Tier-1 model-health monitor (v0.64.0): cached issue list (recomputed on
         # the 5-min learning tick) + edge-tracking for the notification.
         self._model_health_issues: list[str] = []
+        # v0.75.13 — informational notes, distinct from issues: conditions
+        # worth surfacing but that don't warrant the "Problem" severity or
+        # the attention-needed notification (e.g. reserve factor pinned at
+        # its MINIMUM, which is plausibly good news — a very predictable
+        # house — not a data-quality problem the way pinning at MAXIMUM is).
+        self._model_health_notes: list[str] = []
         self._prev_model_unhealthy: bool = False
         # v0.66.0 Tier-2 — consecutive checks the capacity learner has been drifted,
         # for the bounded auto-reset circuit breaker.
@@ -1689,7 +1695,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # has drifted / pinned at a clamp / gone persistently wrong and
             # surface it (edge-triggered notification), instead of letting it
             # silently skew decisions the way the capacity/margin bugs did.
-            self._model_health_issues = self._check_model_health()
+            self._model_health_issues, self._model_health_notes = self._check_model_health()
             unhealthy = bool(self._model_health_issues)
             if unhealthy and not self._prev_model_unhealthy:
                 _LOGGER.warning(
@@ -2584,6 +2590,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             overnight_reserve_samples=len(self._stored.get("overnight_ratio_samples", [])),
             model_health_ok=not self._model_health_issues,
             model_health_issues=list(self._model_health_issues),
+            model_health_notes=list(self._model_health_notes),
             effective_floor_soc=int(floor_soc),
             # v0.28.6: short-term solar correction visibility
             solar_short_term_factor=round(self._st_solar_factor, 3),
@@ -3249,15 +3256,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             loc = slot_start.astimezone()
             house_kw = self.get_house_load_profile(weekend=loc.weekday() >= 5)[loc.hour]
             # v0.60.1 — correct the forecast by the learned per-hour accuracy
-            # factor, exactly as the DP optimiser does (_slot_factor). Using the
-            # raw (often optimistic) forecast here made the floor think solar
-            # covered the house earlier than it really would, shortening the dark
-            # bridge and under-reserving for the night.
-            solar_kw = (s[4] / 1000.0) * self.get_solar_accuracy_factor_for_hour(loc.hour)
+            # factor. Using the raw (often optimistic) forecast here made the
+            # floor think solar covered the house earlier than it really
+            # would, shortening the dark bridge and under-reserving for the
+            # night.
+            # v0.75.13 — now uses get_solar_confidence_factor_for_hour, the
+            # same confidence-percentile mechanism _dp_solve's _slot_factor
+            # already used (this comment used to claim the two matched
+            # "exactly" — they hadn't, since v0.44.0 upgraded the DP's copy
+            # and left this one on the plain median). At the default 50th
+            # percentile this is numerically identical to before; lowering
+            # solar_confidence_pct now makes the floor more conservative too,
+            # not just the DP's own price plan.
+            solar_kw = (s[4] / 1000.0) * self.get_solar_confidence_factor_for_hour(loc.hour)
             solar_covers = house_kw > 0 and solar_kw >= onset * house_kw
             slot_end = slot_start + timedelta(hours=float(dur_h))
             charge_here = any(slot_start <= pc < slot_end for pc in planned_charge_dts)
-            slots.append((slot_start, house_kw, float(dur_h), solar_covers, charge_here))
+            slots.append((slot_start, house_kw, float(dur_h), solar_covers, charge_here, solar_kw))
 
         if not slots:
             return None
@@ -3271,16 +3286,33 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Across the dark bridge (until solar covers the house again, or the
         # horizon cap): sum the house energy consumed and the grid-charge hours
         # planned within it.
+        #
+        # v0.75.13 — house energy is now netted against that slot's own solar
+        # (max(0, house_kw - solar_kw)) instead of reserving the full house
+        # load for every slot until the onset threshold trips. Before, a slot
+        # where solar was already covering 60% of house load — mid dawn-ramp,
+        # not yet at the DYNAMIC_FLOOR_SOLAR_ONSET_FACTOR threshold that ends
+        # the bridge — was reserved at 100% anyway, over-sizing the floor
+        # exactly through the highest-value morning hours. This only changes
+        # how much is reserved WITHIN the bridge; the onset threshold that
+        # decides when the bridge ENDS (solar_covers, used for the break
+        # below) is completely unchanged, so the specific past incident that
+        # threshold was raised to fix (the bridge ending too early at first
+        # light) isn't touched by this change. And solar_kw here is already
+        # the confidence-percentile-corrected value (v0.75.13, see
+        # get_solar_confidence_factor_for_hour above) — not the raw
+        # forecast — so netting it stays exactly as conservative as the user
+        # already set solar_confidence_pct to be.
         bridge_house_kwh = 0.0
         bridge_charge_h = 0.0
         bridge_h = 0.0
         for i in range(start_idx, len(slots)):
-            _st, house_kw, dur_h, solar_covers, charge_here = slots[i]
+            _st, house_kw, dur_h, solar_covers, charge_here, solar_kw = slots[i]
             if i > start_idx and solar_covers:
                 break
             if bridge_h >= DYNAMIC_FLOOR_REFILL_MAX_H:
                 break
-            bridge_house_kwh += house_kw * dur_h
+            bridge_house_kwh += max(0.0, house_kw - solar_kw) * dur_h
             if charge_here:
                 bridge_charge_h += dur_h
             bridge_h += dur_h
@@ -3289,10 +3321,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # v0.61.0 — a safety factor on the deterministic reserve, NOT the old
         # self-learning integrator (which ratcheted on noise and was poisoned by
         # post-restart SoC=0 reads → pegged the floor at the 85% cap). v0.61.x
-        # step 2: this is the empirical p80 of the overnight house-load forecast
-        # error over clean nights once warm, clamped to a sane band, falling back
-        # to the fixed factor until then — so it adapts to this house's variance
-        # but can never leave [RESERVE_FACTOR_MIN, RESERVE_FACTOR_MAX].
+        # step 2: this is the empirical percentile (default 80, v0.75.14 —
+        # user-configurable via 'Reserve percentile') of the overnight
+        # house-load forecast error over clean nights once warm, clamped to a
+        # sane band, falling back to the fixed factor until then — so it adapts
+        # to this house's variance but can never leave
+        # [RESERVE_FACTOR_MIN, RESERVE_FACTOR_MAX].
         margin = self._reserve_factor()
         # Battery energy the house will draw over the bridge (discharge losses in).
         house_need_kwh = bridge_house_kwh / eff
@@ -3338,8 +3372,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     # ── Overnight reserve-factor learning (v0.61.x step 2) ────────────────
     # Passively measures the overnight house-load forecast error (actual vs
     # profile-predicted core-night house energy) over CLEAN nights, then sizes
-    # the reserve factor as the p80 of that error — clamped, with the fixed
-    # factor as the fallback until warm. Mirrors the _update_daily_solar
+    # the reserve factor as a configurable percentile (default 80) of that
+    # error — clamped, with the fixed factor as the fallback until warm.
+    # Mirrors the _update_daily_solar
     # date-rollover pattern. base_load_kw already excludes the EV, so the EV
     # never contaminates the house-load measurement.
     def _overnight_window_key(self, now: datetime) -> str:
@@ -3400,21 +3435,25 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
     def _reserve_factor(self) -> float:
         """Effective reserve safety factor for the dynamic floor. Once warm, the
-        empirical p80 of clean-night forecast error (clamped to the safety band).
-        Until then, the user-set 'Reserve safety factor' number (v0.66.0,
-        default 1.3) — so the reserve can be tuned immediately (lower = sell more
-        into peaks, higher = hold more for the night) before the data takes over."""
+        empirical percentile (v0.75.14 — user-configurable via 'Reserve
+        percentile', default 80) of clean-night forecast error, clamped to the
+        safety band. Until then, the user-set 'Reserve safety factor' number
+        (v0.66.0, default 1.3) — so the reserve can be tuned immediately (lower =
+        sell more into peaks, higher = hold more for the night) before the data
+        takes over."""
         samples: list[float] = self._stored.get("overnight_ratio_samples", [])
         if len(samples) < OVERNIGHT_MIN_NIGHTS:
             manual = float(self._stored.get(
                 "reserve_factor_manual", DYNAMIC_FLOOR_RESERVE_FACTOR))
             return round(max(1.0, min(2.0, manual)), 3)
+        pct = float(self._stored.get(
+            "reserve_percentile_pct", DEFAULT_RESERVE_PERCENTILE_PCT)) / 100.0
         s = sorted(samples)
-        k = (len(s) - 1) * OVERNIGHT_PERCENTILE
+        k = (len(s) - 1) * pct
         lo = int(k)
         hi = min(lo + 1, len(s) - 1)
-        p80 = s[lo] + (s[hi] - s[lo]) * (k - lo)
-        return round(max(RESERVE_FACTOR_MIN, min(RESERVE_FACTOR_MAX, p80)), 3)
+        p = s[lo] + (s[hi] - s[lo]) * (k - lo)
+        return round(max(RESERVE_FACTOR_MIN, min(RESERVE_FACTOR_MAX, p)), 3)
 
     def _blocked_sell_hours(self) -> set[int]:
         """Parse the user's 'Blocked sell hours' text (comma-separated hours of
@@ -3835,6 +3874,29 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         back to the global factor. Used for diagnostics + the dashboard sensor."""
         return [self.get_solar_accuracy_factor_for_hour(h) for h in range(24)]
 
+    def get_solar_confidence_factor_for_hour(self, hour: int) -> float:
+        """Per-hour solar accuracy factor at the user's configured confidence
+        percentile (`solar_confidence_pct`, v0.44.0), falling back to the
+        plain per-hour median (`get_solar_accuracy_factor_for_hour`, itself
+        falling back further to the global rolling factor) when that hour's
+        percentile bucket hasn't warmed up yet. At the default confidence of
+        50 this IS the median — numerically identical to calling
+        `get_solar_accuracy_factor_for_hour` directly.
+
+        v0.75.13 — the DP optimiser's own price plan (`_dp_solve`'s
+        `_slot_factor`) has used this confidence-percentile mechanism since
+        v0.44.0; the dynamic discharge floor (`_compute_dynamic_floor_soc`)
+        was still on the plain median only. So lowering `solar_confidence_pct`
+        to make the PROFIT side more conservative about optimistic solar had
+        no effect on the SAFETY side at all — this gives the floor the same
+        knob, sourced from the same underlying data.
+        """
+        confidence = float(self._stored.get(
+            "solar_confidence_pct", DEFAULT_SOLAR_CONFIDENCE_PCT,
+        ))
+        pct = self.get_solar_hour_percentile(hour, confidence)
+        return pct if pct is not None else self.get_solar_accuracy_factor_for_hour(hour)
+
     def get_solar_hourly_sample_counts(self) -> list[int]:
         """Return 24 sample counts (only samples where forecast ≥ comparison
         threshold, i.e. only daylight samples that contribute to the median).
@@ -3991,15 +4053,30 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         }
 
     # ── Tier-1 model-health monitor (v0.64.0) ─────────────────────────────
-    def _check_model_health(self) -> list[str]:
+    def _check_model_health(self) -> tuple[list[str], list[str]]:
         """Detect a learned model that has drifted, pinned at a safety clamp, or
-        whose predictions are persistently wrong, and return human-readable
-        issues. Detection + surfacing ONLY — it never changes a model itself
-        (that boundary is what keeps the self-correction stable). Would have
-        caught both bugs hit in this development cycle: the capacity learner
-        drifting to ~16.9 vs the real 12.1, and the reserve margin pinning at its
-        cap. Cheap enough to call on the 5-min learning tick."""
+        whose predictions are persistently wrong, and return
+        (issues, notes) as human-readable strings. Detection + surfacing
+        ONLY — it never changes a model itself (that boundary is what keeps
+        the self-correction stable). Would have caught both bugs hit in this
+        development cycle: the capacity learner drifting to ~16.9 vs the real
+        12.1, and the reserve margin pinning at its cap. Cheap enough to call
+        on the 5-min learning tick.
+
+        v0.75.13 — `issues` (drives the "Problem" binary_sensor and the
+        attention-needed notification) is now reserved for conditions that
+        actually need a look. `notes` is for genuinely different conditions
+        that are only worth surfacing, not alarming on — reserve factor
+        pinned at its MINIMUM is the first of these: pinning at MAXIMUM means
+        the learned overnight need exceeds the safety cap, a real thing to
+        check; pinning at MINIMUM plausibly just means this house is unusually
+        predictable and barely any margin is needed, or at most that the
+        clamp itself (not a data problem) is now the binding constraint.
+        Treating both edges identically as "Problem" was misleading — this
+        was flagging live on a real system the night this was written.
+        """
         issues: list[str] = []
+        notes: list[str] = []
         # 1. Battery-capacity learner drift vs the authoritative (GUI/config) value.
         configured = float(self._stored.get(
             "battery_capacity", self.config.get("battery_capacity", DEFAULT_BATTERY_CAPACITY)))
@@ -4018,7 +4095,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     f"Reserve factor pinned at max ({RESERVE_FACTOR_MAX}): overnight need "
                     f"exceeds the cap — consider raising it")
             elif rf <= RESERVE_FACTOR_MIN + 1e-6:
-                issues.append(f"Reserve factor pinned at min ({RESERVE_FACTOR_MIN})")
+                notes.append(
+                    f"Reserve factor pinned at min ({RESERVE_FACTOR_MIN}) — this house's "
+                    f"overnight need is consistently low relative to the deterministic "
+                    f"prediction; not necessarily a problem")
         # 3. Auto round-trip efficiency at a clamp edge (implausible learned value).
         eff = self.get_auto_efficiency()
         if eff is not None and (eff <= MODEL_HEALTH_EFFICIENCY_LO or eff >= MODEL_HEALTH_EFFICIENCY_HI):
@@ -4036,7 +4116,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 issues.append(f"Prediction accuracy degraded: 7-day SoC error {mae:.0f}%")
         except Exception:  # noqa: BLE001 — observability must never break the loop
             pass
-        return issues
+        return issues, notes
 
     # ------------------------------------------------------------------ #
     # Action log (export / grid-charge session tracking)                  #
@@ -4389,8 +4469,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # anticipate.
         #
         # Conditions (ALL required):
-        #   1. effective_mode == EV_MODE_PV (checked at override apply site
-        #      below, after _resolve_effective_ev_mode)
+        #   1. effective_mode in (EV_MODE_PV, EV_MODE_PV_BATTERY) (checked at
+        #      override apply site below, after _resolve_effective_ev_mode;
+        #      v0.75.14 — PV_BATTERY added, see that site's comment)
         #   2. battery_soc >= max_soc - 2 (battery has no headroom)
         #   3. floor_active (price-floor block open — export is blocked)
         #   4. solar_kw > 0.1 (PV is actually producing something — even if
@@ -4479,6 +4560,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             min_kw, max_kw, priority_soc,
             grid_export_kw=grid_export_kw,
             ev_last_amps=self._ev_last_amps,
+            mode_just_changed=self._ev_mode_change_pending,
         )
 
         # v0.39.17 — Battery-full override.
@@ -4500,8 +4582,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # Reset the marker so we only flag actually-override-induced
             # sessions for the soft cool-down.
             self._ev_session_was_override_induced = False
+        # v0.75.14 — extended to PV_BATTERY alongside plain PV. PV_BATTERY's own
+        # gap-filling logic will happily drain the house battery to cover the
+        # EV once surplus reads low — exactly the MPPT-throttled reading this
+        # override exists to see through. The `battery_covering_ev` check right
+        # below already yields the override the moment real discharge appears,
+        # regardless of which mode triggered it, so PV_BATTERY gets the same
+        # backoff plain PV always had.
         battery_full_override = (
-            override_preconditions_ok and effective_mode == EV_MODE_PV
+            override_preconditions_ok
+            and effective_mode in (EV_MODE_PV, EV_MODE_PV_BATTERY)
         )
         # v0.39.21 — Active ramp. In the override regime (battery full +
         # export blocked) MPPT self-throttles to match whatever the AC bus
@@ -5044,8 +5134,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # tapering. Switched to a fixed EV_OVERRIDE_NEAR_FULL_SOC (96%), measured
         # directly against this battery's actual charge-taper onset rather than
         # derived from the configurable max-SoC setting.
+        #
+        # v0.75.14 — extended from EV_MODE_PV-only to also cover PV_BATTERY.
+        # PV_BATTERY mode's own gap-filling logic (below, in
+        # _compute_ev_target_kw) will happily drain the house battery to cover
+        # the EV once solar surplus reads low — exactly the MPPT-throttled
+        # reading this override exists to see through. The
+        # `battery_discharge_kw <= ...THRESHOLD_KW` gate immediately below is
+        # the backoff: it already requires the battery to NOT be discharging
+        # before the override activates at all, and `_update_override_ramp`
+        # re-checks live discharge on every subsequent tick. So the moment
+        # PV_BATTERY's own logic starts genuinely draining the battery to cover
+        # the gap, this override backs off on its own — it can only ever force
+        # three-phase and ramp current while the battery stays idle, i.e. while
+        # what's being harvested really is otherwise-wasted curtailed PV, not
+        # battery power dressed up as solar.
         override_active = (
-            effective_mode == EV_MODE_PV
+            effective_mode in (EV_MODE_PV, EV_MODE_PV_BATTERY)
             and solar_kw > 0.1
             and not override_cooldown_active
             and battery_discharge_kw <= EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW
@@ -5155,6 +5260,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             min_kw, max_kw, priority_soc,
             grid_export_kw=grid_export_kw, ev_last_amps=self._ev_last_amps,
             phases=PHASES, current_step=current_step,
+            mode_just_changed=self._ev_mode_change_pending,
         )
         # Convert the (already step-aligned) target to per-phase amps at the
         # register's native 0.1 A resolution, clamped to the user's envelope.
@@ -5385,6 +5491,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ev_last_amps: int = 0,
         phases: int = EV_PHASES,
         current_step: float = 1.0,
+        mode_just_changed: bool = False,
     ) -> tuple[float, str]:
         """Pure mode→target translation. Returns (target_kw, human-readable reason).
 
@@ -5414,6 +5521,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         surplus tracking alone govern the running EV (it returns 0 when
         surplus < min, triggering the natural stop_window) eliminates
         the oscillation.
+
+        v0.75.12 — `mode_just_changed` also opens the gate (in addition to
+        `ev_last_amps == 0`). `ev_last_amps` is the raw last-commanded current
+        from WHATEVER mode was active a moment ago, not specific to PV mode's
+        own decision history — switching Full → PV mid-session leaves it
+        non-zero (Full was just commanding max_kw), which made the gate treat
+        a car that was charging for a completely different reason as "already
+        legitimately charging under PV mode, don't interrupt it" and skip the
+        battery-priority check entirely. A user reported exactly this: Full
+        mode charging, switched to solar-only, and the EV kept charging past
+        the priority SoC threshold instead of waiting for the battery to
+        fill. The v0.39.20 anti-thrash reasoning still holds for an ONGOING
+        pv-mode session — this only re-opens the gate for the single tick
+        right after a deliberate mode switch, same scope as the other
+        mode-change fixes tonight.
         """
         if mode == EV_MODE_LOCKED:
             return 0.0, self._msg("Mode: Locked — no charging", "Mode: Låst — ingen opladning")
@@ -5425,10 +5547,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # v0.39.19 — bypass when grid_export_kw > min_kw.
         # v0.39.20 — bypass when EV is already charging (the gate is
         # an IDLE→start gate, not a stop-the-running-EV gate).
+        # v0.75.12 — also apply the gate (not bypass) on the tick right after
+        # a mode change, even if ev_last_amps is stale-nonzero from whatever
+        # mode was active before. See docstring.
         if (mode == EV_MODE_PV
                 and battery_soc < priority_soc
                 and grid_export_kw <= min_kw
-                and ev_last_amps == 0):
+                and (ev_last_amps == 0 or mode_just_changed)):
             return 0.0, self._msg(
                 f"Battery prioritised: {battery_soc:.0f}% / {priority_soc:.0f}% "
                 f"— EV waits until the battery is full",
@@ -7594,8 +7719,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
           price across the planning window). Prevents the trivial-discharge bug
           at hour N-1 where V was previously zero.
         - `spread_ok` uses the cheapest buy *after* the candidate export slot,
-          not the global cheapest. Stops the model from approving late-day
-          exports that have no viable recharge ahead.
+          not the global cheapest — OR a genuine solar-funded refill later in
+          the horizon (v0.75.13), so a real export opportunity isn't vetoed
+          on a day with free solar coming but no cheap grid price. Stops the
+          model from approving late-day exports that have no viable recharge
+          ahead, grid- or solar-funded.
         - Battery degradation cost (DKK/kWh cycled) is subtracted from both
           CHARGE and EXPORT rewards so the optimizer prices in finite cycle life.
         """
@@ -7642,7 +7770,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             s[0]: (s[4] / 1000.0) * _slot_factor(s[0]) for s in solar_slot_data
         }
 
-        ev_block_prob_threshold = EV_CHARGE_BLOCK_PROBABILITY
         while len(ev_charge_hourly) < 24:
             ev_charge_hourly.append(0.0)
         while len(house_load_profile) < 24:
@@ -7708,7 +7835,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "buy": round(buy_h, 4),
                 "sell": round(sell_h, 4),
                 "idle_delta_pct": idle_delta_pct,
-                "ev_blocked": (ev_prob >= ev_block_prob_threshold) or ev_session_active,
+                # v0.75.13 — the expected/certain EV draw for this slot,
+                # kept instead of collapsing straight to a binary "blocked"
+                # flag; see the CHARGE branch below for how it's used.
+                "ev_kw": ev_kw,
             })
 
         N = len(slot_data)
@@ -7724,6 +7854,29 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             if t < N - 1:
                 running_min = min(running_min, slot_data[t + 1]["buy"])
             best_buy_after[t] = running_min
+
+        # ── Solar-funded refill available AFTER each slot ──────────────────
+        # v0.75.13 — the check above only recognises a GRID-funded refill.
+        # The value function's own idle-dynamics accounting (idle_delta_pct
+        # below) already knows solar can refill the battery for free — this
+        # pre-filter couldn't see that, so it could veto a genuinely
+        # profitable export on a day with real solar and a thin grid spread
+        # (exactly a "prices too flat for arbitrage" day) purely because no
+        # cheap grid buy existed later, even though free solar did. Cumulative
+        # sum (not running min, since solar refill accumulates across several
+        # slots rather than coming from one best slot) of the positive
+        # idle_delta_pct — genuine solar surplus over house load — for every
+        # slot strictly after t. Gated at MIN_EXPORTABLE_KWH, the same
+        # "worth bothering with" threshold already used elsewhere for export
+        # decisions, so a negligible solar dribble doesn't unlock the gate.
+        solar_kwh_after: list[float] = [0.0] * N
+        running_solar_kwh = 0.0
+        for t in range(N - 1, -1, -1):
+            if t < N - 1:
+                next_idle_pct = slot_data[t + 1]["idle_delta_pct"]
+                if next_idle_pct > 0:
+                    running_solar_kwh += next_idle_pct / 100.0 * capacity_kwh
+            solar_kwh_after[t] = running_solar_kwh
 
         # ── Terminal value: worth of SoC remaining at the horizon end ──
         # v0.63.0 — value retained SoC at the AVOIDED-BUY price, not the sell
@@ -7777,13 +7930,31 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             buy_h = sd["buy"]
             sell_h = sd["sell"]
             idle_delta = sd["idle_delta_pct"]
-            ev_blocked = sd["ev_blocked"]
+            ev_kw = sd["ev_kw"]
             dur_h = sd["dur_h"]
 
+            # v0.75.13 — the battery's allowed charge rate for this slot is
+            # reduced by the EV's expected draw, rather than the CHARGE
+            # action being entirely unavailable above a hard EV-probability
+            # threshold. charge_rate_kw is the grid-headroom-capped rate for
+            # a SINGLE draw; sharing that same headroom with a simultaneous
+            # EV draw means subtracting the EV's share from it. At ev_kw=0
+            # this is unchanged from before; at high EV probability/certainty
+            # it converges to the old fully-blocked behaviour when
+            # charge_rate_kw itself is smaller than the EV's draw, but
+            # recovers the real spare headroom in between instead of
+            # discarding it at a single 0.7 cliff. The DP's plan is
+            # inherently a forecast either way — the actual command at
+            # execution time is still re-capped to LIVE headroom every cycle
+            # by _maintain_charge_power, so an imprecise planning-time
+            # estimate here can't cause a real overcurrent, only a
+            # suboptimal plan that gets corrected when the slot arrives.
+            effective_charge_rate_kw = max(0.0, charge_rate_kw - ev_kw)
+
             # Per-slot SoC step sizes (% of capacity) — duration matters at 15-min granularity
-            charge_delta_slot = charge_rate_kw * charge_eff * dur_h / capacity_kwh * 100.0
+            charge_delta_slot = effective_charge_rate_kw * charge_eff * dur_h / capacity_kwh * 100.0
             export_delta_slot = export_rate_kw * dur_h / capacity_kwh * 100.0
-            charge_kwh_slot = charge_rate_kw * dur_h
+            charge_kwh_slot = effective_charge_rate_kw * dur_h
 
             # Forward-only spread check: cheapest buy AFTER this slot
             #
@@ -7805,10 +7976,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             recharge_cost_after = (
                 buy_after / charge_eff if charge_eff > 0 else buy_after
             )
-            spread_ok = (
+            grid_spread_ok = (
                 buy_after != float("inf")
                 and sell_h - recharge_cost_after >= min_spread
             )
+            # v0.75.13 — a solar-funded refill is free, so it doesn't need to
+            # clear min_spread the way a grid refill does; sell_h > 0 (checked
+            # separately below at the EXPORT branch's own gate) is enough to
+            # make it worthwhile. See solar_kwh_after's own comment above.
+            solar_refill_ok = solar_kwh_after[t] >= MIN_EXPORTABLE_KWH
+            spread_ok = grid_spread_ok or solar_refill_ok
 
             new_V: list[float] = [0.0] * SOC_STATES
 
@@ -7843,7 +8020,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 # ── CHARGE ────────────────────────────────────────────────
                 # Cost = (buy_price + degradation) × kWh charged from grid.
                 # Same floor/max-aware accounting for residual idle dynamics.
-                if s < soc_max and not ev_blocked:
+                # v0.75.13 — gated on effective_charge_rate_kw (already
+                # reduced by the EV's expected draw above) clearing the same
+                # "not worth a token charge" minimum used elsewhere, instead
+                # of the old hard ev_blocked cliff.
+                if s < soc_max and effective_charge_rate_kw >= GRID_MIN_CHARGE_KW:
                     unclamped_ch = s + charge_delta_slot + idle_delta
                     val_ch = -charge_kwh_slot * (buy_h + degradation_cost)
                     if unclamped_ch < soc_floor:

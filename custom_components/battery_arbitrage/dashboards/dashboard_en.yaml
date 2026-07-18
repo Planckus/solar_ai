@@ -162,29 +162,38 @@ views:
       - entity: select.solar_ai_ev_minimum_opladningshastighed
         name: Minimum charge rate
         icon: mdi:battery-charging-low
+        help: Lowest power the car charges at, whenever it charges at all. Most cars can't charge below about 6 A — don't set this below your car's own limit.
       - entity: select.solar_ai_ev_maksimum_opladningshastighed
         name: Maximum charge rate
         icon: mdi:battery-charging-high
+        help: Highest power the car is allowed to draw, regardless of how much solar or grid headroom is available.
       - entity: number.solar_ai_batteri_forst_taerskel_ev_venter_til_husbatteriet_nar_dette_niveau
         name: Battery-first threshold (%)
         icon: mdi:battery-arrow-up
+        help: In plain solar mode, the EV waits to charge until the house battery has reached this SoC — unless surplus power is already being exported to the grid.
       - entity: number.solar_ai_trefaset_skift_taerskel_kw
         name: Three-phase switch threshold (kW)
         icon: mdi:sine-wave
+        help: Solar surplus must reach this value before the charger switches from single-phase to three-phase charging.
       - entity: number.solar_ai_faseudjaevnings_vindue_min
         name: Phase-averaging window (min)
         icon: mdi:chart-bell-curve
+        help: How many minutes' rolling average of the solar surplus is used for the phase decision — dampens switching caused by passing clouds.
       - entity: select.solar_ai_stromtrin_opladning
         name: Charging current step
         icon: mdi:current-ac
+        help: How finely the charger's current is adjusted to track the solar surplus (e.g. 1 A at a time, or a finer step on supported hardware).
       - entity: number.solar_ai_faseskift_interval_min
         name: Phase-switch interval (min)
         icon: mdi:timer-sync-outline
+        help: How long low surplus must persist before the charger drops back to single-phase — prevents rapid back-and-forth switching.
       - entity: number.solar_ai_override_rampe_trin_s
         name: Override ramp step (s)
         icon: mdi:speedometer
+        help: How often the current is raised one step when the system is actively trying to harvest otherwise-wasted solar surplus (battery full + selling blocked).
       - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
         name: Default mode on connect
+        help: The EV mode automatically selected every time the car is plugged into the charger.
         icon: mdi:car-connected
     - type: markdown
       content: '### Charger info'
@@ -735,12 +744,16 @@ views:
       entities:
       - entity: switch.battery_arbitrage_arbitrage_aktiv
         name: Solar AI on/off
+        help: Turns off all automatic control. The battery and charger stay in whatever mode they were last in — they are not reset.
       - entity: switch.solar_ai_notifikationer_ved_tilstandsskift
         name: Notifications on mode change
+        help: Send a notification every time Solar AI switches between export, grid charging, and self-consumption.
       - entity: switch.solar_ai_15_minutters_prisoplosning
         name: 15-min price resolution
+        help: Use 15-minute electricity prices instead of hourly prices, if your supplier provides them. Gives more precise planning around price jumps.
       - entity: switch.solar_ai_auto_fuld_ved_negativ_pris
         name: 'EV: Auto-Full on negative price'
+        help: Automatically switches the EV to Full mode whenever the spot price goes negative, and switches back to the previous mode once the price is positive again.
     - type: custom:solar-ai-entities-card
       title: Battery limits
       icon_color: blue
@@ -749,22 +762,34 @@ views:
       entities:
       - entity: number.solar_ai_batterikapacitet_kwh
         name: Battery capacity (kWh)
+        help: The battery's nominal capacity. Used to convert SoC percentage into kWh throughout every calculation — a wrong value produces a wrong reserve and wrong planning.
       - entity: number.solar_ai_minimum_soc_eksport
         name: Minimum SoC (export)
+        help: The battery is never sold down below this level. The actual floor can sit higher overnight — see "Effective floor (active)" — but never lower than this.
       - entity: number.solar_ai_maksimum_soc_netopladning
         name: Maximum SoC (grid charge)
+        help: Cap on how high the battery may be charged from the grid during an arbitrage charge.
       - entity: number.solar_ai_eksporteffekt_graense_0_ingen
         name: Export-power limit (kW)
+        help: Cap on how much power is exported to the grid at once. 0 = no limit.
       - entity: number.solar_ai_net_importgraense
         name: Grid-import limit (kW)
+        help: Your main fuse/breaker's limit. Solar AI keeps EV + battery charging + house load under this value to avoid tripping the breaker.
       - entity: switch.solar_ai_dynamisk_afladningsgulv_selvlaerende
         name: Dynamic discharge floor (auto)
+        help: When on, tonight's reserve is calculated dynamically from expected house load and solar through to tomorrow, instead of a fixed minimum level. Recommended on.
       - entity: sensor.solar_ai_effektivt_afladningsgulv
         name: Effective floor (active)
+        help: The actual SoC limit right now — Minimum SoC plus the dynamic overnight reserve, if enabled. This is the real limit the battery is being managed against at this moment.
       - entity: number.solar_ai_reserve_sikkerhedsfaktor
         name: Reserve safety factor
+        help: Safety margin on top of the calculated overnight reserve, e.g. 1.3 = 30% extra. Used until the system has learned this house's actual consumption pattern (7 clean nights), after which the self-learning value (Reserve percentile) takes over.
+      - entity: number.solar_ai_reserve_percentil_prognosefejl_daekning_nar_nataflaeringen_er_varm_80_tidligere_fast_adfaerd
+        name: Reserve percentile (%)
+        help: Once the system is "warmed up" (7 clean nights), the reserve is driven by this percentile of the observed forecast error instead of the fixed factor above. Lower = smaller reserve, more available to sell — at the cost of slightly more risk of a tight night. 80 is the default and matches the prior fixed behaviour.
       - entity: binary_sensor.solar_ai_modelhelbred
         name: Model health
+        help: 'Off = no problem (the normal state). On = a problem was detected. Watches the self-learning models (reserve, battery capacity, efficiency, charge rates) for drift or persistently wrong predictions. Only raises an alarm — never corrects anything automatically.'
     - type: custom:solar-ai-entities-card
       title: Price parameters
       icon_color: amber
@@ -773,14 +798,19 @@ views:
       entities:
       - entity: number.solar_ai_moms_pa_kob
         name: VAT (%)
+        help: 'VAT rate on buying electricity. Only used in manual price mode, and in Strømligning mode if "manual VAT/markup/duty overrides" is enabled during setup. With plain Octopus or Strømligning pricing, VAT is already included in the all-in price fetched directly from the supplier, and this setting has no effect.'
       - entity: number.solar_ai_elafgift_dkk_kwh
         name: Electricity duty
+        help: 'The Danish electricity duty (elafgift) per kWh, added on top of the buy price in manual price mode and in Strømligning with manual overrides. With plain Octopus or Strømligning pricing, the duty is already included in the supplier''s price, and this setting has no effect.'
       - entity: number.solar_ai_spotpris_tillaeg_elhandlertillaeg
         name: Spot-price markup
+        help: 'Your retailer''s fixed markup per kWh on top of the spot price (e.g. a subscription fee converted to øre/kWh, or a flat markup). Used in manual price mode and in Strømligning with manual overrides. With plain Octopus or Strømligning pricing, the retailer''s own markup is already included in their price, and this setting has no effect.'
       - entity: number.solar_ai_salgsgebyr_pr_kwh
         name: Sell fee (export)
+        help: 'Fee your retailer/grid company deducts per kWh you sell to the grid. Subtracted from the sell price — but if you selected a named sell-side company with a known fee during setup, that fee is used instead of this value.'
       - entity: number.solar_ai_minimum_eksportpris_0_tillad_negativ
         name: Minimum export price
+        help: Selling is blocked once the price falls to or below this value. 0 = allow selling all the way down into negative prices.
     - type: custom:solar-ai-entities-card
       title: Optimizer
       icon_color: purple
@@ -789,8 +819,10 @@ views:
       entities:
       - entity: number.solar_ai_minimum_arbitrage_spread
         name: Minimum gain per kWh
+        help: How large the gap between buy and sell price must be at minimum before the system charges the battery from the grid to sell it again later. Higher = fewer but safer trades.
       - entity: number.solar_ai_batteri_slidomkostning_dkk_kwh_cyklet
         name: Battery wear cost
+        help: Estimated battery wear per kWh charged/discharged, counted as a cost in every arbitrage calculation. Deducted on both the charging and selling side of a cycle, so the real bar for a trade is higher than "Minimum gain" alone suggests.
     - type: custom:solar-ai-entities-card
       title: System
       icon_color: grey
@@ -803,6 +835,7 @@ views:
         name: Low disk space (alarm)
       - entity: number.solar_ai_alarmgraense_for_lav_diskplads_ledig
         name: Alarm threshold (% free)
+        help: Trips the "Low disk space" alarm once less than this percentage of disk space is free on the Home Assistant server.
     - type: custom:solar-ai-entities-card
       title: Notifikationer
       icon_color: orange
