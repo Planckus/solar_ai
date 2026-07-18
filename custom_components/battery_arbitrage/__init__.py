@@ -65,7 +65,6 @@ from .const import (
     DEFAULT_TARIFF_FETCH_ENABLED,
     DEFAULT_EV_SCHEDULED_FALLBACK_MODE,
     DEFAULT_FAST_POLL_SECONDS,
-    CONF_SPOT_MARKUP,
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
     CONF_CREATE_DASHBOARD,
@@ -89,7 +88,6 @@ from .const import (
     DEFAULT_LIVE_DATA_SOURCE,
     DEFAULT_EV_CONTROLLER_ENABLED,
     DEFAULT_EV_DEFAULT_MODE,
-    DEFAULT_SPOT_MARKUP,
     FOXESS_BATTERY_CHARGE_POWER,
     FOXESS_BATTERY_CHARGE_TOTAL,
     FOXESS_BATTERY_DISCHARGE_POWER,
@@ -163,8 +161,10 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("Battery Arbitrage: migrated config entry to v5")
 
     if entry.version < 6:
-        # v5 → v6: fix old Dinel capacity-charges GLN → correct nettarif C time GLN;
-        # also seed the new spot_markup field (retailer's per-kWh margin).
+        # v5 → v6: fix old Dinel capacity-charges GLN → correct nettarif C time GLN.
+        # (This step also used to seed a config-entry spot_markup field, removed in
+        # v0.75.7 — the real value has always lived in dashboard storage, driven by
+        # the number.py entity; the config-entry copy was never read by anything.)
         _OLD_DINEL_CAPACITY_GLN = "5790000610976"
         if new_data.get(CONF_DSO_GLN) == _OLD_DINEL_CAPACITY_GLN:
             new_data[CONF_DSO_GLN] = DEFAULT_DSO_GLN
@@ -172,7 +172,6 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "Battery Arbitrage: corrected Dinel DSO GLN from %s to %s",
                 _OLD_DINEL_CAPACITY_GLN, DEFAULT_DSO_GLN,
             )
-        new_data.setdefault(CONF_SPOT_MARKUP, DEFAULT_SPOT_MARKUP)
         hass.config_entries.async_update_entry(entry, data=new_data, version=6)
         _LOGGER.info("Battery Arbitrage: migrated config entry to v6")
 
@@ -622,7 +621,13 @@ def _register_services(hass: HomeAssistant) -> None:
                     continue
                 tried.append(tx)
                 try:
-                    ok = await cp.remote_stop_transaction(int(tx))
+                    # v0.75.10 — retries=0: this loop already has its own
+                    # fallback strategy across several candidate transaction
+                    # ids, so the new default per-call retry/backoff in
+                    # remote_stop_transaction would slow down cycling through
+                    # them for no benefit (a rejected candidate here means
+                    # "wrong id", not "transient failure").
+                    ok = await cp.remote_stop_transaction(int(tx), retries=0)
                 except Exception as err:  # noqa: BLE001
                     _LOGGER.warning(
                         "force_stop_charger %s: tx=%s raised %s", cid, tx, err,

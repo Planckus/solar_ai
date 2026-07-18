@@ -9,6 +9,66 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.75.11] — 2026-07-18
+
+### Changed
+
+- **The DP optimizer's export pre-filter (`spread_ok`) now prices a future recharge using the same efficiency accounting the CHARGE branch actually uses.** It previously divided the future buy price by the full round-trip efficiency instead of the charge-side-only efficiency, overstating the true refill cost and making this gate stricter than the value function it filters for ever actually prices a recharge at. Since `spread_ok` only decides whether export is *offered* as an option at a given state — the real profit calculation is unaffected either way — this could only ever cause the optimizer to miss a genuinely profitable export-then-recharge cycle, never take a bad one. Confirmed intentional-fix (not a deliberate conservative buffer) before changing.
+
+## [0.75.10] — 2026-07-18
+
+### Fixed
+
+- **Multi-day price forecasts could look up the wrong calendar day (or the wrong 15-minute quarter) for the reactive grid-charge fallback's price percentiles.** The buy-price computation reconstructed each forecast slot's timestamp as today's date at the slot's bare hour with the minute forced to 0, discarding which real day and quarter-hour a slot actually belonged to. With `forecast_hours` set above 24 (a valid, in-range setup-wizard setting — the DP optimizer itself already uses a 48h window), a slot belonging to tomorrow was priced as if it were today in the Octopus/Strømligning per-slot cache, either hitting the wrong day's cached price or silently falling back to the manual price stack; and Strømligning's 15-minute resolution could only ever match the top-of-hour quarter. Now uses each slot's real start timestamp (already computed elsewhere in the same tick, just not previously passed through) instead of reconstructing a synthetic one.
+- **A charger reconnecting to the embedded OCPP server (without cleanly closing its old socket first — plausible on a flaky LAN/NAT reconnect, or a firmware reboot) leaked the previous connection and its read-loop task indefinitely.** Only the tracking dict entry was replaced; the old connection and task kept running detached. The old connection is now explicitly closed before being replaced, so its read loop exits naturally on the next receive.
+- **A background task scheduled after every OCPP connect (`_post_connect_refresh`) was never tracked**, so the server's shutdown had no way to know about or cancel it. Now tracked in a self-pruning set and cancelled on `stop()`.
+- **`RemoteStopTransaction` — arguably the higher-stakes of the two commands — had no retry, unlike `SetChargingProfile`, which already retries twice with backoff.** Now retries the same way by default. The `force_stop_charger` service's own multi-candidate-transaction-id fallback loop opts out (`retries=0`) since it already has its own faster strategy for working through several guesses.
+
+These four OCPP-server fixes are real and independently verified against the source, but the embedded OCPP server is inactive on this install (FoxESS Modbus backend in use) — they haven't been exercised against a live charger connection this session.
+
+## [0.75.9] — 2026-07-18
+
+### Fixed
+
+- **A transient SoC-read glitch could silently truncate revenue tracking for the rest of an active export/grid-charge session.** The per-tick action-log transition detector compared a local `new_mode` variable against `self._current_mode`, but on a tick where the SoC read is momentarily unreliable, the decision engine correctly holds the inverter steady (skipping `_execute_decision` entirely, so `self._current_mode` never changes) while the local `new_mode` still got force-set to "disabled" — closing the open session on that glitch tick, then never reopening it once SoC recovered (since `self._current_mode` had never actually moved). Action-log transition detection is now scoped inside the same branch that's the only place `self._current_mode` can change, so it can't fire on a tick where nothing really happened.
+- **Disabling Solar AI mid-session (switch off, the `restore_normal` service, or integration unload) left that session's action-log entry open forever.** `async_restore_normal()` sets `self._current_mode` directly, bypassing the per-tick transition detector entirely — so the one code path that's supposed to catch "session ended because the mode changed" never saw it change. Now explicitly closes an open export/grid-charge session before resetting to normal.
+- **A user could push the battery floor SoC above the max SoC via the dashboard sliders with no warning**, creating an operating band the battery can never legitimately occupy (export blocked below floor, charging blocked above max, floor above max). The coordinator's per-tick read now clamps floor down to max and logs a warning when this happens, rather than silently suppressing all arbitrage.
+
+### Changed
+
+- **Aligned the setup wizard's SoC range limits with the live dashboard sliders.** The wizard capped the discharge floor at 90% and required the max SoC to be at least 50%; the dashboard sliders always allowed the full 10-100% range for both. Widened the wizard to match — no risk to existing installs, since the dashboard already permitted values the wizard didn't.
+
+## [0.75.8] — 2026-07-18
+
+### Removed
+
+- **Dead discharge-reserve-margin learner and its one-time migration resets.** `_update_discharge_margin` was already self-documented as uncalled since v0.61.0 (superseded by the fixed-then-empirically-learned reserve factor); removed entirely along with the three one-shot `discharge_margin_reset_*` storage migrations that only ever fed it, and the now-fully-unused `DYNAMIC_FLOOR_MARGIN_*` constant family. Live reserve-factor telemetry (`self._reserve_factor()`) is a separate, unaffected code path.
+- **Dead BMS-kWh-remaining capacity learner.** `_learn_capacity_from_bms` was already self-documented as dead code since v0.64.1 (the FoxESS kWh-remaining register proved too sticky/lagging to trust); removed along with its two helper methods, the `discover_bms_kwh_remaining` discovery function (now orphaned as a result), and the `FOXESS_BMS_KWH_REMAINING`/`CAPACITY_SAMPLE_MAX_BATTERY_KW` constants. The reliable Force-Charge capacity sampler (`_learn_capacity`) is unaffected — capacity remains GUI-set and authoritative either way.
+- **Dead `CONF_SPOT_MARKUP` config-entry migration write.** Only ever written by a v5→v6 migration and never read anywhere — the real spot-markup value has always lived in dashboard storage via the `number.py` entity. The rest of that migration step (correcting the Dinel DSO GLN) is unaffected.
+
+### Changed
+
+- Clarified with a comment why `REG_WORK_MODE` (FoxESS charger Modbus register) is intentionally never written — documented by the protocol spec, but redundant with putting the charger into "Modbus TCP" mode via the FoxESS app.
+
+## [0.75.7] — 2026-07-18
+
+### Removed
+
+- **The EV minimum/maximum charge-rate kW sliders.** Redundant with the amp dropdown (`select.py`) that was already built to replace them — both wrote the identical `ev_min_charge_kw`/`ev_max_charge_kw` storage keys, so changing one silently changed what the other displayed. The dropdown is the one that survives.
+- **The dead inverter-ID detection fallback in the setup wizard**, which always returned the same hardcoded placeholder string regardless of what it found, pre-filled into the "Inverter ID" field looking exactly like a genuine detection. It could never succeed where the primary detector (`discovery.discover_inverter_id`) didn't — it searched a strict subset of what the primary already covers. The wizard now falls through to an honest empty field on detection failure, same as every other discovery miss already does.
+
+### Added
+
+- **Field documentation for 6 services that had none**: `toggle_blocked_sell_hour`, `add_schedule_slot`, `remove_schedule_slot`, `toggle_schedule_day`, `set_schedule_days`, `force_stop_charger`. All 11 registered services now show names, descriptions, and field validation in Developer Tools → Actions.
+
+## [0.75.6] — 2026-07-18
+
+### Fixed
+
+- **A grid-charge cycle could silently fragment an active price-floor block.** The floor-block open/close bookkeeping tracked the export-limit register value (`limit_w == 25`), which is pinned to `0` whenever grid-charging is active regardless of price — so a grid-charge cycle overlapping an already-active floor closed the block and reopened a new one when charging ended, fragmenting one continuous floor period into several and flickering `binary_sensor.solar_ai_eksport_stop_aktiv`. `_current_floor_block` feeds 7 places including the curtailment-override condition and the auto-Full-on-negative-price revert, so this could transiently suppress either on exactly the cheap/negative-price days where both are most likely active together. Now tracks the underlying price condition (`export_price_raw <= min_export_price`) directly, evaluated every tick instead of only when the register write changes.
+- **The hardware export-floor backstop (raises the inverter's on-grid Min-SoC during Force Discharge) was only ever asserted once, at the moment a session enters `EXPORTING`.** The effective floor is recomputed every tick and can genuinely move mid-session as the day-ahead plan re-solves, so a long-running session could be left with a stale, too-low hardware stop-point. Now re-asserted every tick while `EXPORTING`; the underlying setter already only raises (never lowers) and reads the live register value, so this is a no-op unless the floor has genuinely risen.
+- **A charger-side hardware reset (power cycle, firmware update) could permanently stop the suspend-interval register from being re-written**, on the FoxESS Modbus EV backend. The register was written once per `FoxessModbusCharger` instance rather than once per actual connection — the object persists across transparent TCP reconnects, so a reset on the charger's end (without a corresponding HA restart) meant the register never got re-asserted, and a phase downshift could pause the session longer than intended with no visible symptom. Now written every heartbeat cycle, matching the two adjacent registers it sits next to in the same function.
+
 ## [0.75.5] — 2026-07-18
 
 ### Fixed
