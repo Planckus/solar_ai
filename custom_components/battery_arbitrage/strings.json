@@ -499,8 +499,6 @@
       "max_export_kw": { "name": "Export power cap (0 = no cap)" },
       "min_export_price": { "name": "Minimum export price (0 = allow negative)" },
       "battery_degradation_cost": { "name": "Battery wear cost (DKK/kWh cycled)" },
-      "ev_min_charge_kw": { "name": "EV minimum charge rate (kW)" },
-      "ev_max_charge_kw": { "name": "EV maximum charge rate (kW)" },
       "ev_battery_priority_soc": { "name": "Battery-first threshold (%) — EV waits until house battery reaches this SoC" },
       "ev_modbus_upshift_kw": { "name": "Three-phase switch threshold (kW)" },
       "ev_modbus_phase_avg_window_min": { "name": "Phase-averaging window (min)" },

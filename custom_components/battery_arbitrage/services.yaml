@@ -44,3 +44,141 @@ create_dashboard:
       default: false
       selector:
         boolean:
+
+toggle_blocked_sell_hour:
+  name: Toggle blocked sell hour
+  description: >
+    Flip one hour of day in the blocked-sell-hours set. Backs the clickable
+    hour grid on the Prices & Plan dashboard page; battery export is vetoed
+    in a blocked hour regardless of price. Solar export and self-consumption
+    are unaffected.
+  fields:
+    hour:
+      name: Hour
+      description: The hour of day (0-23) to toggle.
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 23
+          step: 1
+          mode: box
+
+add_schedule_slot:
+  name: Add EV schedule slot
+  description: >
+    Allocate the next free EV charge-schedule slot (up to 4) and seed it with
+    default values. The new slot appears immediately across the mode select,
+    enabled switch, start/end time, and slot-summary sensor. No-op if all 4
+    slots are already in use.
+  fields: {}
+
+remove_schedule_slot:
+  name: Remove EV schedule slot
+  description: >
+    Clear an EV charge-schedule slot's data. The slot's entities stay (all 4
+    are always present) and report as empty until the slot is re-added.
+  fields:
+    slot:
+      name: Slot
+      description: The schedule slot number (1-4) to clear.
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 4
+          step: 1
+          mode: box
+
+toggle_schedule_day:
+  name: Toggle EV schedule weekday
+  description: >
+    Flip a single weekday on or off for one EV charge-schedule slot.
+  fields:
+    slot:
+      name: Slot
+      description: The schedule slot number (1-4) to modify.
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 4
+          step: 1
+          mode: box
+    day:
+      name: Day
+      description: The weekday to toggle.
+      required: true
+      selector:
+        select:
+          options:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+
+set_schedule_days:
+  name: Set EV schedule weekdays
+  description: >
+    Replace the full weekday list for one EV charge-schedule slot in one call,
+    instead of toggling days individually.
+  fields:
+    slot:
+      name: Slot
+      description: The schedule slot number (1-4) to modify.
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 4
+          step: 1
+          mode: box
+    days:
+      name: Days
+      description: >
+        The weekdays this slot should run on, e.g. ["mon", "wed", "fri"].
+        A comma-separated string ("mon,wed,fri") also works.
+      required: true
+      selector:
+        select:
+          multiple: true
+          options:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+
+force_stop_charger:
+  name: Force-stop EV charger
+  description: >
+    Send RemoteStopTransaction to a runaway OCPP session — use when Solar AI
+    has lost track of the transaction id (e.g. after several HA restarts) and
+    the charger keeps drawing power despite the EV controller commanding 0 A.
+    Tries the supplied transaction id, then the tracked session id, then the
+    common fallback ids 1 and 0. Check sensor.solar_ai_lader_status afterwards
+    to confirm the charger left the Charging state.
+  fields:
+    charger_id:
+      name: Charger ID
+      description: >
+        The OCPP charge-point ID to target. Leave blank to target every
+        connected charger.
+      required: false
+      selector:
+        text:
+    transaction_id:
+      name: Transaction ID
+      description: >
+        A specific transaction id to stop. Leave blank to let the service try
+        the tracked session id and the common fallback ids automatically.
+      required: false
+      selector:
+        number:
+          min: 0
+          mode: box
