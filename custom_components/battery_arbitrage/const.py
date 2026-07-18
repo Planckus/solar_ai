@@ -613,9 +613,14 @@ OVERNIGHT_END_HOUR = 6                # local hour it closes (window spans midni
 OVERNIGHT_MIN_TICKS = 60              # min 5-min ticks in the window for a usable night (~5h of 8)
 OVERNIGHT_SAMPLES_MAX = 30            # rolling window of clean nightly ratios
 OVERNIGHT_MIN_NIGHTS = 7             # need this many before trusting the empirical factor
-OVERNIGHT_PERCENTILE = 0.80          # cover the forecast error this fraction of nights
-RESERVE_FACTOR_MIN = 1.05            # clamp: never reserve less than +5 %
-RESERVE_FACTOR_MAX = 1.60            # clamp: never reserve more than +60 %
+DEFAULT_RESERVE_PERCENTILE_PCT = 80  # default; user-configurable 50-95 (v0.75.14 — was fixed 0.80)
+# v0.75.14 — widened to match the manual reserve-factor slider's own range
+# (number.py, 1.0-2.0) so a manually-set value isn't silently re-clamped
+# tighter once the learner warms up. Each sample is already sanity-filtered
+# to RESERVE_RATIO_SANE_LO/HI before it ever reaches the percentile calc, so
+# this clamp is a second, wider backstop — not the only line of defense.
+RESERVE_FACTOR_MIN = 1.0             # clamp: never reserve less than +0 %
+RESERVE_FACTOR_MAX = 2.0             # clamp: never reserve more than +100 %
 RESERVE_RATIO_SANE_LO = 0.3          # drop a night whose actual/predicted ratio is wilder than this
 RESERVE_RATIO_SANE_HI = 3.0
 

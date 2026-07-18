@@ -127,6 +127,10 @@ BINARY_SENSORS: tuple[BatteryArbitrageBinarySensorDescription, ...] = (
     # v0.64.0 — Tier-1 model-health monitor. On = a learned model has drifted,
     # pinned at a safety clamp, or its predictions are persistently wrong. The
     # `issues` attribute lists what and why. Detection only — no model is changed.
+    # v0.75.13 — `notes` is a second, non-alarming list: conditions worth
+    # surfacing but that don't flip this sensor on (e.g. the reserve factor
+    # pinned at its MINIMUM, which doesn't mean the same thing as pinning at
+    # its maximum).
     BatteryArbitrageBinarySensorDescription(
         key="model_health",
         translation_key="model_health",
@@ -135,6 +139,7 @@ BINARY_SENSORS: tuple[BatteryArbitrageBinarySensorDescription, ...] = (
         value_fn=lambda d: not d.get("model_health_ok", True),
         attr_fn=lambda d: {
             "issues": d.get("model_health_issues") or ["none"],
+            "notes": d.get("model_health_notes") or ["none"],
         },
     ),
 )

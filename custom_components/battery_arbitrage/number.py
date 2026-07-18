@@ -43,6 +43,7 @@ from .const import (
     DEFAULT_MAX_EXPORT_KW,
     DEFAULT_MIN_EXPORT_PRICE,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
+    DEFAULT_RESERVE_PERCENTILE_PCT,
     DEFAULT_SOLAR_CONFIDENCE_PCT,
     DEFAULT_SPOT_MARKUP,
     DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES,
@@ -151,6 +152,24 @@ async def async_setup_entry(
             step=0.05,
             mode=NumberMode.BOX,
             display_precision=2,
+        ),
+        # Reserve percentile (v0.75.14). Once the overnight learner is warm
+        # (7 clean nights), the reserve factor is the empirical percentile of
+        # clean-night forecast error at this value — not a fixed p80. Lower =
+        # cover fewer nights' worth of forecast error, free more arbitrage
+        # headroom; higher = more conservative. 80 = prior fixed behaviour.
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="reserve_percentile_pct",
+            translation_key="reserve_percentile_pct",
+            default=DEFAULT_RESERVE_PERCENTILE_PCT,
+            icon="mdi:shield-check",
+            unit="%",
+            min_val=50,
+            max_val=95,
+            step=5,
+            mode=NumberMode.SLIDER,
+            display_precision=0,
         ),
         BatteryArbitrageConfigNumber(
             coordinator, entry,

@@ -9,6 +9,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.10.0] — 2026-07-18
+
+A decision-logic strategy review plus dashboard usability work, bundled into one major release.
+
+### Added
+
+- **New "Reserve percentile" setting.** Once the overnight learner is warm (7 clean nights), the dark-bridge reserve factor is now driven by a user-configurable percentile of clean-night forecast error, instead of a hardcoded p80. Default 80 reproduces the prior behavior exactly; lowering it trades a small amount of safety margin for more arbitrage headroom.
+- **Per-setting help popups on the dashboard.** Every number/select/switch setting in the Settings and EV Settings views now has a small "?" button that opens a short explanation of what it does — including, where relevant, when it actually applies (e.g. VAT/duty/markup settings are bypassed entirely under Octopus or plain Strømligning pricing, which already return an all-in price fetched from the supplier).
+
+### Changed
+
+Five decision-logic strategy improvements from a dedicated review (not a correctness audit — every finding independently re-verified against source before shipping):
+
+- **The DP optimizer's export gate can now recognize a solar-funded battery refill, not just a grid-funded one.** Previously `spread_ok` only checked whether a cheaper grid buy existed later in the horizon to justify an export — it couldn't see that the value function's own idle-dynamics accounting already knows solar can refill the battery for free. On a day with real solar and a thin grid spread, this could veto a genuinely profitable export.
+- **The dynamic discharge floor now uses the same confidence-percentile solar forecast the DP's own price plan has used since v0.44.0**, instead of a stale plain median that left the safety-critical reserve less risk-aware than the profit-seeking plan. Lowering `solar_confidence_pct` now makes both sides more conservative together.
+- **The dark-bridge reserve now nets solar against house load per slot**, instead of reserving 100% of house load for every hour until a fixed onset threshold is crossed — crediting real solar arriving during the dawn ramp instead of ignoring it until the threshold trips. The onset threshold itself (deliberately raised after a past near-drain incident) is unchanged.
+- **The DP's EV-awareness is now a per-slot headroom allocation instead of a hard on/off cliff at 70% learned probability.** Previously an hour at 69% EV-charge probability got the full battery charge rate, and 70% got zero, even with breaker headroom to spare for both. The battery's charge rate is now reduced by the EV's expected draw for that slot rather than blocked outright — the DP's planning-time estimate doesn't need to be perfectly precise here, since the actual command is still re-capped to live grid headroom every cycle by the existing `_maintain_charge_power` safety net.
+- **Model health no longer treats "reserve factor pinned at minimum" the same as "pinned at maximum."** Pinning at maximum is a real signal (overnight need exceeds the safety cap) and still raises the "Problem" flag. Pinning at minimum plausibly means the opposite — a very predictable house needing little margin — and is now a separate, non-alarming note instead.
+
+Also:
+
+- **The learned reserve-factor clamp is now 1.0–2.0**, matching the manual "Reserve safety factor" slider's own range — a manually-set value above the old 1.60 cap no longer gets silently re-clamped down once the overnight learner warms up.
+- **The curtailment-harvesting override (three-phase escalation + active current ramp when the battery is full and export is blocked) now also fires in PV+battery mode, not just plain PV mode**, with the same battery-discharge backoff plain PV mode always had, so PV+battery mode no longer drains the house battery instead of harvesting the curtailed solar sitting right there.
+
+### Fixed
+
+- **Switching from Full mode to solar-only (PV) mode mid-session no longer ignores the battery-priority threshold.** The gate (hold the EV off until the battery reaches its priority SoC) only applied while the EV was idle — deliberately, to avoid thrashing a session it started itself — but the "idle" check used the raw last-commanded current from whatever mode was active a moment ago, so a car left charging from Full mode was wrongly treated as "already legitimately running under PV mode."
+- **Five sensors were logging an HA startup warning because their statistics state_class was invalid for a monetary device_class.** `device_class=monetary` only permits state_class `None` or `total` — four sensors using `total_increasing`/`measurement` are now `total`, and one per-kWh price sensor now omits `device_class` entirely to match its siblings. Cosmetic today; left uncorrected this could have started silently breaking HA's long-term statistics for these entities on a future core version.
+- **The setting-help popup could only be opened once per page load** (fixed same night it shipped) — it reused a single dialog element across every "?" click, which silently failed to reopen after the first close. Now creates a fresh dialog on each open.
+
+---
+
 ## [0.75.11] — 2026-07-18
 
 ### Changed

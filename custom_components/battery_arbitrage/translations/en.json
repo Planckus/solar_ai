@@ -490,6 +490,7 @@
       "max_soc": { "name": "Maximum SoC (grid charge)" },
       "battery_capacity": { "name": "Battery capacity (kWh)" },
       "reserve_factor_manual": { "name": "Reserve safety factor" },
+      "reserve_percentile_pct": { "name": "Reserve percentile (%) — forecast-error coverage once the overnight learner is warm (80 = prior fixed behaviour)" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage spread" },
       "grid_max_kw": { "name": "Grid import limit" },
       "vat_pct": { "name": "Buy-side VAT (%)" },
