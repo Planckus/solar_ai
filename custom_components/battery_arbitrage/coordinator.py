@@ -412,6 +412,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Legacy tick counters kept for set_ev_mode() back-compat reset only
         self._ev_above_start_count: int = 0
         self._ev_below_stop_count: int = 0
+        # v0.75.4 — set by set_ev_mode() on an actual mode change; consumed
+        # (one-shot) by the next _apply_ev_time_window() call to bypass the
+        # start/stop anti-flap windows for that single tick. Those windows
+        # exist to ride out cloud-flicker on the surplus signal, not to delay
+        # a deliberate mode switch — without this, switching e.g. pv_battery
+        # → pv while charging held the old rate for a full stop_window
+        # (default 180s), covered by the battery in the meantime.
+        self._ev_mode_change_pending: bool = False
         # Time-based hysteresis (v0.26.0): timestamps mark when surplus first
         # crossed above/below the min-charge threshold. Cleared on the opposite
         # crossing. The control loop only flips state once the elapsed time
@@ -6087,6 +6095,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_arm_drop_since_ts = None              # v0.38.5
             self._ev_cool_entry_ts = None                  # v0.39.11
             return target_amps
+        # v0.75.4 — a mode change just landed (see set_ev_mode). One-shot
+        # bypass of every anti-flap timer so the new mode's target applies
+        # immediately instead of riding out a stop_window/start_window meant
+        # for cloud-flicker, not a deliberate switch. Also applies to a
+        # switch INTO pv mode specifically, which the branch above doesn't
+        # cover (that one only fires for switches OUT of pv mode).
+        if self._ev_mode_change_pending:
+            self._ev_mode_change_pending = False
+            self._ev_surplus_above_min_since_ts = None
+            self._ev_surplus_below_min_since_ts = None
+            self._ev_arm_drop_since_ts = None
+            self._ev_cool_entry_ts = None
+            return target_amps
         now = datetime.now()
         start_window = int(self.config.get(
             CONF_EV_START_WINDOW_SECONDS, DEFAULT_EV_START_WINDOW_SECONDS,
@@ -6640,6 +6661,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
             self._ev_auto_full_active_since_ts = None
             self._ev_pre_auto_full_mode = None
+        # v0.75.4 — flag an actual change so the next control tick bypasses
+        # the anti-flap windows instead of holding the old rate for up to a
+        # full stop_window. Applies whether the change is manual or the
+        # auto-full negative-price promotion/revert — both are deliberate
+        # transitions, not surplus noise.
+        if new_mode != self._ev_active_mode:
+            self._ev_mode_change_pending = True
         self._ev_active_mode = new_mode
         self._stored["ev_active_mode"] = new_mode
         # Reset hysteresis state so the new mode takes effect on the next loop iteration

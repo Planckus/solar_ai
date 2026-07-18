@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.75.4] — 2026-07-18
+
+### Fixed
+
+- **EV charge-mode changes could take up to ~3 minutes to actually stop the charger, drawing from the battery/grid in the meantime.** The `pv`-mode anti-flap windows (start_window / stop_window) are meant to ride out brief cloud flicker on the solar-surplus signal, but a manual mode switch (e.g. PV+battery → PV) went through the exact same hold-at-minimum-then-confirm logic as a passing cloud, so the EV kept drawing the minimum rate — covered by the battery, since real solar was insufficient — for a full stop_window (default 180s) after the switch. `set_ev_mode` now flags an actual mode change; the next control tick bypasses the anti-flap windows entirely for that one tick, applying the new mode's target immediately, then reverts to normal cloud-flicker handling. Applies to both the OCPP and FoxESS Modbus backends (shared code path); does not affect schedule-resolved sub-mode transitions (a separate, narrower case, not addressed here).
+
 ## [0.75.3] — 2026-07-12
 
 ### Changed
