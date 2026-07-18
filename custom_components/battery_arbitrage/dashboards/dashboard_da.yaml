@@ -162,30 +162,39 @@ views:
       - entity: select.solar_ai_ev_minimum_opladningshastighed
         name: Minimum opladning
         icon: mdi:battery-charging-low
+        help: Laveste effekt bilen oplader med, når den overhovedet lader. De fleste biler kan ikke lade under ca. 6 A — sæt ikke lavere end din bils egen grænse.
       - entity: select.solar_ai_ev_maksimum_opladningshastighed
         name: Maksimum opladning
         icon: mdi:battery-charging-high
+        help: Højeste effekt bilen må trække, uanset hvor meget solstrøm eller net-kapacitet der er til rådighed.
       - entity: number.solar_ai_batteri_forst_taerskel_ev_venter_til_husbatteriet_nar_dette_niveau
         name: Batteri-først tærskel (%)
         icon: mdi:battery-arrow-up
+        help: I ren solcelle-tilstand venter EV'en med at lade, indtil husbatteriet har nået denne SoC — medmindre der allerede eksporteres overskudsstrøm til nettet.
       - entity: number.solar_ai_trefaset_skift_taerskel_kw
         name: Trefaset skift-tærskel (kW)
         icon: mdi:sine-wave
+        help: Solcelle-overskud skal nå denne værdi, før laderen skifter fra 1-faset til 3-faset opladning.
       - entity: number.solar_ai_faseudjaevnings_vindue_min
         name: Faseudjævnings-vindue (min)
         icon: mdi:chart-bell-curve
+        help: Hvor mange minutters glidende gennemsnit af solcelle-overskuddet der bruges til fase-beslutningen — dæmper skift ved forbipasserende skyer.
       - entity: select.solar_ai_stromtrin_opladning
         name: Strømtrin (opladning)
         icon: mdi:current-ac
+        help: Hvor finkornet laderens strømstyrke justeres i trit med solcelle-overskuddet (f.eks. 1 A ad gangen, eller finere trin på understøttet hardware).
       - entity: number.solar_ai_faseskift_interval_min
         name: Faseskift-interval (min)
         icon: mdi:timer-sync-outline
+        help: Hvor længe lavt overskud skal vare, før laderen falder tilbage til 1-faset — forhindrer hurtige frem-og-tilbage-skift.
       - entity: number.solar_ai_override_rampe_trin_s
         name: Override rampe-trin (s)
         icon: mdi:speedometer
+        help: Hvor ofte strømstyrken øges et trin, når systemet aktivt forsøger at høste ellers spildt solcelle-overskud (batteriet fuldt + salg blokeret).
       - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
         name: Standard tilstand ved tilslutning
         icon: mdi:car-connected
+        help: Den EV-tilstand der automatisk vælges, hver gang bilen tilsluttes laderen.
     - type: markdown
       content: '### Lader-info'
     - type: markdown
@@ -735,12 +744,16 @@ views:
       entities:
       - entity: switch.battery_arbitrage_arbitrage_aktiv
         name: Solar AI til/fra
+        help: Slukker for al automatisk styring. Batteriet og opladeren fortsætter med den tilstand, de sidst var i — de bliver ikke nulstillet.
       - entity: switch.solar_ai_notifikationer_ved_tilstandsskift
         name: Notifikationer ved tilstandsskift
+        help: Send en notifikation, hver gang Solar AI skifter mellem eksport, netopladning og selvforbrug.
       - entity: switch.solar_ai_15_minutters_prisoplosning
         name: 15-min prisopløsning
+        help: Brug 15-minutters elpriser i stedet for timepriser, hvis din elleverandør leverer dem. Giver mere præcis planlægning omkring pris-spring.
       - entity: switch.solar_ai_auto_fuld_ved_negativ_pris
         name: 'EV: Auto-Fuld ved negativ pris'
+        help: Skifter automatisk EV til Fuld-tilstand, når spotprisen bliver negativ, og skifter tilbage til den forrige tilstand, når prisen igen er positiv.
     - type: custom:solar-ai-entities-card
       title: Batteri-grænser
       icon_color: blue
@@ -749,22 +762,34 @@ views:
       entities:
       - entity: number.solar_ai_batterikapacitet_kwh
         name: Batterikapacitet (kWh)
+        help: Batteriets nominelle kapacitet. Bruges til at omregne SoC-procent til kWh i alle beregninger — en forkert værdi giver en forkert reserve og forkert planlægning.
       - entity: number.solar_ai_minimum_soc_eksport
         name: Minimum SoC (eksport)
+        help: Batteriet sælges ikke ned under dette niveau. Det faktiske gulv kan ligge højere om natten — se "Effektivt gulv (aktivt)" — men aldrig lavere end dette.
       - entity: number.solar_ai_maksimum_soc_netopladning
         name: Maksimum SoC (netopladning)
+        help: Loft for hvor højt batteriet må lades fra nettet under en arbitrage-opladning.
       - entity: number.solar_ai_eksporteffekt_graense_0_ingen
         name: Eksporteffekt-grænse (kW)
+        help: Loft for hvor meget effekt der eksporteres til nettet ad gangen. 0 = ingen grænse.
       - entity: number.solar_ai_net_importgraense
         name: Net-importgrænse (kW)
+        help: Din sikringers/hovedafbryders grænse. Solar AI holder EV + batteriopladning + husforbrug under denne værdi for at undgå at springe sikringen.
       - entity: switch.solar_ai_dynamisk_afladningsgulv_selvlaerende
         name: Dynamisk afladningsgulv (auto)
+        help: Når slået til, beregnes nattens reserve dynamisk ud fra forventet husforbrug og sol frem til i morgen, i stedet for et fast minimumsniveau. Anbefales slået til.
       - entity: sensor.solar_ai_effektivt_afladningsgulv
         name: Effektivt gulv (aktivt)
+        help: Den faktiske SoC-grænse lige nu — Minimum SoC plus den dynamiske nat-reserve, hvis den er aktiveret. Dette er den reelle grænse, batteriet styres efter i øjeblikket.
       - entity: number.solar_ai_reserve_sikkerhedsfaktor
         name: Reserve-sikkerhedsfaktor
+        help: Sikkerhedsmargin oven på den beregnede nat-reserve, f.eks. 1.3 = 30% ekstra. Bruges indtil systemet har lært husets faktiske forbrugsmønster (7 rene nætter), hvorefter den selvlærende værdi (Reserve-percentil) overtager.
+      - entity: number.solar_ai_reserve_percentil_prognosefejl_daekning_nar_nataflaeringen_er_varm_80_tidligere_fast_adfaerd
+        name: Reserve-percentil (%)
+        help: Når systemet er "varmet op" (7 rene nætter), styres reserven af denne percentil af den observerede prognosefejl i stedet for den faste faktor ovenfor. Lavere værdi = mindre reserve, mere til salg — men lidt større risiko for en stram nat. 80 er standard og svarer til den hidtidige faste opførsel.
       - entity: binary_sensor.solar_ai_modelhelbred
         name: Modelhelbred
+        help: 'Fra = ingen problemer (normal tilstand). Til = et problem er fundet. Overvåger de selvlærende modeller (reserve, batterikapacitet, effektivitet, opladningshastigheder) for drift eller vedvarende forkerte forudsigelser. Slår kun alarm — retter aldrig noget automatisk.'
     - type: custom:solar-ai-entities-card
       title: Prisparametre
       icon_color: amber
@@ -773,14 +798,19 @@ views:
       entities:
       - entity: number.solar_ai_moms_pa_kob
         name: Moms (%)
+        help: 'Momssats på køb af strøm. Bruges kun i manuel prismodel, og i Strømligning-tilstand hvis "manuelle moms-/tillæg-/elafgift-overrides" er slået til under opsætning. Ved ren Octopus- eller Strømligning-prisning er moms allerede indregnet i den pris, der hentes direkte fra leverandøren, og denne indstilling bruges ikke.'
       - entity: number.solar_ai_elafgift_dkk_kwh
         name: Elafgift
+        help: 'Den danske elafgift pr. kWh, lagt oven på købsprisen i manuel prismodel og i Strømligning med manuelle overrides. Ved ren Octopus- eller Strømligning-prisning er elafgiften allerede indregnet i leverandørens pris, og denne indstilling bruges ikke.'
       - entity: number.solar_ai_spotpris_tillaeg_elhandlertillaeg
         name: Spotpris-tillæg
+        help: 'Din elhandlers faste tillæg pr. kWh oven på spotprisen (f.eks. abonnement omregnet til øre/kWh, eller et fast markup). Bruges i manuel prismodel og i Strømligning med manuelle overrides. Ved ren Octopus- eller Strømligning-prisning er leverandørens eget tillæg allerede indregnet i deres pris, og denne indstilling bruges ikke.'
       - entity: number.solar_ai_salgsgebyr_pr_kwh
         name: Salgsgebyr (eksport)
+        help: 'Gebyr din elhandler/netselskab trækker pr. kWh du sælger til nettet. Trækkes fra salgsprisen — men hvis du under opsætning har valgt et navngivet salgsselskab med et kendt gebyr, bruges det gebyr i stedet for denne værdi.'
       - entity: number.solar_ai_minimum_eksportpris_0_tillad_negativ
         name: Minimum eksportpris
+        help: Salg blokeres, når prisen falder til eller under denne værdi. 0 = tillad salg helt ned til negative priser.
     - type: custom:solar-ai-entities-card
       title: Optimizer
       icon_color: purple
@@ -789,8 +819,10 @@ views:
       entities:
       - entity: number.solar_ai_minimum_arbitrage_spread
         name: Minimum gevinst pr. kWh
+        help: Hvor stor forskellen mellem købs- og salgspris mindst skal være, før systemet oplader batteriet fra nettet for at sælge det igen senere. Højere værdi = færre, men mere sikre handler.
       - entity: number.solar_ai_batteri_slidomkostning_dkk_kwh_cyklet
         name: Batteri-slidomkostning
+        help: Anslået slid på batteriet pr. kWh der lades/aflades, indregnet som en omkostning i alle arbitrage-beregninger. Trækkes fra på både opladnings- og salgssiden af en cyklus, så den reelle tærskel for en handel er højere end "Minimum gevinst" alene antyder.
     - type: custom:solar-ai-entities-card
       title: System
       icon_color: grey
@@ -803,6 +835,7 @@ views:
         name: Lav diskplads (alarm)
       - entity: number.solar_ai_alarmgraense_for_lav_diskplads_ledig
         name: Alarmgrænse (% ledig)
+        help: Udløser "Lav diskplads"-alarmen, når mindre end denne procentdel af diskpladsen er ledig på Home Assistant-serveren.
     - type: custom:solar-ai-entities-card
       title: Notifikationer
       icon_color: orange

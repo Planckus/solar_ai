@@ -476,6 +476,7 @@
       "max_soc": { "name": "Maksimum SoC (netopladning)" },
       "battery_capacity": { "name": "Batterikapacitet (kWh)" },
       "reserve_factor_manual": { "name": "Reserve-sikkerhedsfaktor" },
+      "reserve_percentile_pct": { "name": "Reserve-percentil (%) — prognosefejl-dækning når nataflæringen er varm (80 = tidligere fast adfærd)" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage-spread" },
       "grid_max_kw": { "name": "Net-importgrænse" },
       "vat_pct": { "name": "Moms på køb (%)" },
