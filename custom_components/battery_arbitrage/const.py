@@ -634,23 +634,6 @@ MODEL_HEALTH_SOC_MAE_PCT = 12.0           # 7-day predicted-vs-actual SoC error 
 # consecutive 5-min checks (~1 day), auto-reset it (within bounds; never touches
 # a safety clamp). The user was already alerted when it first drifted.
 MODEL_HEALTH_AUTORESET_STREAK = 288
-# Legacy self-learning-margin constants — retained for the (now-uncalled)
-# _update_discharge_margin and the one-time upgrade resets; no longer drive the
-# floor.
-DYNAMIC_FLOOR_MARGIN_DEFAULT = 1.10   # initial learned safety multiplier on projected load
-DYNAMIC_FLOOR_MARGIN_MIN = 0.80
-# v0.52.0 — raised cap 1.60 → 2.50 so the learner can reserve enough after a
-# deep drain (the old cap couldn't compensate for a bad bridge estimate).
-DYNAMIC_FLOOR_MARGIN_MAX = 2.50
-DYNAMIC_FLOOR_MARGIN_UP = 1.05        # (legacy) — superseded by proportional learning
-DYNAMIC_FLOOR_MARGIN_DOWN = 0.98      # relax slowly when it stayed well above comfort
-# v0.52.0 — proportional self-learning: per percentage-point the SoC dropped
-# below the comfort target, bump the reserve margin by this much (so an 11%
-# arrival vs a 20% target ≈ +27%). Only relax once the day stayed this far
-# above comfort.
-DYNAMIC_FLOOR_MARGIN_UP_PER_PCT = 0.03
-DYNAMIC_FLOOR_RELAX_HEADROOM = 15.0
-
 # v0.45.0 — E1: when the EV is plugged in and in a forced-draw mode (or actively
 # charging), the optimiser treats the next EV_SESSION_DP_HORIZON_H hours of EV
 # demand as near-certain (the live session) rather than the hour-of-day
@@ -713,8 +696,9 @@ CHARGE_RECAP_DEADBAND_KW = 0.5
 
 # Pricing (VAT % and export fee are now live-configurable via number entities)
 
-# Spot price markup (retailer's per-kWh margin on top of raw spot price)
-CONF_SPOT_MARKUP = "spot_markup"
+# Spot price markup (retailer's per-kWh margin on top of raw spot price).
+# No CONF_ key — this has only ever lived in dashboard storage (_stored),
+# driven by the number.py entity; not part of the config-entry data.
 DEFAULT_SPOT_MARKUP = 0.0               # DKK/kWh — user-adjustable via number entity
 DEFAULT_MAX_EXPORT_KW = 0.0             # kW — 0 = no cap; set > 0 to limit inverter export power
 DEFAULT_MIN_EXPORT_PRICE = 0.0          # DKK/kWh — minimum net export price; blocks export below this floor
@@ -900,36 +884,19 @@ DEFAULT_TARIFF_FETCH_ENABLED = True   # Auto-disable when country != denmark
 FOXESS_BATTERY_CHARGE_TOTAL = "sensor.foxessmodbus_battery_charge_total"
 FOXESS_BATTERY_DISCHARGE_TOTAL = "sensor.foxessmodbus_battery_discharge_total"
 
-# BMS-reported remaining energy, per battery module (FoxESS Modbus). Lets the
-# integration auto-detect usable pack capacity straight from the BMS without
-# waiting for a grid-charge cycle:
-#     capacity = Σ kwh_remaining / (SoC / 100)
-# Multi-module stacks expose one entity per module (`_bms_kwh_remaining_1`,
-# `_bms_kwh_remaining_2`, …); modules that aren't installed report "unknown"
-# and are skipped. The unique_id suffix is matched via discovery first; these
-# well-known IDs are the fallback. Sampling is gated to the same safe
-# mid-range as the grid-charge learner (CAPACITY_MIN_SOC..CAPACITY_MAX_SOC),
-# which also excludes the near-full region where the BMS holds SoC flat while
-# balancing and kwh_remaining lags.
-FOXESS_BMS_KWH_REMAINING = [
-    "sensor.foxessmodbus_bms_kwh_remaining_1",
-    "sensor.foxessmodbus_bms_kwh_remaining_2",
-]
-
-# Battery capacity learning (from BMS kWh-remaining samples, with Force
-# Charge cycles as a secondary source)
+# Battery capacity learning, from Force Charge cycles (energy-in vs ΔSoC). A
+# BMS-kWh-remaining-based sampler existed alongside this (auto-detecting usable
+# pack capacity without waiting for a grid-charge cycle) but was retired in
+# v0.64.1 and removed entirely in v0.75.7 — the FoxESS kWh-remaining register
+# is sticky and lags SoC even near idle, which drifted the learned capacity
+# badly (16.9, then 25.7 kWh, vs the real 12.1). Capacity is GUI-set
+# (authoritative); this learner is diagnostic-only.
 CAPACITY_MIN_SOC = 15               # % — don't sample below this (BMS edge effects near empty)
 CAPACITY_MAX_SOC = 85               # % — don't sample above this (BMS tapers near full)
 CAPACITY_MIN_DELTA_SOC = 0.3        # % — minimum SoC rise per tick to count as a sample
 CAPACITY_MIN_CHARGE_KW = 0.5        # kW — minimum charge power to count as a valid sample
 CAPACITY_MIN_SAMPLES = 20           # Need this many samples before trusting the learned value
 CAPACITY_MAX_SAMPLES = 300          # Rolling window size
-# The BMS kWh-remaining register updates slowly/stickily while SoC moves live.
-# Sampling capacity = kwh_remaining / (SoC/100) during active charge/discharge
-# divides a stale-high kWh value by a live SoC and inflates the estimate (a
-# 12.1 kWh battery drifted to ~16.9). Only sample when the battery is near idle,
-# so the two readings are coherent.
-CAPACITY_SAMPLE_MAX_BATTERY_KW = 0.3   # kW — skip BMS capacity sample above this charge/discharge power
 EFFICIENCY_MIN_TOTAL_KWH = 100      # kWh — minimum lifetime charge before trusting auto-efficiency
 
 # ── Disk-space alarm (v0.49.0) ────────────────────────────────────────────────

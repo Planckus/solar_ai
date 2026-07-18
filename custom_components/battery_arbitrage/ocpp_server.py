@@ -664,31 +664,47 @@ class ChargePoint(_Cp if _Cp is not None else object):
             self._log_event("composite_schedule", f"error: {err}")
             return None
 
-    async def remote_stop_transaction(self, transaction_id: int) -> bool:
+    async def remote_stop_transaction(self, transaction_id: int, retries: int = 2) -> bool:
         """Send RemoteStopTransaction to end an active charging session (v0.27.1).
 
         Charger responds with `Accepted` / `Rejected`. On Accepted, the
         charger then sends a `StopTransaction` request which our
         `on_stop_transaction` handler responds to.
+
+        v0.75.10 — retries on a non-Accepted reply or a transport error, with
+        the same backoff as `set_current`. Stopping an unwanted/unsafe
+        session is arguably the higher-stakes of the two commands, so it
+        shouldn't give up after a single attempt when the start-current path
+        doesn't.
         """
-        try:
-            req = call.RemoteStopTransaction(transaction_id=int(transaction_id))
-            response = await self.call(req)
-            status = getattr(response, "status", None)
-            accepted = (str(status).lower() == "accepted") or (status is True)
-            _LOGGER.info(
-                "OCPP charger %s: RemoteStopTransaction(tx=%d) → %s",
-                self.id, transaction_id, status,
-            )
-            return accepted
-        except Exception as err:  # noqa: BLE001
-            self.protocol_errors += 1
-            self.last_protocol_error = f"RemoteStopTransaction: {err}"
-            _LOGGER.warning(
-                "OCPP charger %s: RemoteStopTransaction failed: %s",
-                self.id, err,
-            )
-            return False
+        req = call.RemoteStopTransaction(transaction_id=int(transaction_id))
+        for attempt in range(retries + 1):
+            try:
+                response = await self.call(req)
+                status = getattr(response, "status", None)
+                accepted = (str(status).lower() == "accepted") or (status is True)
+                if accepted:
+                    _LOGGER.info(
+                        "OCPP charger %s: RemoteStopTransaction(tx=%d) → %s%s",
+                        self.id, transaction_id, status,
+                        f" (attempt {attempt + 1})" if attempt else "",
+                    )
+                    return True
+                _LOGGER.warning(
+                    "OCPP charger %s: RemoteStopTransaction(tx=%d) → %s (attempt %d/%d)",
+                    self.id, transaction_id, status, attempt + 1, retries + 1,
+                )
+            except Exception as err:  # noqa: BLE001
+                self.protocol_errors += 1
+                self.last_protocol_error = f"RemoteStopTransaction: {err}"
+                _LOGGER.warning(
+                    "OCPP charger %s: RemoteStopTransaction(tx=%d) failed "
+                    "(attempt %d/%d): %s",
+                    self.id, transaction_id, attempt + 1, retries + 1, err,
+                )
+            if attempt < retries:
+                await asyncio.sleep(1.5 * (attempt + 1))
+        return False
 
     # ────────────────────────────────────────────────────────────────────
     # Permissive parse override (catch malformed L11PMC keepalive frames)
@@ -790,6 +806,13 @@ class OcppServer:
         # waiting for the charger to re-send Boot/Status (which it usually
         # won't, on a transport reconnect — see request_status_refresh()).
         self.persisted_metadata: dict = persisted_metadata if persisted_metadata is not None else {}
+        # v0.75.10 — tracks fire-and-forget background tasks (currently just
+        # _post_connect_refresh) so stop() can cancel any still in flight
+        # instead of leaving them orphaned against a socket the server just
+        # tore down. Self-pruning: each task removes itself on completion via
+        # add_done_callback, so this stays empty in the common case where
+        # every refresh finishes well before the next stop()/reload.
+        self._background_tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         """Bind the WebSocket server. Raises OSError on port conflict."""
@@ -827,6 +850,13 @@ class OcppServer:
             self._server.close()
             await self._server.wait_closed()
             self._server = None
+        # v0.75.10 — cancel any in-flight background tasks (post-connect
+        # refreshes) rather than leaving them to run detached against a
+        # server that's already torn down.
+        if self._background_tasks:
+            for task in list(self._background_tasks):
+                task.cancel()
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
         self._running = False
         _LOGGER.info("Solar AI OCPP server stopped")
 
@@ -894,6 +924,26 @@ class OcppServer:
                     "session_solar_wh": old_cp.session_solar_wh,
                     "session_grid_wh": old_cp.session_grid_wh,
                 }
+            # v0.75.10 — close the previous connection before replacing it.
+            # Without this, a charger that opens a new socket without the old
+            # one cleanly closing at the transport level (a flaky LAN/NAT
+            # reconnect, or firmware that reboots without sending a WS close
+            # frame — plausible for the non-standard framing this device
+            # already needs workarounds for elsewhere) left the old
+            # ChargePoint's `start()` read loop — and its task — running
+            # forever against an abandoned socket, since only the dict entry
+            # was replaced, not the connection or its task. Closing here
+            # forces the old read loop's next `recv()` to raise, so its task
+            # exits and unwinds naturally — no separate task handle to track
+            # or cancel. Best-effort: the old connection may already be dead,
+            # in which case this is a no-op.
+            try:
+                await old_cp._connection.close(1000, "Superseded by a new connection")
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug(
+                    "OCPP charger %s: closing the superseded connection failed "
+                    "(likely already closed): %s", cp_id, err,
+                )
         cp = ChargePoint(cp_id, connection, remote_start_cooldown_s=self.remote_start_cooldown_s)
         # Pre-populate from persisted metadata (v0.27.3) — vendor/model/serial
         # survive HA restarts, so sensors show real data even before the
@@ -939,7 +989,11 @@ class OcppServer:
         # Schedule a TriggerMessage shortly after connect (v0.27.3). 2-second
         # delay so the read loop is up and route_message can dispatch the
         # responses. Background task — doesn't block the main read loop.
-        asyncio.create_task(self._post_connect_refresh(cp))
+        # v0.75.10 — tracked in _background_tasks so stop() can cancel it if
+        # still running at shutdown, instead of leaving it fully detached.
+        refresh_task = asyncio.create_task(self._post_connect_refresh(cp))
+        self._background_tasks.add(refresh_task)
+        refresh_task.add_done_callback(self._background_tasks.discard)
 
         try:
             await cp.start()

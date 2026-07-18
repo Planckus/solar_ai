@@ -40,7 +40,12 @@ _LOGGER = logging.getLogger(__name__)
 REG_STATUS          = 0x1003   # EVC status, UINT16 (see EVC_STATUS_* below)
 REG_PHASE_CURRENT   = 0x100B   # L1/L2/L3 current, 3 × UINT16, 0.1 A
 REG_ACTIVE_POWER    = 0x100E   # active power, UINT16, 0.1 kW
-REG_WORK_MODE       = 0x3000   # 0=controlled 1=plug-and-charge 2=lock (W/R)
+# REG_WORK_MODE (0=controlled/1=plug-and-charge/2=lock) is documented by the
+# protocol spec but deliberately never written here — this backend has run
+# reliably without touching it, consistent with putting the charger into
+# "Modbus TCP" mode via the FoxESS app already implying "controlled" mode.
+# Kept as a register-map reference, not wired up.
+REG_WORK_MODE       = 0x3000
 REG_MAX_CURRENT     = 0x3001   # max charging current, UINT16, 0.1 A (W/R)
 REG_MAX_POWER       = 0x3002   # max charging power, UINT16, 0.1 kW (W/R)
 REG_TIME_VALIDITY   = 0x3005   # EMS setpoint validity window, seconds (W/R)
@@ -266,7 +271,6 @@ class FoxessModbusCharger:
         self._min_amps = min_amps
         self._max_amps = max_amps
         self._suspend_interval_min = suspend_interval_min
-        self._interval_set = False   # write 0x300B once per connection
 
     async def async_close(self) -> None:
         await self._client.async_close()
@@ -348,14 +352,19 @@ class FoxessModbusCharger:
             return
 
         # Hold the suspend interval at its minimum so a phase downshift switches
-        # promptly instead of pausing the session. Idempotent; write once.
-        if not self._interval_set:
-            try:
-                await self._client.write_multi(
-                    REG_SUSPEND_INTERVAL, [self._suspend_interval_min])
-                self._interval_set = True
-            except ModbusError:
-                pass  # retry next cycle
+        # promptly instead of pausing the session. Re-asserted every heartbeat,
+        # same as auto-phase and the power cap below — a charger-side reset
+        # (power cycle, firmware update) reverts this register to its factory
+        # default without the underlying TCP/Modbus connection necessarily
+        # dropping, so a "write once per connection" guard here would never
+        # re-fire and could leave a phase downshift silently pausing the
+        # session for longer than intended. The write is 2 bytes; there's no
+        # meaningful cost to asserting it every cycle instead.
+        try:
+            await self._client.write_multi(
+                REG_SUSPEND_INTERVAL, [self._suspend_interval_min])
+        except ModbusError:
+            pass  # retry next cycle
 
         # Keep auto-switching on and write the cap for the requested phase mode,
         # then set the current.

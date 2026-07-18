@@ -121,13 +121,6 @@ from .const import (
     MODEL_HEALTH_SOLAR_HI,
     MODEL_HEALTH_SOC_MAE_PCT,
     MODEL_HEALTH_AUTORESET_STREAK,
-    DYNAMIC_FLOOR_MARGIN_DEFAULT,
-    DYNAMIC_FLOOR_MARGIN_MIN,
-    DYNAMIC_FLOOR_MARGIN_MAX,
-    DYNAMIC_FLOOR_MARGIN_UP,
-    DYNAMIC_FLOOR_MARGIN_DOWN,
-    DYNAMIC_FLOOR_MARGIN_UP_PER_PCT,
-    DYNAMIC_FLOOR_RELAX_HEADROOM,
     STORAGE_KEY,
     STORAGE_VERSION,
     DEFAULT_DISK_ALARM_THRESHOLD_PCT,
@@ -147,14 +140,12 @@ from .const import (
     EV_MODE_MIN_PV,
     FOXESS_BATTERY_CHARGE_TOTAL,
     FOXESS_BATTERY_DISCHARGE_TOTAL,
-    FOXESS_BMS_KWH_REMAINING,
     CAPACITY_MIN_SOC,
     CAPACITY_MAX_SOC,
     CAPACITY_MIN_DELTA_SOC,
     CAPACITY_MIN_CHARGE_KW,
     CAPACITY_MIN_SAMPLES,
     CAPACITY_MAX_SAMPLES,
-    CAPACITY_SAMPLE_MAX_BATTERY_KW,
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
     CONF_PRICE_AREA,
@@ -319,9 +310,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._enabled = False        # OFF by default — user enables after learning period
         self._we_set_evcc_mode = False  # True while WE have EVCC battery mode set non-normal
         self._prev_soc: float | None = None  # Previous tick SoC for capacity learning
-        # Resolved BMS kWh-remaining module entities (lazy, discovery-first).
-        # None = not resolved yet; [] = resolved, none present on this install.
-        self._bms_kwh_entities: list[str] | None = None
         # Split-poll cache: tariff data refreshed hourly, live state refreshed every tick
         self._cached_solar_rates: dict[str, Any] = {}
         self._cached_grid_rates: dict[str, Any] = {}
@@ -1025,23 +1013,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._last_eds_refresh = datetime.fromisoformat(_eds_iso) if _eds_iso else None
         except Exception as err:  # noqa: BLE001 — never let a bad cached value block startup
             _LOGGER.warning("Could not restore cached prices from storage: %s", err)
-        # v0.52.0 — the dynamic-floor bridge calculation changed (it no longer
-        # treats cheap windows as refills), so the previously-learned reserve
-        # margin (tuned to compensate for the old under-reservation) no longer
-        # applies. Reset it once to the default and let the new proportional
-        # learner re-tune from a clean baseline.
-        if not self._stored.get("discharge_margin_reset_v052"):
-            self._stored["discharge_reserve_margin"] = DYNAMIC_FLOOR_MARGIN_DEFAULT
-            self._stored.pop("dynamic_floor_undershot", None)
-            self._stored["discharge_margin_reset_v052"] = True
-        # v0.53.0 — the bridge calculation changed again (a planned charge is now
-        # credited for the energy it really returns instead of dissolving the
-        # whole bridge), so the margin the learner ramped up to ~2 while fighting
-        # the old broken bridge no longer applies. Reset it once and let the
-        # learner re-tune from the default against the corrected floor.
-        if not self._stored.get("discharge_margin_reset_v053"):
-            self._stored["discharge_reserve_margin"] = DYNAMIC_FLOOR_MARGIN_DEFAULT
-            self._stored["discharge_margin_reset_v053"] = True
         # v0.60.0 — the BMS capacity learner sampled during active discharge,
         # dividing a stale-high kWh-remaining register by a live (lower) SoC,
         # which drifted the learned capacity high (a 12.1 kWh battery reached
@@ -1051,18 +1022,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if not self._stored.get("capacity_samples_reset_v060"):
             self._stored["capacity_samples"] = []
             self._stored["capacity_samples_reset_v060"] = True
-        # v0.60.1 — the discharge_reserve_margin self-learned to its 2.50 ceiling
-        # while compensating for the capacity bug fixed in v0.60.0 (the inflated
-        # capacity under-set the floor%, the battery undershot overnight, and the
-        # margin ramped up fighting it). With capacity now correct the same margin
-        # over-reserves — it pegs the floor at the 85% cap — and it relaxes only
-        # ~2%/day. Reset it once to the default so the floor is sane immediately
-        # and re-learns from a clean baseline.
-        if not self._stored.get("discharge_margin_reset_v0601"):
-            self._stored["discharge_reserve_margin"] = DYNAMIC_FLOOR_MARGIN_DEFAULT
-            self._stored.pop("dynamic_floor_min_seen", None)
-            self._stored.pop("dynamic_floor_day", None)
-            self._stored["discharge_margin_reset_v0601"] = True
         # v0.61.x step 2 — if a restart happened mid-night, the in-progress
         # overnight accumulation has a gap; mark it dirty so it's dropped at
         # finalize rather than logged as an under-counted (too-low) sample.
@@ -1514,8 +1473,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         current_local_hour = now.astimezone().hour
         tariff_this_hour = round(tariff_sched[current_local_hour] + elafgift, 4)
 
-        grid_slots = _forecast_values_with_hours(grid_rates.get("rates", []), now, forecast_hours)
-
         # Native-resolution slot data (handles 15-min or hourly depending on DSO/EVCC config)
         grid_slot_data = _forecast_slots(grid_rates.get("rates", []), now, forecast_hours)
         solar_slot_data = _forecast_slots(solar_rates.get("rates", []), now, forecast_hours)
@@ -1525,29 +1482,48 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         solar_slot_data_opt = _forecast_slots(solar_rates.get("rates", []), now, 48)
         # Solar lookup: slot_start → kW (value is average Watts during the slot)
         solar_kw_by_start: dict = {s[0]: s[4] / 1000.0 for s in solar_slot_data}
-        if grid_slots:
+        if grid_slot_data:
             # v0.29.0: buy price computation routes through _compute_buy_price
             # which handles Strømligning mode (with optional overrides) and
             # falls back to the manual stack when no Strømligning data exists
             # for the slot.
-            def _buy(spot_value: float, hour: int) -> float:
+            #
+            # v0.75.10 — `_buy` now takes the slot's REAL start datetime
+            # (from `_forecast_slots`, which keeps the true date and minute)
+            # instead of reconstructing a synthetic one as `now`'s date at
+            # the slot's bare hour with minute forced to 0. The reconstructed
+            # version broke two ways once `forecast_hours` exceeds 24 (a
+            # valid, in-range setup-wizard setting): a slot belonging to
+            # tomorrow got looked up in the Octopus/Strømligning per-slot
+            # cache as if it were today, either hitting the wrong day's
+            # cached price or missing the cache and silently falling back to
+            # the manual price stack for that slot; and Strømligning's
+            # 15-min-resolution lookup could only ever hit the :00 quarter,
+            # never :15/:30/:45, for every slot this percentile calculation
+            # touched. `_compute_buy_price` already has the correct 15-min
+            # cache-key logic (see its Strømligning branch) — this only
+            # fixes what was being passed into it.
+            def _buy(spot_value: float, slot_start_dt: datetime, hour: int) -> float:
                 return self._compute_buy_price(
                     spot=spot_value,
                     hour=hour,
-                    slot_start_dt=now.replace(hour=hour, minute=0, second=0, microsecond=0),
+                    slot_start_dt=slot_start_dt,
                     spot_markup=spot_markup,
                     tariff_this_hour_dso=tariff_sched[hour],
                     elafgift=elafgift,
                     vat_factor=vat_factor,
                 )
-            buy_vals_sorted = sorted(_buy(spot, h) for h, spot in grid_slots)
+            buy_vals_sorted = sorted(
+                _buy(value, start, local_hour)
+                for start, _dur_h, local_hour, _local_minute, value in grid_slot_data
+            )
             n_buy = len(buy_vals_sorted)
             buy_price_min = buy_vals_sorted[0]
             buy_price_p25 = buy_vals_sorted[max(0, n_buy // 4 - 1)]
-            next_slot_slots = _forecast_values_with_hours(grid_rates.get("rates", []), now, 0.5)
-            if next_slot_slots:
-                h_next, spot_next = next_slot_slots[0]
-                buy_price_next_slot = _buy(spot_next, h_next)
+            next_slot_data = _forecast_slots(grid_rates.get("rates", []), now, 0.5)
+            if next_slot_data:
+                start_next, _dur_h, hour_next, _minute_next, spot_next = next_slot_data[0]
+                buy_price_next_slot = _buy(spot_next, start_next, hour_next)
             else:
                 buy_price_next_slot = buy_price_min
         else:
@@ -1660,6 +1636,22 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # ---- capacity & efficiency: auto-detect, fall back to config ----
         floor_soc = int(self._stored.get("battery_floor_soc", self.config.get("battery_floor_soc", DEFAULT_BATTERY_FLOOR_SOC)))
         max_soc = int(self._stored.get("battery_max_soc", self.config.get("battery_max_soc", DEFAULT_BATTERY_MAX_SOC)))
+        # v0.75.8 — the setup wizard and the dashboard sliders both accept
+        # floor_soc and max_soc independently, with no cross-validation
+        # between them. If a user ever pushes floor above max (e.g. raises
+        # the export floor without noticing the charge ceiling is lower),
+        # should_export's `battery_soc > floor_soc` and should_grid_charge's
+        # `battery_soc < max_soc` combine into an unsatisfiable band the
+        # battery can never legitimately occupy. Clamp floor down to max —
+        # the battery must always be able to reach the floor via normal
+        # charging — rather than silently suppressing all arbitrage.
+        if floor_soc > max_soc:
+            _LOGGER.warning(
+                "Battery floor SoC (%d%%) is above max SoC (%d%%) — "
+                "clamping floor to %d%%. Check the SoC settings.",
+                floor_soc, max_soc, max_soc,
+            )
+            floor_soc = max_soc
 
         # Capacity: the GUI "Battery capacity" number is authoritative — the
         # value the user sets there is what the optimiser uses, full stop. It
@@ -1686,7 +1678,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # -health monitor flagged it. Capacity is GUI-set (authoritative);
             # the only remaining capacity sampler is the Force-Charge learner
             # below, which measures real energy-in vs ΔSoC and is reliable when
-            # it fires. (_learn_capacity_from_bms is left as dead code.)
+            # it fires. (The BMS-based sampler, `_learn_capacity_from_bms`, was
+            # removed entirely in v0.75.7 rather than left as dead code.)
             self._learn_capacity(battery_soc, battery_charge_kw)
             # v0.61.x step 2 — passively learn the overnight house-load forecast
             # error (base_load_kw already excludes the EV). soc_reliable marks a
@@ -2304,6 +2297,32 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 evcc_battery_mode, evcc_managing_battery,
                 capped_charge_rate_kw,
             )
+            # ---- action log: detect export/charge session transitions ----
+            # v0.75.8 — deliberately scoped inside this branch, not evaluated
+            # unconditionally below. self._current_mode only ever changes
+            # inside _execute_decision (via _transition_to), which this branch
+            # is the sole caller of. Previously this ran every tick regardless,
+            # comparing prev_mode against the LOCAL new_mode — which the `else`
+            # branch below force-sets to MODE_DISABLED on a single transient
+            # SoC-unreliable tick even though self._current_mode (and the
+            # actual inverter state) never changed. That closed an open
+            # export/charge session on the spot-glitch tick, and then failed
+            # to reopen it once SoC recovered (prev_mode, still the untouched
+            # self._current_mode, already matched the freshly recomputed
+            # new_mode) — silently truncating revenue tracking for the rest
+            # of a real, still-running session.
+            if new_mode != prev_mode:
+                if prev_mode in (MODE_EXPORTING, MODE_GRID_CHARGING):
+                    await self._close_action_session(now, battery_soc, capacity_kwh)
+                if new_mode == MODE_EXPORTING:
+                    await self._open_action_session(now, "export", battery_soc, export_price)
+                elif new_mode == MODE_GRID_CHARGING:
+                    current_buy_price = round(
+                        (spot_ex_vat + spot_markup + tariff_sched[current_local_hour] + elafgift)
+                        * vat_factor,
+                        4,
+                    )
+                    await self._open_action_session(now, "charge", battery_soc, current_buy_price)
         else:
             new_mode = MODE_DISABLED
             if self._enabled and not soc_reliable:
@@ -2319,20 +2338,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             else:
                 reason = "Disabled — monitoring only"
 
-        # ---- action log: detect export/charge session transitions ----
-        if new_mode != prev_mode:
-            if prev_mode in (MODE_EXPORTING, MODE_GRID_CHARGING):
-                await self._close_action_session(now, battery_soc, capacity_kwh)
-            if new_mode == MODE_EXPORTING:
-                await self._open_action_session(now, "export", battery_soc, export_price)
-            elif new_mode == MODE_GRID_CHARGING:
-                current_buy_price = round(
-                    (spot_ex_vat + spot_markup + tariff_sched[current_local_hour] + elafgift)
-                    * vat_factor,
-                    4,
-                )
-                await self._open_action_session(now, "charge", battery_soc, current_buy_price)
-
         # ---- export limit (every tick — enforces solar floor even when disabled) ----
         await self._maintain_export_limit(export_price_raw, min_export_price, new_mode)
         # ---- grid-charge power (every tick — re-cap to LIVE headroom) ----
@@ -2341,6 +2346,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # exceed the breaker. Re-cap to current headroom each cycle.
         if self._enabled and soc_reliable:
             await self._maintain_charge_power(capped_charge_rate_kw, new_mode)
+            # ---- export-floor hardware backstop (every tick — track a moving floor) ----
+            # v0.75.6 — was previously only set once, at the transition into
+            # EXPORTING. self._effective_floor_soc is recomputed every tick
+            # regardless of mode (it can genuinely move mid-session as the DP
+            # plan re-solves and the forecast/bridge shifts), so a session that
+            # runs long enough could be left with a stale, too-low hardware
+            # stop-point exactly during the stalled-tick scenario this backstop
+            # exists to protect against. _apply_export_floor_min_soc() already
+            # only ever raises (never lowers) and reads the live register value
+            # each call, so re-asserting it every tick is a no-op unless the
+            # floor has genuinely risen since the last write.
+            if new_mode == MODE_EXPORTING:
+                await self._apply_export_floor_min_soc(self._effective_floor_soc)
 
         # ---- PV-curtailment flag (v0.36.2) — read inverter reg 49251 every tick ----
         # The EV controller consumes this cached value to decide whether to
@@ -2716,6 +2734,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         unnecessary register wear. Runs even when Solar AI is disabled so the
         floor is always enforced. Also fires mobile push notifications on
         10000 ↔ 25 transitions when the corresponding event toggle is on.
+
+        The solar-floor open/close log tracks the underlying price condition
+        independently of the register write/skip below it (see the v0.75.6
+        comment inline) — it is not gated by "did the register value change."
         """
         if current_mode == MODE_GRID_CHARGING:
             limit_w = 0
@@ -2724,6 +2746,39 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         else:
             limit_w = 10000
 
+        # ── Solar floor log ───────────────────────────────────────────────
+        # v0.75.6 — tracks the underlying price condition directly, not the
+        # register value. limit_w is pinned to 0 whenever MODE_GRID_CHARGING
+        # is active regardless of price, so the previous limit_w==25
+        # transition check closed and reopened the floor block on every
+        # grid-charge cycle that happened to overlap an already-active
+        # floor — fragmenting one continuous block into several and
+        # flickering binary_sensor.solar_ai_eksport_stop_aktiv, even though
+        # the price never actually crossed the floor. Evaluated every tick,
+        # ahead of the register-write skip below, so a genuine price
+        # crossing that happens to land mid-grid-charge (where limit_w
+        # doesn't change at all) still opens/closes the block correctly.
+        # `_current_floor_block` is in-memory-only and starts None on every
+        # restart, so this also naturally re-opens a block already in
+        # effect at startup — the case the old -1→25 special-case existed
+        # to catch — without needing to special-case it.
+        price_below_floor = export_price_raw <= min_export_price
+        was_below_floor = self._current_floor_block is not None
+        if price_below_floor and not was_below_floor:
+            _LOGGER.info(
+                "Solar floor activated: price %.3f ≤ floor %.2f DKK/kWh "
+                "— solar export blocked",
+                export_price_raw, min_export_price,
+            )
+            self._open_floor_block(datetime.now(timezone.utc), export_price_raw, min_export_price)
+        elif was_below_floor and not price_below_floor:
+            _LOGGER.info(
+                "Solar floor deactivated: solar export resumed "
+                "(price %.3f, floor %.2f)",
+                export_price_raw, min_export_price,
+            )
+            self._close_floor_block(datetime.now(timezone.utc), export_price_raw)
+
         prev_limit = self._last_export_limit
         if limit_w == prev_limit:
             return  # no change — skip the write
@@ -2731,28 +2786,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         inverter_id = self.config.get("foxess_inverter_id", "")
         await self._set_export_limit(inverter_id, limit_w)
         self._last_export_limit = limit_w
-
-        # ── Solar floor log ───────────────────────────────────────────────
-        # Track any entry/exit of limit_w == 25 (floor active) so the log
-        # captures blocks that were already in effect at HA startup. The
-        # original `prev_limit == 10000 and limit_w == 25` condition missed
-        # the -1 → 25 transition that happens on every restart with low price.
-        prev_was_floor = (prev_limit == 25)
-        now_is_floor   = (limit_w == 25)
-        if now_is_floor and not prev_was_floor:
-            _LOGGER.info(
-                "Solar floor activated: price %.3f ≤ floor %.2f DKK/kWh "
-                "— solar export blocked (transition %s → 25)",
-                export_price_raw, min_export_price, prev_limit,
-            )
-            self._open_floor_block(datetime.now(timezone.utc), export_price_raw, min_export_price)
-        elif prev_was_floor and not now_is_floor:
-            _LOGGER.info(
-                "Solar floor deactivated: solar export resumed "
-                "(transition 25 → %s, price %.3f, floor %.2f)",
-                limit_w, export_price_raw, min_export_price,
-            )
-            self._close_floor_block(datetime.now(timezone.utc), export_price_raw)
 
         # ── Solar floor notifications (intentionally narrower) ───────────
         # Notifications fire only on direct 10000↔25 transitions — i.e. the
@@ -3279,40 +3312,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         floor_soc = float(DYNAMIC_FLOOR_MIN_SOC) + reserve_kwh / capacity_kwh * 100.0
         return min(float(DYNAMIC_FLOOR_MAX_SOC), floor_soc)
 
-    def _update_discharge_margin(self, now: datetime, battery_soc: float) -> None:
-        """Self-correct the discharge reserve margin once per day (v0.52.0).
-
-        Tracks the lowest SoC reached each day. On the day rollover: if the SoC
-        dropped BELOW the comfort target, bump the reserve margin in PROPORTION
-        to how far it fell (a deep drain corrects hard — not a fixed +5 %); if
-        the day stayed comfortably above the target, relax the margin a little
-        to recover arbitrage headroom.
-        """
-        comfort = float(DYNAMIC_FLOOR_MIN_SOC)
-        seen = self._stored.get("dynamic_floor_min_seen")
-        if seen is None or float(battery_soc) < float(seen):
-            self._stored["dynamic_floor_min_seen"] = round(float(battery_soc), 1)
-        today = now.astimezone().date().isoformat()
-        prev = self._stored.get("dynamic_floor_day", "")
-        if prev != today:
-            if prev:  # skip the very first observation
-                margin = float(self._stored.get(
-                    "discharge_reserve_margin", DYNAMIC_FLOOR_MARGIN_DEFAULT,
-                ))
-                min_seen = float(self._stored.get("dynamic_floor_min_seen", battery_soc))
-                deficit = comfort - min_seen
-                if deficit > 0:
-                    # undershot — bump proportional to how far below comfort.
-                    margin *= 1.0 + DYNAMIC_FLOOR_MARGIN_UP_PER_PCT * deficit
-                elif min_seen > comfort + DYNAMIC_FLOOR_RELAX_HEADROOM:
-                    # stayed well clear all day — relax to recover arbitrage room.
-                    margin *= DYNAMIC_FLOOR_MARGIN_DOWN
-                self._stored["discharge_reserve_margin"] = round(
-                    max(DYNAMIC_FLOOR_MARGIN_MIN, min(DYNAMIC_FLOOR_MARGIN_MAX, margin)), 3,
-                )
-            self._stored["dynamic_floor_day"] = today
-            self._stored["dynamic_floor_min_seen"] = round(float(battery_soc), 1)
-
     def _update_daily_solar(self, pv_power_w: float) -> None:
         """Accumulate today's solar production; push to daily log when day rolls over."""
         today = datetime.now().date().isoformat()
@@ -3482,73 +3481,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "Calibrated charge rate for %s: %.2f kW (%d samples)",
                 bucket, learned, len(samples)
             )
-
-    def _resolve_bms_kwh_entities(self) -> list[str]:
-        """Resolve the BMS kWh-remaining module entities once, then cache.
-
-        Discovery (unique_id suffix match) is preferred because it survives
-        entity renames and non-English HA language packs. Falls back to the
-        well-known FoxESS IDs when discovery finds nothing (e.g. the entity
-        registry isn't populated yet at first run).
-        """
-        if self._bms_kwh_entities is not None:
-            return self._bms_kwh_entities
-        try:
-            from .discovery import discover_bms_kwh_remaining
-            discovered = discover_bms_kwh_remaining(self.hass)
-        except Exception:  # noqa: BLE001 — discovery must never crash the loop
-            discovered = []
-        self._bms_kwh_entities = discovered or list(FOXESS_BMS_KWH_REMAINING)
-        return self._bms_kwh_entities
-
-    def _get_bms_total_kwh_remaining(self) -> float | None:
-        """Sum BMS kWh-remaining across all installed modules.
-
-        Modules that aren't installed report "unknown"/"unavailable" and are
-        skipped. Returns None when no module reports a usable value.
-        """
-        total = 0.0
-        have_any = False
-        for entity_id in self._resolve_bms_kwh_entities():
-            value = self._get_float_state(entity_id)
-            if value is not None and value >= 0:
-                total += value
-                have_any = True
-        return total if have_any else None
-
-    def _learn_capacity_from_bms(
-        self, battery_soc: float, battery_power_kw: float = 0.0
-    ) -> None:
-        """Sample usable capacity directly from the BMS kWh-remaining registers.
-
-        capacity = Σ kwh_remaining / (SoC / 100)
-
-        Unlike the Force Charge learner this needs no grid-charge cycle, so it
-        warms up for PV-only / arbitrage users too. Sampling is restricted to
-        the safe mid-range (CAPACITY_MIN_SOC..CAPACITY_MAX_SOC): below it the
-        BMS holds a hidden reserve, above it the BMS pins SoC while balancing
-        and kwh_remaining lags, both of which would skew the ratio. It is also
-        skipped while the battery is actively charging or discharging
-        (|power| > CAPACITY_SAMPLE_MAX_BATTERY_KW): the kWh-remaining register
-        updates slowly while SoC moves live, so during a cycle the ratio
-        divides a stale-high kWh value by a live SoC and reads too high. Samples
-        feed the same rolling-median window as the Force Charge learner, so
-        get_learned_capacity() is the single source of truth.
-        """
-        if not (CAPACITY_MIN_SOC <= battery_soc <= CAPACITY_MAX_SOC):
-            return
-        if abs(battery_power_kw) > CAPACITY_SAMPLE_MAX_BATTERY_KW:
-            return
-        total_remaining = self._get_bms_total_kwh_remaining()
-        if total_remaining is None or total_remaining <= 0:
-            return
-        capacity_sample = round(total_remaining / (battery_soc / 100), 2)
-        # Sanity-check: plausible battery size 3–30 kWh
-        if 3.0 <= capacity_sample <= 30.0:
-            samples: list[float] = self._stored.setdefault("capacity_samples", [])
-            samples.append(capacity_sample)
-            if len(samples) > CAPACITY_MAX_SAMPLES:
-                del samples[: len(samples) - CAPACITY_MAX_SAMPLES]
 
     def _learn_capacity(self, battery_soc: float, battery_charge_kw: float) -> None:
         """Sample usable battery capacity from Force Charge ticks.
@@ -7854,9 +7786,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             charge_kwh_slot = charge_rate_kw * dur_h
 
             # Forward-only spread check: cheapest buy AFTER this slot
+            #
+            # v0.75.11 — recharge_cost_after now matches the CHARGE branch's
+            # own economics (below): the true cost per usable kWh added by
+            # grid-charging is buy_price / charge_eff, not buy_price divided
+            # by the full round-trip `efficiency`. The CHARGE branch pays
+            # buy_h on the raw grid kWh drawn but only banks charge_eff of it
+            # as usable capacity — so /efficiency (charge_eff × discharge_eff,
+            # the smaller number) overstated the real refill cost and made
+            # this pre-filter gate stricter than the value function it's
+            # gating ever actually prices the refill at. Since spread_ok only
+            # decides whether EXPORT is offered as an option at a given state
+            # — the real profit math (val_ex/val_ch below) is unaffected
+            # either way — the old, too-pessimistic version could only ever
+            # cause a missed opportunity, never a bad trade; this just lets
+            # the optimiser recognise a few more of them.
             buy_after = best_buy_after[t]
             recharge_cost_after = (
-                buy_after / efficiency if efficiency > 0 else buy_after
+                buy_after / charge_eff if charge_eff > 0 else buy_after
             )
             spread_ok = (
                 buy_after != float("inf")
@@ -8031,6 +7978,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     async def async_restore_normal(self) -> None:
         """Force-restore normal operation (called on unload or disable)."""
         if self._current_mode != MODE_NORMAL:
+            # v0.75.8 — close any open export/charge action-log session before
+            # the mode is overwritten below. This is the only other place
+            # self._current_mode changes outside the per-tick decision loop's
+            # own transition-detection (coordinator.py ~2298), and it was the
+            # one path that bypassed _close_action_session entirely — leaving
+            # revenue tracking open forever for a session ended by disabling
+            # Solar AI (switch off, the restore_normal service, or unload)
+            # rather than by the decision loop picking a new mode itself.
+            if self._current_mode in (MODE_EXPORTING, MODE_GRID_CHARGING):
+                battery_soc = self._get_float_state(
+                    self.config.get(CONF_BATTERY_SOC_ENTITY, FOXESS_BATTERY_SOC), 0)
+                capacity_kwh = float(self._stored.get(
+                    "battery_capacity", self.config.get("battery_capacity", DEFAULT_BATTERY_CAPACITY)))
+                await self._close_action_session(datetime.now(timezone.utc), battery_soc, capacity_kwh)
             await self._transition_to(MODE_NORMAL)
             self._current_mode = MODE_NORMAL
         # v0.60.2 — restoring the inverter mode is not a full restore if the EV
@@ -8130,27 +8091,6 @@ def _forecast_values(rates: list[dict], now: datetime, hours: float) -> list[flo
             start = start.replace(tzinfo=timezone.utc)
         if now <= start < cutoff:
             result.append(rate["value"])
-    return result
-
-
-def _forecast_values_with_hours(
-    rates: list[dict], now: datetime, hours: float
-) -> list[tuple[int, float]]:
-    """Return (local_hour_of_day, spot_value) pairs for slots within the forecast window.
-
-    Used to pair each forecast slot with its correct hourly DSO tariff before
-    computing buy-side price percentiles. Timestamps are converted to local time
-    so the hour index matches the DatahubPricelist Price1..Price24 fields.
-    """
-    cutoff = now + timedelta(hours=hours)
-    result: list[tuple[int, float]] = []
-    for rate in rates:
-        start = datetime.fromisoformat(rate["start"])
-        if start.tzinfo is None:
-            start = start.replace(tzinfo=timezone.utc)
-        if now <= start < cutoff:
-            local_hour = start.astimezone().hour
-            result.append((local_hour, rate["value"]))
     return result
 
 

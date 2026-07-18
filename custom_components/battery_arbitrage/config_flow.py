@@ -419,7 +419,7 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
 
         # Discover by integration ownership + unique_id suffix — survives
         # entity renames, language packs, and multi-inverter installs.
-        detected_inverter_id    = discovery.discover_inverter_id(self.hass) or self._detect_inverter_id()
+        detected_inverter_id    = discovery.discover_inverter_id(self.hass)
         detected_work_mode      = discovery.discover_work_mode_select(self.hass)
         detected_force_charge   = discovery.discover_force_charge_power(self.hass)
         detected_force_discharge = discovery.discover_force_discharge_power(self.hass)
@@ -587,9 +587,9 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({
                 vol.Required(CONF_BATTERY_CAPACITY, default=capacity): vol.Coerce(float),
                 vol.Required(CONF_BATTERY_FLOOR_SOC, default=DEFAULT_BATTERY_FLOOR_SOC):
-                    vol.All(int, vol.Range(min=10, max=90)),
+                    vol.All(int, vol.Range(min=10, max=100)),
                 vol.Required(CONF_BATTERY_MAX_SOC, default=DEFAULT_BATTERY_MAX_SOC):
-                    vol.All(int, vol.Range(min=50, max=100)),
+                    vol.All(int, vol.Range(min=10, max=100)),
                 vol.Required(CONF_ROUND_TRIP_EFFICIENCY, default=int(DEFAULT_ROUND_TRIP_EFFICIENCY * 100)):
                     vol.All(int, vol.Range(min=70, max=100)),
                 vol.Required(CONF_FORECAST_HOURS, default=DEFAULT_FORECAST_HOURS):
@@ -674,15 +674,6 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
         state = self.hass.states.get(entity_id)
         return entity_id if state is not None else None
 
-    def _detect_inverter_id(self) -> str | None:
-        """Try to find the FoxESS inverter ID from existing Modbus entities."""
-        for state in self.hass.states.async_all("select"):
-            if "foxessmodbus_work_mode" in state.entity_id:
-                # Grab from a known automation if present
-                break
-        # Fall back to known value — user can correct in form
-        return "0c6d23d42d87264a4f0a0dccb6061b12"
-
     async def _list_dashboards(self) -> list[dict]:
         """Return list of Lovelace dashboards via WebSocket."""
         try:
@@ -725,10 +716,10 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
             data_schema=vol.Schema({
                 vol.Required(CONF_BATTERY_FLOOR_SOC,
                              default=data.get(CONF_BATTERY_FLOOR_SOC, DEFAULT_BATTERY_FLOOR_SOC)):
-                    vol.All(int, vol.Range(min=10, max=90)),
+                    vol.All(int, vol.Range(min=10, max=100)),
                 vol.Required(CONF_BATTERY_MAX_SOC,
                              default=data.get(CONF_BATTERY_MAX_SOC, DEFAULT_BATTERY_MAX_SOC)):
-                    vol.All(int, vol.Range(min=50, max=100)),
+                    vol.All(int, vol.Range(min=10, max=100)),
                 vol.Required(CONF_ROUND_TRIP_EFFICIENCY, default=eff_pct):
                     vol.All(int, vol.Range(min=70, max=100)),
                 vol.Required(CONF_FORECAST_HOURS,
