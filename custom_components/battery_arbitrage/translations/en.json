@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Live Data Source",
-        "description": "Where should Solar AI get the live grid power, PV production, house load, and EV charging state from?\n\n• **EVCC** — everything from EVCC (default)\n• **Hybrid** — FoxESS for grid/PV/load, EVCC for EV info\n• **FoxESS only** — no EVCC at all (warning: no EV coordination)",
+        "description": "Where should Solar AI get the live grid power, PV production, house load, and EV charging state from?\n\n• **EVCC** — everything from EVCC (default)\n• **Hybrid** — FoxESS for grid/PV/load, EVCC for EV info\n• **FoxESS only** — no EVCC at all (EV charging is still detected via FoxESS Modbus TCP or the OCPP embedded server — see the warning on the next step)",
         "data": { "live_data_source": "Live data source" }
       },
       "evcc_url": {
@@ -24,8 +24,8 @@
         }
       },
       "foxess_live_warning": {
-        "title": "⚠️ No EV coordination available",
-        "description": "You have selected **FoxESS only** as the live data source. Solar AI will NOT be able to detect when your EV is charging.\n\nIf the battery is grid-charging at the same time the EV is drawing power, the combined load can exceed your main breaker.\n\nOnly proceed if:\n• You do NOT have an EV, OR\n• Your EV charger is configured to never draw from the house battery\n\nYou must acknowledge this risk to continue.",
+        "title": "⚠️ EV coordination depends on your charger backend",
+        "description": "You have selected **FoxESS only** as the live data source — Solar AI won't use EVCC.\n\nEV charging is still detected automatically if you use either **FoxESS Modbus TCP** or **OCPP (embedded server)** as the charger backend — both read the charger directly, without needing EVCC.\n\nIf you use OCPP through a separate/external integration instead of the embedded server, Solar AI has no way to detect EV charging in this mode.\n\nIf the battery is grid-charging at the same time an undetected EV is drawing power, the combined load can exceed your main breaker. Only proceed if:\n• You do NOT have an EV, OR\n• Your EV charger is configured to never draw from the house battery, OR\n• You're using one of the two directly-detected charger backends above\n\nYou must acknowledge this risk to continue.",
         "data": { "acknowledge_no_ev": "I have no EV, or my EV charger is configured to avoid the house battery" }
       },
       "foxess_live_entities": {

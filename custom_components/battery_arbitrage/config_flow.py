@@ -207,7 +207,7 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                             {"value": LIVE_SOURCE_HYBRID,
                              "label": "Hybrid (FoxESS grid/PV, EVCC for EV)"},
                             {"value": LIVE_SOURCE_FOXESS,
-                             "label": "FoxESS only (no EVCC — no EV coordination)"},
+                             "label": "FoxESS only (no EVCC — see warning about EV coordination)"},
                         ],
                         mode=selector.SelectSelectorMode.LIST,
                     )),
@@ -251,13 +251,20 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_foxess_live_warning(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """FoxESS-only mode: hard acknowledgement that no EV is being managed.
+        """FoxESS-only mode: hard acknowledgement of the residual EV-coordination gap.
 
-        Without EVCC there is no way for the integration to know that an EV
-        is plugged in or charging. If the user has an EV and Solar AI starts
-        grid-charging the battery while the EV is also drawing power, the
-        combined draw can exceed the breaker. This step refuses to continue
-        until the user explicitly ticks the acknowledgement.
+        v1.10.1 — this used to warn unconditionally that EVCC's absence means
+        no EV awareness at all, which was wrong for two of the three charger
+        backends: the FoxESS Modbus TCP backend and the OCPP embedded server
+        both read the charger directly and don't need EVCC (see the matching
+        `_ev_modbus_last_power_w` backfill added in coordinator.py, mirroring
+        the pre-existing OCPP one). The gap only remains for OCPP through a
+        separate/external integration with the embedded server switched off
+        — there, nothing in this integration observes the charger's state, so
+        if the user has an EV and Solar AI starts grid-charging the battery
+        while the EV is also drawing power, the combined draw can exceed the
+        breaker. This step refuses to continue until the user explicitly
+        ticks the acknowledgement.
         """
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -777,7 +784,7 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                             {"value": LIVE_SOURCE_HYBRID,
                              "label": "Hybrid (FoxESS grid/PV, EVCC for EV)"},
                             {"value": LIVE_SOURCE_FOXESS,
-                             "label": "FoxESS only (no EVCC — no EV coordination)"},
+                             "label": "FoxESS only (no EVCC — see warning about EV coordination)"},
                         ],
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )),
@@ -1021,9 +1028,16 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                 # ── Charger backend (v0.57.0) ───────────────────────────
                 # OCPP and Modbus are mutually exclusive at the charger; the
                 # mode is set in the FoxESS app. Selecting "FoxESS Modbus TCP"
-                # here requires the charger to be in Modbus TCP mode. The
-                # Modbus backend can charge single-phase (~1.4 kW min), which
-                # the 3-phase OCPP path cannot.
+                # here requires the charger to be in Modbus TCP mode.
+                #
+                # v1.10.1 — both backends support single- and three-phase.
+                # The label used to say "single phase" for the Modbus backend,
+                # which was accurate at v0.57.0 but stale since the Modbus
+                # controller gained live 1φ↔3φ switching afterward (down to a
+                # ~1.4 kW single-phase floor, up through full three-phase,
+                # tracking solar surplus as it changes) — the wording was
+                # never updated to match. The OCPP path doesn't auto-switch
+                # phases the same way; that's the real distinction.
                 vol.Required(CONF_EV_CHARGER_BACKEND,
                              default=data.get(CONF_EV_CHARGER_BACKEND,
                                               DEFAULT_EV_CHARGER_BACKEND)):
@@ -1032,7 +1046,7 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                             {"value": EV_BACKEND_OCPP,
                              "label": "OCPP (indlejret server)"},
                             {"value": EV_BACKEND_FOXESS_MODBUS,
-                             "label": "FoxESS Modbus TCP (enfaset solfølge)"},
+                             "label": "FoxESS Modbus TCP (1-/3-faset solfølge)"},
                         ],
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )),

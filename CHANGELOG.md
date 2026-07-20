@@ -9,6 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.10.1] — 2026-07-20
+
+### Fixed
+
+- **The FoxESS Modbus TCP charger backend had no equivalent to the OCPP backend's EV-power backfill.** Without EVCC and without the embedded OCPP server, `ev_charge_power_w` stayed 0 even while the Modbus controller was actively charging the car — house-load learning silently absorbed the EV's draw as if it were house load, and the "hold the battery for the EV" export-suppression logic never engaged. Added a matching backfill from the Modbus charger's own live power reading, the same one-tick-lagged pattern the OCPP backfill already used.
+
+### Changed
+
+- **Setup wizard wording corrected on two points, found and verified while investigating the fix above.** The EV charger backend label said "FoxESS Modbus TCP (single phase)" — accurate when written (v0.57.0), stale since the backend gained live 1φ↔3φ switching; now describes both phases. The "FoxESS only" data-source warning said EVCC's absence meant no EV coordination at all — actually only true for OCPP through a separate/external integration with the embedded server off; both the FoxESS Modbus TCP backend and the OCPP embedded server read the charger directly and don't need EVCC, which the fix above puts into practice for the Modbus side.
+
+---
+
 ## [1.10.0] — 2026-07-18
 
 A decision-logic strategy review plus dashboard usability work, bundled into one major release.
