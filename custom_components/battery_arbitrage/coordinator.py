@@ -398,6 +398,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._ev_effective_mode: str = EV_MODE_LOCKED
         self._ev_active_schedule_link: str | None = None     # entity_id of the schedule currently in control
         self._ev_last_amps: int = 0                          # last A we commanded
+        # v1.10.1 — the FoxESS Modbus charger's last-read live power draw (W),
+        # updated every tick by `_run_ev_controller_modbus`. Mirrors the OCPP
+        # ChargePoint's own `power_w` attribute so the main accounting tick
+        # (which runs before the EV controller each cycle, same as for OCPP)
+        # can backfill `ev_charge_power_w` for this backend too — previously
+        # only the OCPP backend had this backfill, so Modbus-backend users
+        # running without EVCC had their EV's draw silently miscounted as
+        # house load and never triggered the "hold the battery for the EV"
+        # export suppression.
+        self._ev_modbus_last_power_w: float = 0.0
         self._ev_last_rate_assert_ts: datetime | None = None  # v0.40.2 periodic re-assert
         # v0.40.5 — OCPP desync watchdog state
         self._ev_stuck_since_ts: datetime | None = None       # want-charge-but-not-delivering since
@@ -1337,6 +1347,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 cp = self.ocpp_server.get(charger_id)
                 if cp is not None and cp.power_w > 0:
                     ev_charge_power_w = cp.power_w
+        # v1.10.1 — same backfill for the FoxESS Modbus TCP charger backend,
+        # which had no equivalent: without EVCC and without the embedded OCPP
+        # server, `ev_charge_power_w` stayed 0 even while the Modbus
+        # controller was actively charging the car — house-load learning
+        # silently absorbed the EV's draw as if it were house load, and
+        # `ev_charging_now`/`ev_charging_solar` below never went True, so the
+        # "hold the battery for the EV" should_export suppression never
+        # engaged either. `_ev_modbus_last_power_w` is updated every tick by
+        # `_run_ev_controller_modbus`, which runs later in this same cycle —
+        # one-tick-lagged, same as the OCPP ChargePoint's own power_w above.
+        if ev_charge_power_w == 0 and self._ev_modbus_last_power_w > 0:
+            ev_charge_power_w = self._ev_modbus_last_power_w
 
         # Check all loadpoints for EV presence and active non-PV charging
         ev_connected = any(lp_.get("connected", False) for lp_ in loadpoints)
@@ -4961,6 +4983,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("FoxESS Modbus charger unreachable: %s", err)
             self._ev_last_amps = 0
+            self._ev_modbus_last_power_w = 0.0
             self._ev_last_reason = self._msg(
                 f"Modbus charger unreachable: {err}",
                 f"Modbus-lader ikke tilgængelig: {err}",
@@ -4998,6 +5021,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         if not ev_connected:
             self._ev_last_amps = 0
+            self._ev_modbus_last_power_w = 0.0
             self._ev_last_reason = self._msg(
                 f"EV not connected (status: {state['status_label']})",
                 f"EV ikke tilsluttet (status: {state['status_label']})",
@@ -5022,6 +5046,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         grid_export_kw = max(0.0, -grid_power_w / 1000.0)
         grid_import_kw = max(0.0, grid_power_w / 1000.0)
         ev_current_kw  = state["power_kw"]
+        # v1.10.1 — cache the live draw so the main accounting tick (which
+        # runs BEFORE this controller each cycle) can backfill
+        # `ev_charge_power_w` next time round, the same one-tick-lagged
+        # pattern already used for the OCPP ChargePoint's `power_w`.
+        self._ev_modbus_last_power_w = ev_current_kw * 1000.0
         house_load_kw  = home_power_w / 1000.0
         solar_kw       = pv_power_w / 1000.0
         battery_charge_kw = max(0.0, float(self._get_float_state(
