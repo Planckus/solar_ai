@@ -505,6 +505,7 @@
       "ev_modbus_phase_avg_window_min": { "name": "Phase-averaging window (min)" },
       "ev_modbus_suspend_interval_min": { "name": "Phase-switch interval (min)" },
       "ev_override_ramp_interval_s": { "name": "Override ramp step (s)" },
+      "ev_surplus_ramp_step_a": { "name": "Surplus ramp-up step (A) — max increase per control-loop tick; lower = smoother, less transient grid draw" },
       "solar_confidence_pct": { "name": "Solar confidence (%) — forecast percentile the optimiser plans against (50 = median)" },
       "disk_alarm_threshold": { "name": "Low-disk alarm threshold (% free)" }
     },
