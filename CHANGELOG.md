@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.10.5] — 2026-07-21
+
+### Fixed
+
+- **The recurring "EDS DayAheadPrices fetch failed — Unterminated string" price-fetch failures.** The day-ahead price fetch (and the shared JSON fetch used for EVCC/solar) read the HTTP body with a single bounded `read(n)`, but aiohttp's stream reader returns only what is currently buffered — so a multi-segment response (the today+tomorrow payload spans several TCP reads) was JSON-parsed while still partial, raising "Unterminated string." It self-healed by falling back to cached prices, but risked tomorrow's prices entering the plan late and a blind-optimizer window right after a restart. Both fetch sites now read the whole body to EOF (chunked, still memory-capped). Surfaced by a decision-logic review.
+- **The v1.10.4 EV surplus ramp-up cap crippled the first few ticks of every charging session.** The per-tick cap counted up from the last commanded current, which is 0 on a fresh start — so it clamped the target to ~2 A and the car sat at the ~6 A hardware minimum for 2–3 ticks (wasted, since the charger can't draw less anyway) before the ramp cleared the floor; on a choppy day, often for the whole short session, leaving real surplus unharvested. The ramp now bases from the phase minimum, so a fresh start jumps straight into a sane band while a genuine mid-session surplus jump is still step-limited (the case the cap was actually added for). Also fixes a stale contradicting comment and makes the charge-power telemetry honest when the cap bites (the tile previously showed a higher kW than the car actually drew).
+
 ## [1.10.4] — 2026-07-21
 
 ### Added
