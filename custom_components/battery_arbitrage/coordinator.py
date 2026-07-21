@@ -5339,11 +5339,26 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # ramp through a transition the user just asked for). The battery-full
         # override below has its own, separate ramp and is unaffected: it only
         # ever raises target_amps further, never reads this cap.
-        if target_amps > self._ev_last_amps and not self._ev_mode_change_pending:
+        #
+        # v1.10.5 — base the ramp on the phase-minimum floor, not raw
+        # _ev_last_amps. On a fresh IDLE→charge start _ev_last_amps is 0, so
+        # counting up from 0 wasted 2-3 ticks commanding sub-minimum values
+        # (the charger clamps them all to its ~6 A hardware floor anyway)
+        # before the ramp even cleared that floor — leaving the car stuck at
+        # minimum while real surplus went unharvested, on a choppy day often
+        # for the whole short session. Flooring the base at min_amps_sel lets a
+        # fresh start jump straight into a sane band, while still step-limiting
+        # a genuine mid-session surplus jump (the case the cap was added for,
+        # where _ev_last_amps is already high so the floor is a no-op).
+        ramp_limited = False
+        if not self._ev_mode_change_pending:
             ramp_step_a = float(self._stored.get(
                 CONF_EV_SURPLUS_RAMP_STEP_A, DEFAULT_EV_SURPLUS_RAMP_STEP_A))
-            target_amps = round(
-                min(target_amps, self._ev_last_amps + max(0.1, ramp_step_a)), 2)
+            ramp_base = max(self._ev_last_amps, min_amps_sel)
+            if target_amps > ramp_base:
+                capped = round(min(target_amps, ramp_base + max(0.1, ramp_step_a)), 2)
+                ramp_limited = capped < target_amps
+                target_amps = capped
 
         # No separate battery-discharge hard-stop here (unlike the v0.54.0 OCPP
         # fix): `available_kw` already subtracts battery discharge, so by energy
@@ -5469,11 +5484,17 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 seconds=EV_OVERRIDE_SOFT_COOLDOWN_SECONDS)
             self._ev_session_was_override_induced = False
 
-        # No 2 A/tick ramp clamp on the Modbus path (v0.59.2): the target is
-        # already the median-smoothed true solar surplus, so let the current go
-        # straight to it. The old slow ramp lagged behind rising PV and exported
-        # the difference during the climb; the charger/EV ramp their own draw
-        # smoothly regardless, and the export-aware signal self-corrects any
+        # Ramp handling (v0.59.2 → v1.10.4/v1.10.5): the target is the
+        # median-smoothed true solar surplus. v0.59.2 originally applied NO
+        # per-tick ramp clamp (let the current go straight to the target),
+        # because the old slow ramp lagged rising PV and exported the
+        # difference during the climb. v1.10.4 re-introduced a per-tick
+        # ramp-UP cap (above, `ramp_step_a`) specifically to stop a multi-kW
+        # single-tick surplus jump from outrunning the inverter's own
+        # Self-Use loop and briefly importing from grid — but only on
+        # increases, and v1.10.5 floors its base at the phase minimum so a
+        # fresh start still jumps straight into a sane band. Downward moves
+        # remain immediate, and the export-aware signal self-corrects any
         # momentary overshoot on the next tick.
 
         # Heartbeat: ALWAYS apply (unlike OCPP's dedup) so the setpoint never
@@ -5501,10 +5522,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if want_lock != self._ev_battery_locked:
             await self._set_battery_lock(want_lock)
 
-        # Honest COOLING telemetry: holding at minimum while target is 0.
+        # Honest telemetry: report the power the commanded amps actually draw,
+        # not the pre-cap/pre-hold target. Covers the COOLING hold (target 0 but
+        # holding at minimum) AND the v1.10.5 ramp cap (target reduced below the
+        # computed surplus target) — previously the tile showed e.g. "3.68 kW"
+        # while the car drew the ~1.38 kW minimum, contradicting itself.
         reported_target_kw = target_kw
-        if final_amps > 0 and target_kw <= 0.0:
+        if final_amps > 0:
             reported_target_kw = round(self._amps_to_kw(final_amps, PHASES), 2)
+        # Mark the reason ramp-limited so the text matches the (lower) number —
+        # unless the override subsequently raised the target past the cap.
+        if ramp_limited and not override_forcing:
+            reason = reason + self._msg(" (ramp-limited)", " (rampe-begrænset)")
 
         self._ev_last_reason = reason
         return {
@@ -7615,14 +7644,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 resp.raise_for_status()
                 # v0.55.1 — size-cap the body (see _fetch_json).
+                # v1.10.5 — read the WHOLE body to EOF, not a single bounded
+                # read. aiohttp's StreamReader.read(n) returns only what is
+                # currently buffered (up to n) — it does NOT wait for n bytes
+                # or EOF — so on a multi-segment response (the today+tomorrow
+                # day-ahead payload spans several TCP reads) a single read()
+                # returned a PARTIAL body and json.loads raised "Unterminated
+                # string" — the recurring EDS fetch failure. iter_chunked
+                # accumulates the full body while still enforcing the cap.
                 _max_bytes = 8_000_000
                 if resp.content_length is not None and resp.content_length > _max_bytes:
                     raise ValueError(f"EDS response too large (area {price_area})")
-                _raw = await resp.content.read(_max_bytes + 1)
-                if len(_raw) > _max_bytes:
-                    raise ValueError(f"EDS response exceeded size cap (area {price_area})")
+                _buf = bytearray()
+                async for _chunk in resp.content.iter_chunked(65536):
+                    _buf += _chunk
+                    if len(_buf) > _max_bytes:
+                        raise ValueError(f"EDS response exceeded size cap (area {price_area})")
                 import json as _json  # noqa: PLC0415
-                data = _json.loads(_raw) if _raw else {}
+                data = _json.loads(_buf) if _buf else {}
         except Exception as err:
             _LOGGER.warning(
                 "EDS DayAheadPrices fetch failed (area %s): %s — using cached prices", price_area, err)
@@ -8217,14 +8256,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             resp.raise_for_status()
             # v0.55.1 — cap the body so a hostile/runaway endpoint can't exhaust
             # memory. Real price/EVCC payloads are well under 8 MB.
+            # v1.10.5 — read the WHOLE body to EOF via iter_chunked, not a single
+            # resp.content.read(n): read(n) returns only the currently-buffered
+            # bytes (up to n), so a multi-segment response was parsed partially
+            # → intermittent json.loads "Unterminated string" failures. Chunked
+            # accumulation keeps the memory cap while reading to EOF.
             max_bytes = 8_000_000
             if resp.content_length is not None and resp.content_length > max_bytes:
                 raise ValueError(f"Response too large ({resp.content_length} B) from {url}")
-            raw = await resp.content.read(max_bytes + 1)
-            if len(raw) > max_bytes:
-                raise ValueError(f"Response exceeded {max_bytes} B from {url}")
+            buf = bytearray()
+            async for chunk in resp.content.iter_chunked(65536):
+                buf += chunk
+                if len(buf) > max_bytes:
+                    raise ValueError(f"Response exceeded {max_bytes} B from {url}")
             import json as _json  # noqa: PLC0415
-            return _json.loads(raw) if raw else {}
+            return _json.loads(buf) if buf else {}
 
     @staticmethod
     def _make_result(mode: str = MODE_NORMAL, reason: str = "", **kwargs: Any) -> dict[str, Any]:
