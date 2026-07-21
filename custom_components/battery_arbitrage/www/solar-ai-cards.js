@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  console.info('%c SOLAR AI CARDS %c v1.10.0 loading… ', 'color:white;background:#BA7517;font-weight:bold;', 'color:#BA7517;background:white;font-weight:bold;');
+  console.info('%c SOLAR AI CARDS %c v1.10.4 loading… ', 'color:white;background:#BA7517;font-weight:bold;', 'color:#BA7517;background:white;font-weight:bold;');
 
   // ---------------------------------------------------------------- helpers
 
@@ -124,6 +124,7 @@
       saved_today: 'Saved today', solar_today: 'Solar today', tomorrow: 'Tomorrow',
       floor: 'floor', starting_in: (s) => `Starting in ${s}s`,
       ev_stops_in: (s) => `EV stops in ${s}s — low sun`, charge_mode: 'Charge mode',
+      battery_charging: 'Charging', battery_discharging: 'Discharging',
     },
     da: {
       house_load: 'Husforbrug', solar: 'Sol', battery: 'Batteri', grid: 'Elnet', ev: 'EV',
@@ -131,6 +132,7 @@
       saved_today: 'Sparet i dag', solar_today: 'Sol i dag', tomorrow: 'I morgen',
       floor: 'gulv', starting_in: (s) => `Starter om ${s}s`,
       ev_stops_in: (s) => `EV stopper om ${s}s — lav sol`, charge_mode: 'Opladningstilstand',
+      battery_charging: 'Oplader', battery_discharging: 'Aflader',
     },
   };
 
@@ -287,6 +289,17 @@
       const gridLabel = gridExp > gridImp ? t(hass, 'selling') : (gridImp > 0.05 ? t(hass, 'buying') : '');
       const gridVal = gridExp > gridImp ? gridExp : gridImp;
 
+      // v1.10.3 — the battery tile showed a bare magnitude with no charge/
+      // discharge indicator, unlike the grid tile right next to it (which
+      // has always had an explicit "Buying"/"Selling" label). A user misread
+      // "1.5 kW" as the battery helping cover load, when it was actually
+      // charging — taking a share of the solar for itself — which made an
+      // entirely normal small grid trickle look like a bug. Mirrors the grid
+      // tile's own label+color pattern so the direction is never ambiguous.
+      const batColor = batC > 0.05 ? 'var(--primary-color)' : (batD > 0.05 ? 'var(--success-color)' : 'var(--secondary-text-color)');
+      const batLabel = batC > 0.05 ? t(hass, 'battery_charging') : (batD > 0.05 ? t(hass, 'battery_discharging') : '');
+      const batVal = batC > 0.05 ? batC : batD;
+
       let forecastRow = '';
       if (todayRest !== null || tomorrow !== null) {
         forecastRow = `<div class="row tile" style="margin-bottom:12px;">
@@ -329,7 +342,8 @@
             <div class="tile" data-action="more-info" data-entity="${c.battery_soc_entity || ''}">
               <ha-icon icon="mdi:battery-high" style="color:var(--primary-color);"></ha-icon>
               <div class="tile-label" style="font-size:14px;margin-top:4px;">${t(hass, 'battery')}</div>
-              <div style="font-size:19px;font-weight:500;">${fmt(batC > 0.05 ? batC : batD, 1)} kW</div>
+              <div style="font-size:19px;font-weight:500;color:${batColor};">${fmt(batVal, 1)} kW</div>
+              <div style="font-size:13px;margin-top:1px;color:${batColor};">${batLabel}</div>
               <div style="position:relative;height:5px;background:var(--divider-color);border-radius:3px;margin-top:6px;">
                 <div style="position:absolute;left:0;top:0;height:100%;width:${Math.min(100, Math.max(0, soc))}%;background:var(--primary-color);border-radius:3px;"></div>
                 <div style="position:absolute;left:${Math.min(100, Math.max(0, floor))}%;top:-2px;width:1.5px;height:9px;background:var(--secondary-text-color);"></div>

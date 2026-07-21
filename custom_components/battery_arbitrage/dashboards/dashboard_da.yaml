@@ -191,6 +191,10 @@ views:
         name: Override rampe-trin (s)
         icon: mdi:speedometer
         help: Hvor ofte strømstyrken øges et trin, når systemet aktivt forsøger at høste ellers spildt solcelle-overskud (batteriet fuldt + salg blokeret).
+      - entity: number.solar_ai_overskuds_rampetrin_a_maks_stigning_pr_kontrol_tick_lavere_jaevnere_mindre_midlertidigt_nettraek
+        name: Overskuds-rampetrin (A)
+        icon: mdi:trending-up
+        help: 'Hvor mange ampere EV''ens normale (ikke-override) mål må stige med pr. kontrol-tick (~10 sek). Kun stigninger begrænses — fald sker altid med det samme. Lavere værdi = jævnere, mindre midlertidigt nettræk når solen eller batteriet skifter hurtigt; højere værdi = griber et nyt overskud hurtigere, men kan af og til løbe fra hvad batteri/net kan følge med til i et par sekunder.'
       - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
         name: Standard tilstand ved tilslutning
         icon: mdi:car-connected
