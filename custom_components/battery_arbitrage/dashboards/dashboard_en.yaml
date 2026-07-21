@@ -191,6 +191,10 @@ views:
         name: Override ramp step (s)
         icon: mdi:speedometer
         help: How often the current is raised one step when the system is actively trying to harvest otherwise-wasted solar surplus (battery full + selling blocked).
+      - entity: number.solar_ai_overskuds_rampetrin_a_maks_stigning_pr_kontrol_tick_lavere_jaevnere_mindre_midlertidigt_nettraek
+        name: Surplus ramp-up step (A)
+        icon: mdi:trending-up
+        help: "How many amps the EV's normal (non-override) target may increase by per control-loop tick (~10s). Only increases are limited — decreases always happen immediately. Lower = smoother, less transient grid draw when solar or the battery's state changes quickly; higher = grabs a new surplus faster, but can occasionally outrun what the battery/grid balance can track for a few seconds."
       - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
         name: Default mode on connect
         help: The EV mode automatically selected every time the car is plugged into the charger.

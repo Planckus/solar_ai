@@ -39,6 +39,7 @@ from .const import (
     EV_MODBUS_PHASE_AVG_WINDOW_SECONDS,
     EV_MODBUS_SUSPEND_INTERVAL_MIN,
     EV_OVERRIDE_RAMP_INTERVAL_SECONDS,
+    DEFAULT_EV_SURPLUS_RAMP_STEP_A,
     DEFAULT_EXPORT_FEE,
     DEFAULT_MAX_EXPORT_KW,
     DEFAULT_MIN_EXPORT_PRICE,
@@ -392,6 +393,27 @@ async def async_setup_entry(
             step=1,
             mode=NumberMode.SLIDER,
             display_precision=0,
+            available_when=_foxess_modbus_active,
+        ),
+        # Surplus ramp-up step (v1.10.4) — max amps the EV's normal (non-
+        # override) target may climb by per control-loop tick (~10s default).
+        # Only limits increases; decreases stay immediate. Lower = smoother,
+        # less transient grid draw when solar jumps or the battery's own
+        # state changes between ticks; higher = grabs a sudden surplus
+        # faster, at the cost of occasionally outrunning what the battery/
+        # grid balance can track for a few seconds.
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="ev_surplus_ramp_step_a",
+            translation_key="ev_surplus_ramp_step_a",
+            default=DEFAULT_EV_SURPLUS_RAMP_STEP_A,
+            icon="mdi:trending-up",
+            unit="A",
+            min_val=0.5,
+            max_val=16,
+            step=0.5,
+            mode=NumberMode.SLIDER,
+            display_precision=1,
             available_when=_foxess_modbus_active,
         ),
     ]

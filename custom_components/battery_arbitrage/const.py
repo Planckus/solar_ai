@@ -271,6 +271,25 @@ EV_MODBUS_DOWNSHIFT_DWELL_SECONDS = 300
 CONF_EV_MODBUS_CURRENT_STEP = "ev_modbus_current_step"
 DEFAULT_EV_MODBUS_CURRENT_STEP = "1.0"
 EV_MODBUS_CURRENT_STEP_OPTIONS = ["0.1", "0.5", "1.0"]
+# v1.10.4 — normal (non-override) surplus-tracking ramp-up cap. Live-diagnosed
+# 2026-07-21: the EV's target already tracks `available_kw` almost tick-by-tick
+# (median-of-3 filtered only, no time-smoothing — unlike the phase decision's
+# own rolling average), so a genuine surplus jump (a cloud clearing, or the
+# battery's own charge/discharge state changing between ticks) could swing the
+# target several kW in a single ~10 s control-loop tick. `available_kw` already
+# subtracts the battery's LAST-KNOWN discharge/charge power, one tick behind
+# the target it's used to compute — so a fast upward jump can outrun how
+# quickly the inverter's own Self-Use control loop and the EV's own current
+# ramp can actually follow, producing a few seconds of real grid import before
+# things settle (confirmed live: the same install flipping from buying 1.9 kW
+# to selling 2.3 kW within about a minute as conditions caught up). Capping
+# only INCREASES (decreases stay immediate — reducing draw is always the safe
+# direction) trades slightly slower EV ramp-up for less transient grid draw.
+# Dashboard-adjustable; default chosen to still be responsive to genuine
+# surplus (2 A ≈ 1.4 kW per tick on 3-phase) while smoothing out the multi-kW
+# single-tick jumps observed live.
+CONF_EV_SURPLUS_RAMP_STEP_A = "ev_surplus_ramp_step_a"
+DEFAULT_EV_SURPLUS_RAMP_STEP_A = 2.0
 # The charger only permits a phase switch once this interval (0x300B, minutes,
 # hardware minimum 5) has elapsed since the last change; a too-early downshift
 # pauses the session instead of switching. This also serves as the anti-thrash

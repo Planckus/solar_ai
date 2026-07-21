@@ -9,6 +9,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.10.4] — 2026-07-21
+
+### Added
+
+- **New "Surplus ramp-up step (A)" setting.** In normal (non-override) `pv` mode, the EV's target already tracked the computed surplus almost tick-by-tick, with no time-smoothing beyond a median-of-3 filter — a genuine surplus jump (a cloud clearing, or the battery's own charge/discharge state changing between ticks) could swing the target several kW in a single ~10 s control-loop tick, outrunning how fast the inverter's own Self-Use control loop and the battery could actually follow, and producing a few seconds of real grid import before things settled. Live-diagnosed the same day as the curtailment-override fix below, from a live report of recurring small grid purchases even outside the override. Only *increases* are now capped per tick (decreases stay immediate, since reducing draw is always the safe direction); default 2 A/tick trades slightly slower EV ramp-up for less transient grid draw during fast solar/battery transitions, and is dashboard-adjustable if a different balance is wanted.
+
+## [1.10.3] — 2026-07-21
+
+### Fixed
+
+- **The dashboard's Battery tile showed a bare magnitude with no charge/discharge indicator**, unlike the Grid tile right next to it (which has always had an explicit "Buying"/"Selling" label). This directly caused a live support back-and-forth: a user saw "1.5 kW" on the battery tile alongside a small grid purchase and read it as the battery helping cover load, when it was actually charging — taking a share of the solar for itself — which made an entirely normal, healthy grid trickle look like a bug. The battery tile now shows an explicit "Charging"/"Discharging" label in the same style and color logic as the grid tile's "Buying"/"Selling".
+
+## [1.10.2] — 2026-07-21
+
+### Fixed
+
+- **The battery-full curtailment-harvesting override could force grid import instead of harvesting curtailed solar, with a fully-charged battery sitting idle.** Live-diagnosed with a controlled A/B/A test: locking the EV out showed no deficit at all (PV tracked house load closely); switching back to `pv` mode immediately re-triggered the override (battery at 100%, export blocked), and for as long as it stayed active, battery discharge was pinned at 0 kW through sustained 0.3–1.4 kW grid import — then jumped to 1.9–2.4 kW the instant the override backed off on its own. The override's premise — PV being throttled down with nowhere for the surplus to go — implies grid import should already read ~0; if grid is already importing before the override even engages, there is no free/wasted solar to harvest, only a real deficit that forcing more EV draw on top of can only worsen. Added a grid-import gate (reusing the same 0.3 kW threshold the ramp's own back-off logic already uses) to both EV controller backends, so the override no longer engages when there's already a real supply deficit.
+
 ## [1.10.1] — 2026-07-20
 
 ### Fixed

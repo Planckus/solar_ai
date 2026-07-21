@@ -4467,6 +4467,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # gate when the grid is actively absorbing surplus PV.
         grid_power_w = evcc_state.get("gridPower", 0) or 0
         grid_export_kw = max(0.0, -grid_power_w / 1000.0)
+        grid_import_kw = max(0.0, grid_power_w / 1000.0)
         ev_current_kw = self._get_ocpp_power_kw(charger_id)
         house_load_kw = home_power_w / 1000.0
         solar_kw      = pv_power_w / 1000.0
@@ -4527,11 +4528,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         )
         # Compute the override condition (mode check happens at apply
         # site below where effective_mode is in scope).
+        #
+        # v1.10.2 — added the grid-import gate; see the matching comment on
+        # the Modbus controller's `override_active` (this OCPP path mirrors
+        # it, though it's inactive on the install this was diagnosed on —
+        # the embedded OCPP server is off, legacy lbbrhzn/ocpp is in use).
+        # A genuine curtailment scenario implies supply already roughly
+        # matches demand (grid import ~0); importing already means there is
+        # no free/wasted solar to harvest, only a real deficit forcing more
+        # EV draw on top of can only worsen.
         override_preconditions_ok = (
             floor_active
             and battery_near_full
             and solar_kw > 0.1
             and not override_cooldown_active
+            and grid_import_kw <= EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW
         )
 
         # Surplus = solar minus non-EV portion of house load
@@ -4637,7 +4648,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             battery_full_override = False
             self._reset_override_ramp()
         if battery_full_override:
-            grid_import_kw = max(0.0, grid_power_w / 1000.0)
             min_amps = self._kw_to_amps(min_kw)
             max_amps = self._kw_to_amps(max_kw)
             ramp_amps = self._update_override_ramp(
@@ -4971,6 +4981,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             EV_MODBUS_DOWNSHIFT_DWELL_SECONDS, EV_MODBUS_IMPORT_SUSTAINED_SECONDS,
             EV_MODBUS_MIN_DEADBAND_KW,
             CONF_EV_MODBUS_CURRENT_STEP, DEFAULT_EV_MODBUS_CURRENT_STEP,
+            CONF_EV_SURPLUS_RAMP_STEP_A, DEFAULT_EV_SURPLUS_RAMP_STEP_A,
         )
 
         backend = await self._get_modbus_backend()
@@ -5178,11 +5189,31 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # three-phase and ramp current while the battery stays idle, i.e. while
         # what's being harvested really is otherwise-wasted curtailed PV, not
         # battery power dressed up as solar.
+        #
+        # v1.10.2 — added the grid-import gate. Live-diagnosed 2026-07-21: with
+        # battery at 100% and export blocked, the SoC-fallback branch fired
+        # correctly by its own logic, but the inverter did not respond by
+        # lifting MPPT or discharging the battery — it just imported from the
+        # grid to cover the EV's forced draw, for as long as the override
+        # stayed active (confirmed with a live A/B/A test: locking the EV out
+        # showed no deficit at all; switching it back to pv reproduced the
+        # override immediately, with battery discharge pinned at 0 kW through
+        # sustained 0.3-1.4 kW grid import the whole time it was active, then
+        # jumping to 1.9-2.4 kW the instant the override itself backed off).
+        # A genuine curtailment scenario — PV throttled down with nowhere for
+        # the surplus to go — implies supply already roughly matches demand,
+        # so grid import should read ~0; if grid is already importing before
+        # the override even engages, there is no free/wasted solar sitting
+        # around to harvest, only a real deficit that forcing more EV draw on
+        # top of can only worsen. Reuses the same 0.3 kW threshold the ramp's
+        # own back-off logic already uses, so entry and in-flight behavior are
+        # governed by one consistent number.
         override_active = (
             effective_mode in (EV_MODE_PV, EV_MODE_PV_BATTERY)
             and solar_kw > 0.1
             and not override_cooldown_active
             and battery_discharge_kw <= EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW
+            and grid_import_kw <= EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW
             and (
                 self._pv_power_limited_flag
                 or (self._current_floor_block is not None
@@ -5299,6 +5330,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             raw_amps = target_kw * 1000.0 / (EV_VOLTAGE * PHASES)
             target_amps = round(
                 max(min_amps_sel, min(max_amps_sel, raw_amps)), 2)
+
+        # v1.10.4 — surplus-tracking ramp-up cap (see the const.py comment on
+        # CONF_EV_SURPLUS_RAMP_STEP_A for the live-diagnosed reasoning). Only
+        # caps INCREASES — a downward move is always the safe direction, so it
+        # stays immediate. Bypassed on a deliberate mode change, same as the
+        # other mode-change bypasses tonight (respond immediately rather than
+        # ramp through a transition the user just asked for). The battery-full
+        # override below has its own, separate ramp and is unaffected: it only
+        # ever raises target_amps further, never reads this cap.
+        if target_amps > self._ev_last_amps and not self._ev_mode_change_pending:
+            ramp_step_a = float(self._stored.get(
+                CONF_EV_SURPLUS_RAMP_STEP_A, DEFAULT_EV_SURPLUS_RAMP_STEP_A))
+            target_amps = round(
+                min(target_amps, self._ev_last_amps + max(0.1, ramp_step_a)), 2)
 
         # No separate battery-discharge hard-stop here (unlike the v0.54.0 OCPP
         # fix): `available_kw` already subtracts battery discharge, so by energy

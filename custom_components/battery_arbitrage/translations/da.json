@@ -491,6 +491,7 @@
       "ev_modbus_phase_avg_window_min": { "name": "Faseudjævnings-vindue (min)" },
       "ev_modbus_suspend_interval_min": { "name": "Faseskift-interval (min)" },
       "ev_override_ramp_interval_s": { "name": "Override rampe-trin (s)" },
+      "ev_surplus_ramp_step_a": { "name": "Overskuds-rampetrin (A) — maks. stigning pr. kontrol-tick; lavere = jævnere, mindre midlertidigt nettræk" },
       "solar_confidence_pct": { "name": "Sol-konfidens (%) — prognose-percentil optimeringen planlægger efter (50 = median)" },
       "disk_alarm_threshold": { "name": "Alarmgrænse for lav diskplads (% ledig)" }
     },
