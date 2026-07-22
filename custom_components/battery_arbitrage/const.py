@@ -638,7 +638,19 @@ DEFAULT_RESERVE_PERCENTILE_PCT = 80  # default; user-configurable 50-95 (v0.75.1
 # tighter once the learner warms up. Each sample is already sanity-filtered
 # to RESERVE_RATIO_SANE_LO/HI before it ever reaches the percentile calc, so
 # this clamp is a second, wider backstop — not the only line of defense.
-RESERVE_FACTOR_MIN = 1.0             # clamp: never reserve less than +0 %
+# v1.10.6 — lowered the learned-path floor 1.0 → 0.8. The model-health
+# "reserve factor pinned at min" note showed the learner had measured this
+# house consistently uses LESS overnight than the deterministic profile
+# predicts, but a floor of exactly 1.0 forbade applying that correction
+# (and left the user-facing "Reserve percentile" knob inert — it recomputes
+# a value that was then always re-clamped back to 1.0). 0.8 lets the learned
+# p-percentile pull the reserve down to what the data supports, freeing
+# battery for evening peaks. Still bounded below by the per-sample sanity
+# filter (RESERVE_RATIO_SANE_LO=0.3) and — the real hard floor — the
+# hardware DYNAMIC_FLOOR_MIN_SOC that the reserve sits ON TOP of. Only the
+# LEARNED path (≥7 clean nights) uses this floor; the manual fallback slider
+# stays clamped ≥1.0 as an explicit user safety knob.
+RESERVE_FACTOR_MIN = 0.8             # clamp (learned path): never reserve less than -20 %
 RESERVE_FACTOR_MAX = 2.0             # clamp: never reserve more than +100 %
 RESERVE_RATIO_SANE_LO = 0.3          # drop a night whose actual/predicted ratio is wilder than this
 RESERVE_RATIO_SANE_HI = 3.0
