@@ -557,6 +557,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._ev_modbus_phase = 1
         self._ev_modbus_phase_since_ts = None
         self._ev_modbus_avail_hist: list[float] = []  # last few available-surplus reads (median filter)
+        self._ev_modbus_import_hist: list[float] = []  # v1.10.6 — last few grid-import reads (median for the override entry gate)
         # Phase decision (v0.59.6): rolling window of (timestamp, surplus) over
         # EV_MODBUS_PHASE_AVG_WINDOW_SECONDS — the average drives the 1φ/3φ
         # choice, replacing the reset-on-blip dwell timers.
@@ -1455,11 +1456,31 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 # call. So this reads the PREVIOUS tick's value (~30 s
                 # latency), which is fine because MPPT throttling is
                 # stable across multiple ticks.
+                # v1.10.6 — `floor_active` alone over-drops. A blocked EXPORT
+                # price (the floor block) does NOT imply throttled PRODUCTION:
+                # when the house battery is still absorbing, the panels deliver
+                # full PV and forecast≈actual — a valid, high-signal sample the
+                # old blanket drop wrongly discarded, worst at the midday peak
+                # hours in a blocked-export summer, starving the per-hour
+                # learner exactly where the DP relies on it. Only treat a floor
+                # block as curtailment when production is actually suppressed
+                # well below a meaningful forecast (the genuine battery-full
+                # throttle signature). NOTE we detect it from the
+                # forecast/actual divergence rather than reg 49251
+                # (_pv_power_limited_flag), which is documented UNRELIABLE for
+                # battery-full curtailment on real installs (v0.39.17) — the
+                # flag is still OR'd in as a harmless secondary signal for the
+                # no-floor MPPT-throttle case it does catch.
                 floor_active = self._current_floor_block is not None
                 mppt_curtailed = self._pv_power_limited_flag
+                floor_curtailed = (
+                    floor_active
+                    and current_forecast_w >= SOLAR_ACCURACY_MIN_FORECAST_W
+                    and pv_power_w < 0.5 * current_forecast_w
+                )
                 self._update_solar_accuracy(
                     current_forecast_w, pv_power_w,
-                    curtailed=(floor_active or mppt_curtailed),
+                    curtailed=(mppt_curtailed or floor_curtailed),
                 )
             self._update_load_history(base_load_kw)
             self._update_house_load_hourly(base_load_kw)
@@ -3350,16 +3371,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # to this house's variance but can never leave
         # [RESERVE_FACTOR_MIN, RESERVE_FACTOR_MAX].
         margin = self._reserve_factor()
-        # Battery energy the house will draw over the bridge (discharge losses in).
-        house_need_kwh = bridge_house_kwh / eff
+        # Battery energy the house will draw over the bridge. Delivering
+        # bridge_house_kwh (house-side kWh) from energy ALREADY in the battery
+        # costs only the ONE-WAY discharge leg, not the full round trip — the
+        # energy is already stored, whichever way it got there. v1.10.6 — use
+        # eff**0.5 to match the DP optimiser's own split (discharge_eff =
+        # efficiency ** 0.5); dividing by the full round-trip eff over-reserved
+        # the floor by ~4%.
+        house_need_kwh = bridge_house_kwh / (eff ** 0.5)
         # Energy a planned grid-charge actually returns to the battery over the
-        # bridge (charge losses in). Credited in PROPORTION to how long it runs —
-        # a token charge offsets almost nothing, a real multi-hour cheap charge
-        # offsets a lot. grid_charge_kw is the continuously-learned *sustained*
-        # charge rate (mean of real samples, not the p90 peak), so the credit
-        # reflects what a planned charge realistically delivers. 0 → no credit,
-        # which is the safe/conservative direction.
-        charge_kwh = max(0.0, float(grid_charge_kw)) * bridge_charge_h * eff
+        # bridge (one-way CHARGE leg → eff**0.5, v1.10.6, same DP consistency
+        # as above). Credited in PROPORTION to how long it runs — a token
+        # charge offsets almost nothing, a real multi-hour cheap charge offsets
+        # a lot. grid_charge_kw is the continuously-learned *sustained* charge
+        # rate (mean of real samples, not the p90 peak), so the credit reflects
+        # what a planned charge realistically delivers. 0 → no credit, which is
+        # the safe/conservative direction.
+        charge_kwh = max(0.0, float(grid_charge_kw)) * bridge_charge_h * (eff ** 0.5)
         reserve_kwh = max(0.0, house_need_kwh - charge_kwh) * margin
         # The battery only delivers down to the hardware minimum SoC
         # (DYNAMIC_FLOOR_MIN_SOC), so the reserve must sit ON TOP of it: the
@@ -3475,7 +3503,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         lo = int(k)
         hi = min(lo + 1, len(s) - 1)
         p = s[lo] + (s[hi] - s[lo]) * (k - lo)
-        return round(max(RESERVE_FACTOR_MIN, min(RESERVE_FACTOR_MAX, p)), 3)
+        # v1.10.6 — the lower clamp is user-configurable ("Minimum reserve
+        # factor", default RESERVE_FACTOR_MIN=0.8). Set it to 1.0 to keep the
+        # old conservative behaviour (never reserve below the predicted
+        # overnight need); lower it to let the learned percentile free more
+        # battery for evening peaks. It is the user's risk-tolerance knob.
+        rmin = float(self._stored.get("reserve_factor_min", RESERVE_FACTOR_MIN))
+        return round(max(rmin, min(RESERVE_FACTOR_MAX, p)), 3)
 
     def _blocked_sell_hours(self) -> set[int]:
         """Parse the user's 'Blocked sell hours' text (comma-separated hours of
@@ -4112,13 +4146,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # 2. Reserve factor pinned at a safety clamp (only meaningful once warm).
         if len(self._stored.get("overnight_ratio_samples", [])) >= OVERNIGHT_MIN_NIGHTS:
             rf = self._reserve_factor()
+            rmin = float(self._stored.get("reserve_factor_min", RESERVE_FACTOR_MIN))
             if rf >= RESERVE_FACTOR_MAX - 1e-6:
                 issues.append(
                     f"Reserve factor pinned at max ({RESERVE_FACTOR_MAX}): overnight need "
                     f"exceeds the cap — consider raising it")
-            elif rf <= RESERVE_FACTOR_MIN + 1e-6:
+            elif rf <= rmin + 1e-6:
                 notes.append(
-                    f"Reserve factor pinned at min ({RESERVE_FACTOR_MIN}) — this house's "
+                    f"Reserve factor pinned at min ({rmin:g}) — this house's "
                     f"overnight need is consistently low relative to the deterministic "
                     f"prediction; not necessarily a problem")
         # 3. Auto round-trip efficiency at a clamp edge (implausible learned value).
@@ -5021,6 +5056,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_modbus_phase = 1
             self._ev_modbus_phase_since_ts = None
             self._ev_modbus_avail_hist = []
+            self._ev_modbus_import_hist = []
             self._ev_modbus_phase_avg_hist = []
             self._ev_modbus_import_since_ts = None
             self._ev_modbus_override_fail_since_ts = None
@@ -5095,6 +5131,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._ev_modbus_avail_hist.append(available_kw)
         self._ev_modbus_avail_hist = self._ev_modbus_avail_hist[-3:]
         available_kw = sorted(self._ev_modbus_avail_hist)[len(self._ev_modbus_avail_hist) // 2]
+        # v1.10.6 — median-filter grid import too, used ONLY at the override
+        # ENTRY gate below. A full battery does brief (~15 s) charge/discharge
+        # balancing pulses that flip the meter to import for a single tick; the
+        # v1.10.2 gate read raw import, so such a blip could misfire the
+        # curtailment override off and reset its harvest ramp. Median-of-3
+        # rejects the single-tick blip without lagging a genuine sustained
+        # deficit — which the in-flight ramp back-off and the 120 s drain guard
+        # still evaluate on RAW import, so real over-draw protection is
+        # unchanged.
+        self._ev_modbus_import_hist.append(grid_import_kw)
+        self._ev_modbus_import_hist = self._ev_modbus_import_hist[-3:]
+        grid_import_med = sorted(self._ev_modbus_import_hist)[len(self._ev_modbus_import_hist) // 2]
 
         # Resolve the active mode (needed by the phase decision + anti-flap).
         effective_mode, active_link = self._resolve_effective_ev_mode(self._ev_active_mode)
@@ -5213,7 +5261,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and solar_kw > 0.1
             and not override_cooldown_active
             and battery_discharge_kw <= EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW
-            and grid_import_kw <= EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW
+            # v1.10.6 — median-filtered import (not raw) so a single-tick
+            # battery-balancing blip can't misfire the override off + reset its
+            # ramp; the in-flight ramp/drain guards still use raw import.
+            and grid_import_med <= EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW
             and (
                 self._pv_power_limited_flag
                 or (self._current_floor_block is not None

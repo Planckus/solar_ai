@@ -45,6 +45,7 @@ from .const import (
     DEFAULT_MIN_EXPORT_PRICE,
     DEFAULT_MIN_SPREAD_ARBITRAGE,
     DEFAULT_RESERVE_PERCENTILE_PCT,
+    RESERVE_FACTOR_MIN,
     DEFAULT_SOLAR_CONFIDENCE_PCT,
     DEFAULT_SPOT_MARKUP,
     DEFAULT_STROMLIGNING_USE_MANUAL_OVERRIDES,
@@ -171,6 +172,25 @@ async def async_setup_entry(
             step=5,
             mode=NumberMode.SLIDER,
             display_precision=0,
+        ),
+        # Minimum reserve factor (v1.10.6) — the lower clamp on the learned
+        # overnight reserve. 1.0 = never reserve below the predicted overnight
+        # need (old conservative behaviour); below 1.0 lets the learner reserve
+        # less when it has measured this house uses less than predicted,
+        # freeing battery for evening peaks. The user's risk-tolerance knob;
+        # bounded below by the hardware minimum SoC regardless.
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="reserve_factor_min",
+            translation_key="reserve_factor_min",
+            default=RESERVE_FACTOR_MIN,
+            icon="mdi:shield-alert-outline",
+            unit="×",
+            min_val=0.5,
+            max_val=1.5,
+            step=0.05,
+            mode=NumberMode.BOX,
+            display_precision=2,
         ),
         BatteryArbitrageConfigNumber(
             coordinator, entry,

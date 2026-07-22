@@ -791,6 +791,9 @@ views:
       - entity: number.solar_ai_reserve_percentil_prognosefejl_daekning_nar_nataflaeringen_er_varm_80_tidligere_fast_adfaerd
         name: Reserve-percentil (%)
         help: Når systemet er "varmet op" (7 rene nætter), styres reserven af denne percentil af den observerede prognosefejl i stedet for den faste faktor ovenfor. Lavere værdi = mindre reserve, mere til salg — men lidt større risiko for en stram nat. 80 er standard og svarer til den hidtidige faste opførsel.
+      - entity: number.solar_ai_minimum_reserve_faktor_x_nedre_graense_for_den_laerte_nat_reserve_10_reserver_aldrig_under_forudsagt_behov_lavere_frigor_mere_batteri_til_spidsbelastning
+        name: Minimum reserve-faktor (×)
+        help: 'Den nedre grænse for hvor lidt systemet må reservere om natten, når det er varmet op. 1,0 = reserver aldrig under det forudsagte natforbrug (konservativt, som før). Under 1,0 = lad systemet reservere mindre når det har målt at dit hus faktisk bruger mindre end forudsagt, så mere batteri frigøres til aftenens spidsbelastning. Din risiko-knap. Batteriets hardware-minimum (SoC-gulv) gælder altid uanset denne værdi.'
       - entity: binary_sensor.solar_ai_modelhelbred
         name: Modelhelbred
         help: 'Fra = ingen problemer (normal tilstand). Til = et problem er fundet. Overvåger de selvlærende modeller (reserve, batterikapacitet, effektivitet, opladningshastigheder) for drift eller vedvarende forkerte forudsigelser. Slår kun alarm — retter aldrig noget automatisk.'

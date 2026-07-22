@@ -791,6 +791,9 @@ views:
       - entity: number.solar_ai_reserve_percentil_prognosefejl_daekning_nar_nataflaeringen_er_varm_80_tidligere_fast_adfaerd
         name: Reserve percentile (%)
         help: Once the system is "warmed up" (7 clean nights), the reserve is driven by this percentile of the observed forecast error instead of the fixed factor above. Lower = smaller reserve, more available to sell — at the cost of slightly more risk of a tight night. 80 is the default and matches the prior fixed behaviour.
+      - entity: number.solar_ai_minimum_reserve_faktor_x_nedre_graense_for_den_laerte_nat_reserve_10_reserver_aldrig_under_forudsagt_behov_lavere_frigor_mere_batteri_til_spidsbelastning
+        name: Minimum reserve factor (×)
+        help: "The lower limit on how little the system may reserve overnight once warmed up. 1.0 = never reserve below the predicted overnight need (conservative, as before). Below 1.0 = let the system reserve less when it has measured that your house actually uses less than predicted, freeing more battery for the evening peak. Your risk-tolerance knob. The battery's hardware minimum (SoC floor) always applies regardless of this value."
       - entity: binary_sensor.solar_ai_modelhelbred
         name: Model health
         help: 'Off = no problem (the normal state). On = a problem was detected. Watches the self-learning models (reserve, battery capacity, efficiency, charge rates) for drift or persistently wrong predictions. Only raises an alarm — never corrects anything automatically.'
