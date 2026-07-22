@@ -9,6 +9,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.10.6] — 2026-07-22
+
+The four remaining items from the decision-logic review (v1.10.5 shipped the first two).
+
+### Changed
+
+- **The dynamic discharge floor now reserves less overnight when the data supports it, and the lower clamp is a new GUI setting.** The learned reserve factor's lower clamp was hardcoded at 1.0, which forbade reserving below the deterministic overnight-need prediction even though the model had measured this house consistently uses *less* than predicted (the "reserve factor pinned at min" health note). It is now a user-configurable **"Minimum reserve factor"** number (0.5–1.5, default 0.8): 1.0 keeps the old conservative behaviour (never reserve below predicted need), lower frees more battery for evening peaks — it is your risk-tolerance knob. Lowering the default from 1.0 to 0.8 also makes the previously-inert "Reserve percentile" setting actually do something. Still bounded by the per-sample sanity filter and the hardware minimum SoC the reserve sits on top of; the manual "Reserve safety factor" fallback (used before the learner warms up) stays clamped ≥1.0.
+- **The dynamic floor now uses one-way discharge efficiency instead of the full round trip** when converting house-energy-need to reserved battery SoC, matching the DP optimizer's own convention (`eff**0.5`). It was over-reserving the floor by ~4%.
+- **The solar-forecast accuracy learner no longer discards valid mid-day samples just because the export price floor is active.** A blocked export price does not mean production is throttled — when the house battery is still absorbing, the panels deliver full PV and the forecast-vs-actual sample is valid and high-signal. It was being dropped anyway, starving the per-hour learner exactly at peak mid-day hours in a solar-rich summer. Now a floor block is only treated as curtailment when production is actually suppressed well below forecast (the genuine battery-full throttle signature), detected from the forecast/actual divergence rather than the inverter's PV-limited flag (documented unreliable for battery-full curtailment on real installs).
+- **The curtailment override's grid-import entry gate (v1.10.2) is now median-filtered.** A full battery does brief (~15 s) charge/discharge balancing pulses that flip the meter to import for a single tick; the raw reading let such a blip misfire the override off and reset its harvest ramp. A median-of-3 rejects the single-tick blip; the in-flight ramp back-off and drain guard still evaluate raw import, so genuine over-draw protection is unchanged.
+
 ## [1.10.5] — 2026-07-21
 
 ### Fixed

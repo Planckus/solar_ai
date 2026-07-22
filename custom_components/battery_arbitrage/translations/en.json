@@ -491,6 +491,7 @@
       "battery_capacity": { "name": "Battery capacity (kWh)" },
       "reserve_factor_manual": { "name": "Reserve safety factor" },
       "reserve_percentile_pct": { "name": "Reserve percentile (%) — forecast-error coverage once the overnight learner is warm (80 = prior fixed behaviour)" },
+      "reserve_factor_min": { "name": "Minimum reserve factor (×) — lower clamp on the learned overnight reserve; 1.0 = never reserve below predicted need, lower = free more battery for peaks" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage spread" },
       "grid_max_kw": { "name": "Grid import limit" },
       "vat_pct": { "name": "Buy-side VAT (%)" },
