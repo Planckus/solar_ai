@@ -713,6 +713,13 @@ VACATION_THRESHOLD = 0.25           # 25% of long-term baseline → vacation
 VACATION_MIN_DURATION = 48          # Must be below threshold for 4h (48 × 5min samples)
 MIN_EXPORTABLE_KWH = 0.5            # Don't bother exporting less than this
 MIN_GRID_CHARGE_KWH = 0.5           # Don't bother grid-charging less than this
+# v1.10.7 — live "sell the solar, hold the battery" guard. When real solar
+# surplus (PV above house load) of at least this many kW is already flowing to
+# grid AND the battery has room, a battery export below the day-peak is held:
+# the surplus solar already fetches that price, so draining the battery only
+# adds a wear cycle for a marginal intraday gain. Above the day-peak (>= p75)
+# the sell stands. 0.5 kW keeps it from firing on measurement noise.
+SOLAR_SURPLUS_HOLD_KW = 0.5
 # v0.59.15 — data-sanity guard for grid-charge. When the price feed degenerates
 # (e.g. a failed/garbled Energi Data Service fetch leaves only a slot or two),
 # the "is now a cheap hour?" percentile test breaks down — a lone price is its

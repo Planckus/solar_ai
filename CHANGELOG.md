@@ -9,6 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.10.7] — 2026-07-24
+
+Stops the battery from discharging to grid for thin, forecast-dependent intraday arbitrage when solar is already available to sell, and closes an EV-charging side effect of the same behaviour. Three fixes: one on the planning side, one live export guard, and one EV priority-gate guard.
+
+### Fixed
+
+- **The minimum-arbitrage-spread threshold is now enforced on solar-funded battery exports, not just grid-funded ones.** The day-ahead optimizer offered a battery export when either a cheap grid buy could refill it at the required spread (`grid_spread_ok`) *or* later solar surplus could refill it "for free" (`solar_refill_ok`). The solar path bypassed the spread threshold entirely, so on any day with later solar surplus the user's threshold no longer gated battery exports — and when the plan scheduled a cheap grid top-up to do the refilling, a sub-threshold grid cycle was admitted dressed up as a solar one. A free refill is not a free trade: selling the battery and letting solar top it back up still spends a wear cycle to capture the sell price, so the sell price itself must now clear the spread threshold (the refill cost is ≈0, so the sell price *is* the spread). A normal (low) threshold still admits solar-funded exports exactly as before; a high threshold now suppresses them, as intended.
+- **New live guard: hold the battery when solar surplus is already exportable and the battery has room.** When real PV surplus (production above whole-house load) of ≥0.5 kW is already flowing to grid and the battery is below its max SoC, a battery export below the day's peak price is now held. In that state the surplus solar already captures the price, so draining the battery only adds a wear cycle for a marginal intraday gain — its stored energy is worth more held for evening self-consumption or a higher-priced slot. At a genuine day-peak (sell price at or above the 75th-percentile reference) the export still proceeds; that is the moment to empty the battery. When solar is not covering the load or the battery is full, exports are unaffected.
+- **The EV battery-priority gate no longer releases when the grid export is the battery discharging for arbitrage.** In PV mode the car is held off charging until the house battery reaches the priority SoC, with a bypass (v0.39.19) that releases the gate when the inverter is exporting to grid — on the assumption the export is solar overflow, so the battery is already full. A planned arbitrage export force-discharges the battery to the grid, which reads as grid export the same way solar overflow does, so the bypass released the gate and let the car charge while the battery was being drained below its priority SoC — the opposite of "battery first". The bypass now also requires the battery not be discharging (above the 0.3 kW noise threshold); a battery-drain export keeps the gate active, while genuine solar-overflow export still releases it as before.
+
+---
+
 ## [1.10.6] — 2026-07-22
 
 The four remaining items from the decision-logic review (v1.10.5 shipped the first two).
