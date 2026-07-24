@@ -78,6 +78,7 @@ from .const import (
     LEGACY_EXPORT_AUTOMATION,
     LOAD_HISTORY_MAX_SAMPLES,
     MIN_EXPORTABLE_KWH,
+    SOLAR_SURPLUS_HOLD_KW,
     SAVINGS_LOG_MAX_DAYS,
     MIN_GRID_CHARGE_KWH,
     MIN_PRICE_SLOTS_FOR_GRID_CHARGE,
@@ -2088,6 +2089,34 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if should_export and current_local_hour in self._blocked_sell_hours():
             should_export = False
             self._mode_reason = f"Sell blocked for hour {current_local_hour:02d}h (user)"
+
+        # ── Solar-surplus battery-hold guard (v1.10.7) ───────────────────────
+        # The user's principle: "if there's solar to sell, don't also drain the
+        # battery to sell at the same price." When real PV surplus (PV above the
+        # whole-house load, incl. any EV) is already flowing to grid AND the
+        # battery still has room, a battery export just adds a wear cycle to
+        # capture a price the surplus solar already captures — the battery's
+        # energy is worth more held (evening self-consumption / a higher slot).
+        # Carve-out: at a genuine day-peak (export_price >= p75) the sell stands
+        # — that's the moment to empty the battery. This complements the DP-side
+        # fix that keeps such trades out of the plan; the reactive path already
+        # requires a peak, so this only bites a plan that scheduled a sub-peak
+        # export while solar was covering. When solar isn't covering (no surplus)
+        # or the battery is full (must make room), the export is unaffected.
+        solar_surplus_kw = max(0.0, (pv_power_w - home_power_w) / 1000.0)
+        at_day_peak = price_p75 > 0 and export_price >= price_p75
+        if (
+            should_export
+            and solar_surplus_kw >= SOLAR_SURPLUS_HOLD_KW
+            and battery_soc < max_soc - 1
+            and not at_day_peak
+        ):
+            should_export = False
+            self._mode_reason = (
+                f"Battery hold: {solar_surplus_kw:.1f} kW solar surplus already "
+                f"exportable, battery has room ({battery_soc:.0f}%<{max_soc}%), "
+                f"sell {export_price:.2f} below peak ref {price_p75:.2f}"
+            )
 
         # If grid is paying US to buy electricity (buy price ≤ 0), always charge if there's
         # room — this overrides the spread threshold and even the EV schedule check.
@@ -4629,6 +4658,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             grid_export_kw=grid_export_kw,
             ev_last_amps=self._ev_last_amps,
             mode_just_changed=self._ev_mode_change_pending,
+            battery_discharge_kw=battery_discharge_kw,
         )
 
         # v0.39.17 — Battery-full override.
@@ -5372,6 +5402,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             grid_export_kw=grid_export_kw, ev_last_amps=self._ev_last_amps,
             phases=PHASES, current_step=current_step,
             mode_just_changed=self._ev_mode_change_pending,
+            battery_discharge_kw=battery_discharge_kw,
         )
         # Convert the (already step-aligned) target to per-phase amps at the
         # register's native 0.1 A resolution, clamped to the user's envelope.
@@ -5646,6 +5677,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         phases: int = EV_PHASES,
         current_step: float = 1.0,
         mode_just_changed: bool = False,
+        battery_discharge_kw: float = 0.0,
     ) -> tuple[float, str]:
         """Pure mode→target translation. Returns (target_kw, human-readable reason).
 
@@ -5690,6 +5722,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         pv-mode session — this only re-opens the gate for the single tick
         right after a deliberate mode switch, same scope as the other
         mode-change fixes tonight.
+
+        v1.10.7 — the grid-export bypass now also requires that the battery is
+        not itself discharging (`battery_discharge_kw`). A DP-planned arbitrage
+        export force-discharges the battery to the grid, which reads as grid
+        export just like solar overflow does; without this the bypass released
+        the priority gate and let the car charge below the priority SoC while
+        the battery was being drained below it. See the inline comment.
         """
         if mode == EV_MODE_LOCKED:
             return 0.0, self._msg("Mode: Locked — no charging", "Mode: Låst — ingen opladning")
@@ -5704,9 +5743,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # v0.75.12 — also apply the gate (not bypass) on the tick right after
         # a mode change, even if ev_last_amps is stale-nonzero from whatever
         # mode was active before. See docstring.
+        # v1.10.7 — the grid-export bypass assumed the export is SOLAR overflow
+        # ("battery is full, PV is spilling to grid, let the car have it"). But a
+        # DP-planned arbitrage EXPORT force-discharges the battery to the grid,
+        # which also reads as grid_export_kw > min_kw — the bypass then released
+        # the gate and let the car charge below the priority SoC while the battery
+        # was being *drained* below it, the exact opposite of "battery first". So
+        # the bypass now also requires the battery not be discharging: if the
+        # battery is discharging more than the noise threshold, keep the gate
+        # active regardless of grid export (the export is battery drain, not solar
+        # surplus). Threshold reuses the "battery is meaningfully discharging"
+        # value from the override-ramp guard.
+        battery_draining = (
+            battery_discharge_kw > EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW
+        )
         if (mode == EV_MODE_PV
                 and battery_soc < priority_soc
-                and grid_export_kw <= min_kw
+                and (grid_export_kw <= min_kw or battery_draining)
                 and (ev_last_amps == 0 or mode_just_changed)):
             return 0.0, self._msg(
                 f"Battery prioritised: {battery_soc:.0f}% / {priority_soc:.0f}% "
@@ -8144,11 +8197,22 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 buy_after != float("inf")
                 and sell_h - recharge_cost_after >= min_spread
             )
-            # v0.75.13 — a solar-funded refill is free, so it doesn't need to
-            # clear min_spread the way a grid refill does; sell_h > 0 (checked
-            # separately below at the EXPORT branch's own gate) is enough to
-            # make it worthwhile. See solar_kwh_after's own comment above.
-            solar_refill_ok = solar_kwh_after[t] >= MIN_EXPORTABLE_KWH
+            # v0.75.13 — a solar-funded refill doesn't need a cheap grid buy to
+            # exist the way grid_spread_ok does; later solar surplus refills the
+            # battery for ~free. v1.10.7 — but "free refill" is not "free trade":
+            # selling the battery now and letting solar top it back up still
+            # spends a wear cycle to capture sell_h, so the SELL PRICE itself must
+            # clear min_spread (refill cost ≈ 0, so sell_h *is* the spread).
+            # Previously this bypassed min_spread entirely, which let a high user
+            # min_spread be sidestepped by any day with later solar surplus — and,
+            # when the DP planned a cheap grid top-up to do the refilling, dressed
+            # a sub-threshold grid cycle up as a "solar" one. Requiring
+            # sell_h >= min_spread makes the user's threshold bind on solar-funded
+            # exports too; a normal (low) min_spread still admits them as before.
+            solar_refill_ok = (
+                solar_kwh_after[t] >= MIN_EXPORTABLE_KWH
+                and sell_h >= min_spread
+            )
             spread_ok = grid_spread_ok or solar_refill_ok
 
             new_V: list[float] = [0.0] * SOC_STATES
