@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  console.info('%c SOLAR AI CARDS %c v1.10.4 loading… ', 'color:white;background:#BA7517;font-weight:bold;', 'color:#BA7517;background:white;font-weight:bold;');
+  console.info('%c SOLAR AI CARDS %c v1.11.0 loading… ', 'color:white;background:#BA7517;font-weight:bold;', 'color:#BA7517;background:white;font-weight:bold;');
 
   // ---------------------------------------------------------------- helpers
 
@@ -946,6 +946,239 @@
     console.info('Solar AI: registered <solar-ai-entities-card>');
   } catch (err) {
     console.error('Solar AI: failed to register <solar-ai-entities-card>', err);
+  }
+
+  // ------------------------------------------------------- schedule cards
+  //
+  // Replaces the old stack of 4× solar-ai-entities-card (11 rows each) + a
+  // markdown summary table for the EV "Skema 1–4" charge schedules with one
+  // compact, touch-friendly card per slot. Each slot is backed entirely by the
+  // durable per-slot entities the integration already exposes — no new state:
+  //   switch.<prefix>_<n>_aktiveret          on/off
+  //   select.<prefix>_<n>_tilstand           pv | pv_battery | full
+  //   time.<prefix>_<n>_starttid / _sluttid  HH:MM:SS
+  //   switch.<prefix>_<n>_<weekday>          on/off  (Danish ASCII ids)
+  // The chrome strings localize off hass.language (the JS bundle is shared by
+  // both language-forked dashboards); entity ids are language-independent.
+
+  const SCHED_ACCENT = NAMED_COLORS.purple; // '#9c27b0' — matches icon_color:purple used today
+  const SCHED_TINT = 'color-mix(in srgb, ' + SCHED_ACCENT + ' 12%, transparent)';
+  const SCHED_BORDER = 'color-mix(in srgb, ' + SCHED_ACCENT + ' 40%, transparent)';
+  const SCHED_WEEKDAYS = ['mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag', 'lordag', 'sondag'];
+
+  const SCHED_L10N = {
+    en: {
+      header: 'Scheduled charging',
+      subtitle: 'Four schedules. Enable one or more and set EV mode to "Scheduled" to use them.',
+      bannerTitle: 'Schedules are inactive right now',
+      bannerText: 'Schedules only control charging when EV mode is "Scheduled". Changes here don’t affect the active charging session.',
+      active: 'Active', inactive: 'Inactive', start: 'Start', end: 'End',
+      slot: (n) => 'Schedule ' + n, add: (n) => 'Add schedule ' + n,
+      modes: { pv: 'PV', pv_battery: 'PV+Bat', full: 'Full' },
+      days: [['Mo', 'Monday'], ['Tu', 'Tuesday'], ['We', 'Wednesday'], ['Th', 'Thursday'], ['Fr', 'Friday'], ['Sa', 'Saturday'], ['Su', 'Sunday']],
+    },
+    da: {
+      header: 'Planlagt opladning',
+      subtitle: '4 skemaer. Aktivér et eller flere og sæt EV-tilstand til "Planlagt" for at bruge dem.',
+      bannerTitle: 'Skemaer er inaktive lige nu',
+      bannerText: 'Skemaerne styrer kun opladningen når EV-tilstand er "Planlagt". Ændringer her påvirker ikke den aktive opladning.',
+      active: 'Aktiv', inactive: 'Inaktiv', start: 'Start', end: 'Slut',
+      slot: (n) => 'Skema ' + n, add: (n) => 'Tilføj skema ' + n,
+      modes: { pv: 'PV', pv_battery: 'PV+Bat', full: 'Full' },
+      days: [['Ma', 'Mandag'], ['Ti', 'Tirsdag'], ['On', 'Onsdag'], ['To', 'Torsdag'], ['Fr', 'Fredag'], ['Lø', 'Lørdag'], ['Sø', 'Søndag']],
+    },
+  };
+
+  function schedToMin(hhmm) {
+    const p = String(hhmm || '').split(':');
+    return (parseInt(p[0], 10) || 0) * 60 + (parseInt(p[1], 10) || 0);
+  }
+
+  class SolarAiScheduleCard extends SolarAiBaseCard {
+    _prefix() { return (this._config && this._config.prefix) || 'solar_ai_skema'; }
+    _slots() { return Math.max(1, (this._config && this._config.slots) || 4); }
+    _scheduledState() { return (this._config && this._config.scheduled_state) || 'scheduled'; }
+
+    _slotEntities(n) {
+      const p = this._prefix();
+      const days = {};
+      SCHED_WEEKDAYS.forEach((d) => { days[d] = `switch.${p}_${n}_${d}`; });
+      return {
+        enabled: `switch.${p}_${n}_aktiveret`,
+        mode: `select.${p}_${n}_tilstand`,
+        start: `time.${p}_${n}_starttid`,
+        end: `time.${p}_${n}_sluttid`,
+        days,
+      };
+    }
+
+    _watchedEntities() {
+      const ids = [];
+      if (this._config && this._config.mode_entity) ids.push(this._config.mode_entity);
+      for (let n = 1; n <= this._slots(); n++) {
+        const e = this._slotEntities(n);
+        ids.push(e.enabled, e.mode, e.start, e.end);
+        SCHED_WEEKDAYS.forEach((d) => ids.push(e.days[d]));
+      }
+      return ids;
+    }
+
+    getCardSize() { return 2 + this._slots() * 3; }
+
+    _txt() {
+      const lang = (this._hass && this._hass.language && this._hass.language.slice(0, 2)) || 'en';
+      return SCHED_L10N[lang] || SCHED_L10N.en;
+    }
+
+    _segsHtml(startState, endState, enabled) {
+      const s = schedToMin(startState), e = schedToMin(endState);
+      const fill = enabled ? SCHED_ACCENT : 'var(--disabled-text-color, rgba(127,127,127,0.4))';
+      let segs = [];
+      if (e > s) segs = [[s / 1440 * 100, (e - s) / 1440 * 100]];
+      else segs = [[s / 1440 * 100, 100 - s / 1440 * 100], [0, e / 1440 * 100]];
+      return segs.map(([left, width]) =>
+        `<div style="position:absolute;top:0;height:100%;left:${left}%;width:${width}%;background:${fill};border-radius:3px;"></div>`
+      ).join('');
+    }
+
+    _slotHtml(n, T) {
+      const hass = this._hass;
+      const e = this._slotEntities(n);
+      const enabled = state(hass, e.enabled) === 'on';
+      const modeVal = state(hass, e.mode);
+      const startState = state(hass, e.start) || '00:00:00';
+      const endState = state(hass, e.end) || '00:00:00';
+      const isEmpty = !enabled && startState === endState;
+
+      if (isEmpty) {
+        return `<button data-act="add" data-slot="${n}" style="all:unset;box-sizing:border-box;cursor:pointer;border:1.5px dashed var(--divider-color);border-radius:18px;padding:28px 20px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:220px;color:var(--secondary-text-color);background:var(--secondary-background-color, rgba(127,127,127,0.04));">
+          <div style="width:38px;height:38px;border-radius:50%;background:var(--divider-color);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:300;color:var(--secondary-text-color);">+</div>
+          <div style="font-size:15px;font-weight:500;">${escapeHtml(T.add(n))}</div>
+        </button>`;
+      }
+
+      const trackBg = enabled ? SCHED_ACCENT : 'var(--divider-color)';
+      const modeChips = ['pv', 'pv_battery', 'full'].map((m) => {
+        const active = m === modeVal;
+        return `<button data-act="mode" data-ent="${e.mode}" data-opt="${m}" style="flex:1;padding:10px 6px;min-height:44px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid ${active ? SCHED_ACCENT : 'var(--divider-color)'};background:${active ? SCHED_ACCENT : 'transparent'};color:${active ? '#fff' : 'var(--secondary-text-color)'};">${escapeHtml(T.modes[m] || m)}</button>`;
+      }).join('');
+
+      const timeBoxStyle = `display:block;border:1.5px solid ${enabled ? SCHED_BORDER : 'var(--divider-color)'};background:${enabled ? SCHED_TINT : 'var(--secondary-background-color, rgba(127,127,127,0.08))'};border-radius:12px;padding:10px 12px;min-height:48px;box-sizing:border-box;cursor:pointer;`;
+      const microLabel = 'font-size:11px;font-weight:600;color:var(--secondary-text-color);text-transform:uppercase;letter-spacing:.04em;';
+      const dot = `width:8px;height:8px;min-width:8px;border-radius:50%;background:${SCHED_ACCENT};`;
+      const timeInput = 'font:inherit;font-size:20px;font-weight:700;border:none;background:none;padding:0;color:var(--primary-text-color);color-scheme:light dark;-webkit-appearance:none;cursor:pointer;width:100%;';
+
+      const dayChips = SCHED_WEEKDAYS.map((d, i) => {
+        const active = state(hass, e.days[d]) === 'on';
+        const [letter, full] = T.days[i];
+        return `<button data-act="day" data-ent="${e.days[d]}" title="${escapeHtml(full)}" style="flex:1;min-width:0;height:40px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid ${active ? SCHED_ACCENT : 'var(--divider-color)'};background:${active ? SCHED_ACCENT : 'transparent'};color:${active ? '#fff' : 'var(--secondary-text-color)'};">${escapeHtml(letter)}</button>`;
+      }).join('');
+
+      return `<div style="background:var(--card-background-color);border-radius:18px;padding:20px;box-shadow:0 1px 2px rgba(20,20,30,0.06),0 1px 12px rgba(20,20,30,0.07);box-sizing:border-box;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="width:36px;height:36px;min-width:36px;border-radius:50%;background:${SCHED_TINT};color:${SCHED_ACCENT};display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;">${n}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:16px;font-weight:600;color:var(--primary-text-color);">${escapeHtml(T.slot(n))}</div>
+            <div style="font-size:13px;font-weight:600;color:${enabled ? 'var(--success-color)' : 'var(--secondary-text-color)'};margin-top:1px;">${escapeHtml(enabled ? T.active : T.inactive)}</div>
+          </div>
+          <button data-act="toggle" data-ent="${e.enabled}" style="all:unset;box-sizing:border-box;cursor:pointer;width:46px;height:28px;border-radius:14px;padding:3px;display:flex;align-items:center;background:${trackBg};transition:background .15s;">
+            <span style="display:block;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.3);transform:translateX(${enabled ? '18px' : '0px'});transition:transform .15s;"></span>
+          </button>
+        </div>
+        <div style="opacity:${enabled ? 1 : 0.45};">
+          <div style="display:flex;gap:6px;margin-top:16px;">${modeChips}</div>
+          <div style="margin-top:16px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <label style="${timeBoxStyle}">
+                <span style="${microLabel}">${escapeHtml(T.start)}</span>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:2px;">
+                  <span style="${dot}"></span>
+                  <input data-act="time" data-ent="${e.start}" type="time" value="${escapeHtml(startState.slice(0, 5))}" style="${timeInput}">
+                </div>
+              </label>
+              <label style="${timeBoxStyle}">
+                <span style="${microLabel}">${escapeHtml(T.end)}</span>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:2px;">
+                  <span style="${dot}"></span>
+                  <input data-act="time" data-ent="${e.end}" type="time" value="${escapeHtml(endState.slice(0, 5))}" style="${timeInput}">
+                </div>
+              </label>
+            </div>
+            <div style="position:relative;height:6px;background:var(--secondary-background-color, rgba(127,127,127,0.15));border-radius:3px;margin-top:12px;">${this._segsHtml(startState, endState, enabled)}</div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:16px;">${dayChips}</div>
+        </div>
+      </div>`;
+    }
+
+    _seedSlot(n) {
+      const hass = this._hass;
+      const p = this._prefix();
+      callService(hass, 'select', 'select_option', { entity_id: `select.${p}_${n}_tilstand`, option: 'pv' });
+      callService(hass, 'time', 'set_value', { entity_id: `time.${p}_${n}_starttid`, time: '06:00:00' });
+      callService(hass, 'time', 'set_value', { entity_id: `time.${p}_${n}_sluttid`, time: '22:00:00' });
+      ['mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag'].forEach((d) =>
+        callService(hass, 'switch', 'turn_on', { entity_id: `switch.${p}_${n}_${d}` }));
+      ['lordag', 'sondag'].forEach((d) =>
+        callService(hass, 'switch', 'turn_off', { entity_id: `switch.${p}_${n}_${d}` }));
+      callService(hass, 'switch', 'turn_on', { entity_id: `switch.${p}_${n}_aktiveret` });
+    }
+
+    _render() {
+      const hass = this._hass;
+      if (!hass) return;
+      const T = this._txt();
+      const c = this._config || {};
+      const slots = this._slots();
+
+      const showBanner = c.mode_entity
+        ? state(hass, c.mode_entity) !== this._scheduledState()
+        : false;
+      const bannerHtml = showBanner ? `
+        <div style="display:flex;align-items:flex-start;gap:12px;background:var(--warning-color);border-radius:14px;padding:14px 16px;margin:18px 0;">
+          <div style="width:26px;height:26px;min-width:26px;border-radius:50%;background:rgba(0,0,0,0.15);color:#000;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;">!</div>
+          <div>
+            <div style="font-size:15px;font-weight:600;color:#000;">${escapeHtml(T.bannerTitle)}</div>
+            <div style="font-size:14px;color:#000;margin-top:2px;line-height:1.5;">${escapeHtml(T.bannerText)}</div>
+          </div>
+        </div>` : '';
+
+      let cards = '';
+      for (let n = 1; n <= slots; n++) cards += this._slotHtml(n, T);
+
+      this._root.innerHTML = `
+        <style>:host{display:block;width:100%;box-sizing:border-box;}</style>
+        <div style="max-width:920px;margin:0 auto;box-sizing:border-box;">
+          <div style="margin-bottom:6px;">
+            <div style="font-size:26px;font-weight:600;letter-spacing:-0.01em;color:var(--primary-text-color);">${escapeHtml(c.title || T.header)}</div>
+            <div style="font-size:15px;color:var(--secondary-text-color);margin-top:4px;line-height:1.5;">${escapeHtml(c.subtitle || T.subtitle)}</div>
+          </div>
+          ${bannerHtml}
+          <div style="display:grid;gap:16px;margin-top:18px;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));">${cards}</div>
+        </div>`;
+
+      this._root.querySelectorAll('[data-act]').forEach((el) => {
+        const act = el.dataset.act;
+        if (act === 'time') {
+          el.addEventListener('change', () => {
+            const v = el.value;
+            if (v) callService(hass, 'time', 'set_value', { entity_id: el.dataset.ent, time: v.length === 5 ? v + ':00' : v });
+          });
+        } else if (act === 'add') {
+          el.addEventListener('click', () => this._seedSlot(Number(el.dataset.slot)));
+        } else if (act === 'mode') {
+          el.addEventListener('click', () => callService(hass, 'select', 'select_option', { entity_id: el.dataset.ent, option: el.dataset.opt }));
+        } else if (act === 'toggle' || act === 'day') {
+          el.addEventListener('click', () => callService(hass, 'switch', 'toggle', { entity_id: el.dataset.ent }));
+        }
+      });
+    }
+  }
+  try {
+    customElements.define('solar-ai-schedule-card', SolarAiScheduleCard);
+    console.info('Solar AI: registered <solar-ai-schedule-card>');
+  } catch (err) {
+    console.error('Solar AI: failed to register <solar-ai-schedule-card>', err);
   }
 
   // ----------------------------------------------------------- view wrapper
