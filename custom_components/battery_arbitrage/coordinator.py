@@ -4498,15 +4498,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "ev_default_mode",
                 self.config.get(CONF_EV_DEFAULT_MODE, DEFAULT_EV_DEFAULT_MODE),
             )
-            self._ev_active_mode = default_mode
-            self._stored["ev_active_mode"] = default_mode
+            # v1.11.0 — keep Scheduled sticky across a plug-in. The
+            # default-on-connect reset exists so each new car session starts at
+            # the user's preferred default, but the schedules only govern while
+            # the master mode is Scheduled — resetting to the PV (etc.) default
+            # on every connect would silently defeat a planned charge the moment
+            # the car is plugged in. So when the current master mode is
+            # Scheduled, preserve it; the session-state resets below still run so
+            # the new session starts clean.
+            if self._ev_active_mode != EV_MODE_SCHEDULED:
+                self._ev_active_mode = default_mode
+                self._stored["ev_active_mode"] = default_mode
             self._ev_above_start_count = 0
             self._ev_below_stop_count = 0
             self._ev_surplus_above_min_since_ts = None
             self._ev_surplus_below_min_since_ts = None
             self._ev_arm_drop_since_ts = None              # v0.38.5
             self._ev_cool_entry_ts = None                  # v0.39.11
-            _LOGGER.info("EV plugged in (%s) — resetting mode to %s", charger_id, default_mode)
+            _LOGGER.info("EV plugged in (%s) — mode %s", charger_id, self._ev_active_mode)
         self._ev_prev_connected = ev_connected
 
         if not ev_connected:
@@ -5076,8 +5085,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "ev_default_mode",
                 self.config.get(CONF_EV_DEFAULT_MODE, DEFAULT_EV_DEFAULT_MODE),
             )
-            self._ev_active_mode = default_mode
-            self._stored["ev_active_mode"] = default_mode
+            # v1.11.0 — keep Scheduled sticky across a plug-in (see OCPP path):
+            # a planned charge must survive the car being plugged in, so don't
+            # overwrite the master mode when it's Scheduled. Session-state resets
+            # below still run for a clean new session.
+            if self._ev_active_mode != EV_MODE_SCHEDULED:
+                self._ev_active_mode = default_mode
+                self._stored["ev_active_mode"] = default_mode
             self._ev_surplus_above_min_since_ts = None
             self._ev_surplus_below_min_since_ts = None
             self._ev_arm_drop_since_ts = None
@@ -5093,7 +5107,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_modbus_override_3ph_blocked_until = None
             self._ev_session_was_override_induced = False
             self._reset_override_ramp()
-            _LOGGER.info("EV plugged in (Modbus) — resetting mode to %s", default_mode)
+            _LOGGER.info("EV plugged in (Modbus) — mode %s", self._ev_active_mode)
         self._ev_prev_connected = ev_connected
 
         if not ev_connected:
@@ -5344,7 +5358,29 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         else:
             self._ev_modbus_import_since_ts = None
             importing_on_3ph = False
-        if importing_on_3ph:
+        # v1.10.8 — battery-full fast downshift. The 90 s sustained-import grace
+        # (importing_on_3ph) and the 300 s downshift dwell both exist to ride out
+        # brief sub-floor dips on BATTERY COVER: the battery absorbs the gap so no
+        # grid flows, and a phase flap would be pointless churn. When the battery is
+        # at/above the near-full mark there is no cover — a sub-floor surplus on 3φ
+        # spills straight to the grid (measured: SoC 100%, car pinned at the 4.14 kW
+        # 3φ floor while PV was only ~3 kW, ~1 kW imported for the whole hold). So
+        # skip the grace and drop to 1φ as soon as the MEDIAN import (single-tick
+        # battery-balancing blips already rejected by the median-of-3) confirms real
+        # over-draw. Same exemptions as the sustained guard: not during the
+        # curtailment override's own 3φ escalation (that path has its own drain-guard
+        # fallback), and not in Full mode. Because this only fires at a surplus 1φ can
+        # fully absorb (we are on 3φ yet importing → PV < the 4.14 kW floor, far below
+        # the 5.5 kW upshift line), 1φ is the stable choice and it cannot bounce back
+        # to 3φ — no flap. The interval_s floor below still bounds it to ≥1 switch/min.
+        battery_full_importing = (
+            self._ev_modbus_phase == 3
+            and not override_3ph
+            and effective_mode != EV_MODE_FULL
+            and battery_soc >= EV_OVERRIDE_NEAR_FULL_SOC
+            and grid_import_med > EV_MODBUS_IMPORT_DOWNSHIFT_KW
+        )
+        if importing_on_3ph or battery_full_importing:
             phase_pref = 1
         # v0.69.0 — Asymmetric anti-flap dwell. UPSHIFT (→3φ) stays fast: only the
         # rolling average gates it, so the car grabs solar immediately. DOWNSHIFT
@@ -5353,9 +5389,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # the battery harmlessly covers still collapses the signal below the
         # downshift line; without the dwell that bounces 1φ↔3φ. Holding 3φ rides the
         # dip out on battery cover. Exempt: the import guard (drop at once when truly
-        # buying) and the curtailment override (Regime A bump-up never delayed).
+        # buying), the battery-full fast downshift (v1.10.8 — no battery cover exists
+        # at full SoC, so don't linger on 3φ importing), and the curtailment override
+        # (Regime A bump-up never delayed).
         going_down = phase_pref < self._ev_modbus_phase
-        if going_down and not importing_on_3ph:
+        if going_down and not importing_on_3ph and not battery_full_importing:
             required_dwell = max(interval_s, int(60 * float(self._stored.get(
                 "ev_modbus_downshift_dwell_min",
                 EV_MODBUS_DOWNSHIFT_DWELL_SECONDS / 60))))

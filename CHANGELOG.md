@@ -9,6 +9,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.11.0] — 2026-07-27
+
+### Added
+
+- **Redesigned EV charge-schedule section (`solar-ai-schedule-card`).** The four "Skema 1–4" schedules on the EV subview, previously a stack of four 11-row entity lists plus a markdown summary table, are now one compact card per schedule in a responsive grid (collapses to a single column on narrow screens). Each card shows the slot number, an active/inactive status and enable toggle, a PV / PV+Bat / Full segmented mode control, start/end time pickers with a 24-hour range bar (including overnight/wraparound windows), and seven weekday pills — all touch-sized and wired directly to the existing per-slot entities (`switch.solar_ai_skema_N_aktiveret`, `select…_tilstand`, `time…_starttid/_sluttid`, `switch…_<weekday>`). A disabled slot dims its controls; a never-configured slot shows a "+ Add schedule N" tile that seeds sensible defaults (PV, 06:00–22:00, weekdays). The inactive-schedules banner (shown when EV mode isn't "Scheduled") is built into the card. Themed via HA CSS variables, so it tracks light/dark correctly.
+
+### Fixed
+
+- **Scheduled EV mode now survives the car being plugged in.** The default-on-connect mode (which resets the EV to your preferred default each time a car connects) overwrote the master mode on every plug-in — so with the EV set to "Scheduled", plugging in silently reverted it to the default (e.g. PV) and the schedules never took effect. The connect reset now preserves the master mode when it is Scheduled, on both the Modbus and OCPP paths; a new plug-in still starts a clean session otherwise.
+- **EV charging no longer imports from the grid while holding three-phase over a full battery.** In PV mode the charger holds three-phase through brief surplus dips rather than dropping to single-phase, on the assumption the house battery covers the sub-floor gap (three-phase cannot charge below ~4.14 kW). When the battery is full that assumption fails — there is no headroom to draw from, so the gap is imported from the grid instead, and the 90-second sustained-import grace plus the 300-second downshift dwell kept the charger pinned to the three-phase floor for the whole hold (measured: battery at 100%, PV ~3 kW, car pinned at 4.14 kW, ~1 kW imported). When the battery is at or above the near-full mark (96%) and median-filtered grid import confirms real over-draw on three-phase, the charger now drops to single-phase immediately, where it tracks the available solar (~1.4–3.7 kW) with no grid draw. Battery-covered dips below full SoC are unchanged, so the existing anti-flap behaviour is preserved; the curtailment override's own three-phase escalation (which has a separate fallback) and Full mode are exempt.
+
+---
+
 ## [1.10.7] — 2026-07-24
 
 Stops the battery from discharging to grid for thin, forecast-dependent intraday arbitrage when solar is already available to sell, and closes an EV-charging side effect of the same behaviour. Three fixes: one on the planning side, one live export guard, and one EV priority-gate guard.
