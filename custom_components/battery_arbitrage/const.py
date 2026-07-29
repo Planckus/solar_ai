@@ -575,6 +575,17 @@ SOLAR_ACCURACY_WINDOW = 576          # Use last 4 days (576 × 5 min) for the ra
 # orientation) from observation without requiring panel-spec input.
 SOLAR_ACCURACY_HOUR_BUCKET_MAX = 168  # 7 days × 24 samples max per hour bucket
 SOLAR_ACCURACY_HOUR_MIN_SAMPLES = 8   # Need ≥ 8 daylight samples per hour before trusting bucket
+# v1.11.1 — "negligible flow" level (kW) for the accuracy learner's curtailment
+# detector. Real curtailment (battery full, export blocked) has a unique
+# signature: the inverter clamps PV to consumption, so NOTHING flows — no
+# export, no import, no battery discharge. If supplemental power IS flowing in
+# (grid import or battery discharge), the panels are provably maxed out
+# (irradiance-limited) — you don't import while throttling panels you could
+# un-throttle — so a low reading is a genuine cloud sample and is kept. Set
+# above a full battery's brief charge/discharge balancing pulses so those don't
+# read as "supplemental flow" and wrongly keep a curtailed sample; the learned
+# factor's median absorbs the rare tick where a real transient slips through.
+SOLAR_CURTAILMENT_FLOW_THRESHOLD_KW = 0.3
 # Hour buckets fall back to the global rolling median until they warm up.
 
 # v0.43.0 — prediction scorecard (M1). Pure observability: logs the optimiser's

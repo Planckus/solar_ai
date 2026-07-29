@@ -93,6 +93,7 @@ from .const import (
     SOLAR_ACCURACY_WINDOW,
     SOLAR_ACCURACY_HOUR_BUCKET_MAX,
     SOLAR_ACCURACY_HOUR_MIN_SAMPLES,
+    SOLAR_CURTAILMENT_FLOW_THRESHOLD_KW,
     PREDICTION_LOG_MAX,
     PREDICTION_MAE_WINDOW_SLOTS,
     PREDICTION_MAE_WINDOW_SLOTS_LONG,
@@ -1463,21 +1464,50 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 # full PV and forecast≈actual — a valid, high-signal sample the
                 # old blanket drop wrongly discarded, worst at the midday peak
                 # hours in a blocked-export summer, starving the per-hour
-                # learner exactly where the DP relies on it. Only treat a floor
-                # block as curtailment when production is actually suppressed
-                # well below a meaningful forecast (the genuine battery-full
-                # throttle signature). NOTE we detect it from the
-                # forecast/actual divergence rather than reg 49251
-                # (_pv_power_limited_flag), which is documented UNRELIABLE for
-                # battery-full curtailment on real installs (v0.39.17) — the
-                # flag is still OR'd in as a harmless secondary signal for the
-                # no-floor MPPT-throttle case it does catch.
+                # learner exactly where the DP relies on it.
+                #
+                # v1.11.1 — but the v1.10.6 detector (`actual < 0.5 × forecast`)
+                # missed PARTIAL curtailment. When the battery is full and export
+                # is blocked, the inverter throttles PV to match consumption
+                # (house + EV), which is frequently 50–90 % of forecast — above
+                # the 0.5 line, so it was recorded as a genuine sample with ratio
+                # 0.6–0.9. Those biased the per-hour median factor DOWN, skewing
+                # midday forecasts low (worst when the EV harvest-override pulls
+                # production to exactly that partial level). The actual/forecast
+                # ratio is the very quantity curtailment corrupts, so it can't be
+                # the detector.
+                #
+                # The clean discriminator is: is the system drawing SUPPLEMENTAL
+                # power (grid import or battery discharge) to meet load? If it is,
+                # the panels are provably maxed out — you don't import while
+                # throttling panels you could just un-throttle — so a low reading
+                # is a real cloud, keep it. Real curtailment instead has the
+                # BALANCED/IDLE signature: battery full (≥ near-full, can't
+                # absorb) AND export blocked (floor active) AND nothing flowing —
+                # no export, no import, no battery discharge → PV clamped to load,
+                # could be higher → drop the sample at ANY ratio. This preserves
+                # v1.10.6's valid samples (battery still absorbing, or surplus
+                # genuinely exported) AND the genuine cloudy-with-full-battery
+                # samples the export-only check would have wrongly dropped. The
+                # 0.3 kW flow threshold rides a full battery's balancing pulses;
+                # reg 49251 (`_pv_power_limited_flag`) stays OR'd in as a harmless
+                # secondary signal for the no-floor MPPT-throttle case it catches,
+                # despite being unreliable for battery-full curtailment (v0.39.17).
                 floor_active = self._current_floor_block is not None
                 mppt_curtailed = self._pv_power_limited_flag
+                batt_soc_now = self._get_float_state(
+                    self.config.get(CONF_BATTERY_SOC_ENTITY, FOXESS_BATTERY_SOC), 0)
+                batt_discharge_now = self._get_float_state(
+                    self.config.get(CONF_BATTERY_DISCHARGE_ENTITY,
+                                    FOXESS_BATTERY_DISCHARGE_POWER), 0)
+                grid_export_kw = max(0.0, -grid_power_w / 1000.0)
+                grid_import_kw = max(0.0, grid_power_w / 1000.0)
                 floor_curtailed = (
                     floor_active
-                    and current_forecast_w >= SOLAR_ACCURACY_MIN_FORECAST_W
-                    and pv_power_w < 0.5 * current_forecast_w
+                    and batt_soc_now >= EV_OVERRIDE_NEAR_FULL_SOC
+                    and grid_export_kw < SOLAR_CURTAILMENT_FLOW_THRESHOLD_KW
+                    and grid_import_kw < SOLAR_CURTAILMENT_FLOW_THRESHOLD_KW
+                    and batt_discharge_now < SOLAR_CURTAILMENT_FLOW_THRESHOLD_KW
                 )
                 self._update_solar_accuracy(
                     current_forecast_w, pv_power_w,

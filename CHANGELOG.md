@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.11.1] — 2026-07-29
+
+### Fixed
+
+- **Solar-forecast accuracy learner no longer biases future forecasts down during partial PV curtailment.** When the battery is full and export is blocked, the inverter throttles production to match consumption (house + EV). The per-hour accuracy learner only discarded such samples when production fell below 50% of forecast, so partial curtailment — production held at 50–90% of forecast, which is exactly what the EV harvest-override produces — was recorded as a genuine forecast miss and dragged the learned actual/forecast factor down, skewing midday forecasts low. The learner now detects curtailment from its physical signature — battery at/above the near-full mark, export blocked, and **nothing flowing** (no export, no grid import, no battery discharge), i.e. PV clamped to load — instead of the actual/forecast ratio, which is the quantity curtailment corrupts. This keeps genuine samples on both sides: a battery still absorbing or surplus actually being exported (production at potential), and genuine cloudy readings where the deficit is covered by grid import or battery discharge (which proves the panels are maxed out, not throttled). The short-term (15-minute) corrector already dropped any floor-active slot and is unchanged.
+
+---
+
 ## [1.11.0] — 2026-07-27
 
 ### Added
