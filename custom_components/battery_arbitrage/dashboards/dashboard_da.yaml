@@ -195,6 +195,10 @@ views:
         name: Overskuds-rampetrin (A)
         icon: mdi:trending-up
         help: 'Hvor mange ampere EV''ens normale (ikke-override) mål må stige med pr. kontrol-tick (~10 sek). Kun stigninger begrænses — fald sker altid med det samme. Lavere værdi = jævnere, mindre midlertidigt nettræk når solen eller batteriet skifter hurtigt; højere værdi = griber et nyt overskud hurtigere, men kan af og til løbe fra hvad batteri/net kan følge med til i et par sekunder.'
+      - entity: number.solar_ai_trefaset_dyk_bro_min_hvor_laenge_trefaset_holdes_gennem_et_sol_dyk_for_der_faldes_til_enfaset
+        name: 3φ dyk-bro (min)
+        icon: mdi:timer-sand
+        help: 'Når batteriet er fuldt og salgsprisen er negativ, holder laderen bilen på trefaset for at proppe ellers spildt sol i bilen — også gennem korte sol-dyk, ved at bruge lidt batteri/net til at bygge bro. Denne værdi er hvor længe et VEDVARENDE dyk må vare, før der falder til enfaset. Ved positiv salgspris droppes til enfaset i stedet, så overskuddet fylder batteriet eller sælges — batteriet tømmes ikke over i bilen når salg betaler sig.'
       - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
         name: Standard tilstand ved tilslutning
         icon: mdi:car-connected
@@ -703,6 +707,10 @@ views:
       icon: mdi:harddisk
       show_header_toggle: false
       entities:
+      - entity: sensor.solar_ai_solar_ai_version
+        name: Solar AI-version
+        icon: mdi:information-outline
+        help: Den version af Solar AI-integrationen, der kører lige nu. Følger automatisk med hver opdatering.
       - entity: sensor.solar_ai_ledig_diskplads
         name: Ledig diskplads
       - entity: binary_sensor.solar_ai_lav_diskplads
