@@ -9,6 +9,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.12.0] — 2026-07-30
+
+### Fixed
+
+- **EV charger no longer flaps between single- and three-phase while harvesting curtailed solar.** When the battery is full and export is blocked, the curtailment override holds the car on three-phase to soak up otherwise-wasted PV. Its activation gate re-checked grid-import and battery-discharge every tick, so the moment a three-phase hold caused any draw it de-asserted, dropped to single-phase, then re-escalated as soon as the draw cleared — flapping 1φ↔3φ every ~70–150 seconds (bursts of four switches in four minutes), churning the phase contactor and blipping the grid. The three-phase hold is now sticky through brief PV dips (a time-dwell, the same anti-flap primitive the normal downshift already uses) — roughly an order of magnitude fewer phase switches, and the car keeps harvesting at three-phase through passing clouds.
+- **The charger no longer quietly drains the house battery into the car to hold three-phase when it isn't worth it.** Whether to spend a little battery/grid to bridge a dip and stay on three-phase is now an economic decision: it only does so when exporting the surplus would be a **loss** (sell price < 0) or the inverter is genuinely curtailing PV. At a positive sell price it drops to single-phase after a sustained deficit, so the car takes only what solar gives and the excess tops up the battery or exports for value — instead of round-tripping the battery into the car. This also fixes the "holding ~5 kW on three-phase while pulling ~0.3 kW from a 96 %-full battery" behaviour.
+
+### Added
+
+- **"Three-phase dip-bridge (min)" GUI setting** (FoxESS Modbus backend, 1–5 min, default 3): how long the charger holds three-phase through a solar dip (drawing a little battery/grid) before dropping to single-phase, when selling isn't at a loss — tunable without a redeploy. Because the deficit rate is capped by the three-phase floor, bounding the time also bounds the small amount of battery/grid spent bridging.
+- **Version display in Settings.** A diagnostic "Version" sensor reports the running integration version (from `manifest.json`, so it tracks each release automatically) and appears in the Settings → System section of the dashboard.
+
+---
+
 ## [1.11.1] — 2026-07-29
 
 ### Fixed

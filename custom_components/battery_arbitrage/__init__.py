@@ -317,6 +317,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_load_storage()
     await coordinator.async_config_entry_first_refresh()
 
+    # Expose the integration version (manifest.json) before platforms are
+    # forwarded, so the diagnostic version sensor reads the real value at
+    # creation instead of the "0.0.0" default. Loader result is cached.
+    from homeassistant.loader import async_get_integration as _async_get_integration
+    coordinator.sw_version = str(
+        (await _async_get_integration(hass, DOMAIN)).version or "0.0.0"
+    )
+
     # Disable the legacy export-limit automation so it can't fight us over register 46616
     await coordinator.async_disable_legacy_automation()
 
