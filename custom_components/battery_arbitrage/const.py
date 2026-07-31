@@ -367,6 +367,18 @@ EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW = 0.3
 # missed a confirmed real curtailment case at 97% SoC on 2026-07-12.
 EV_OVERRIDE_NEAR_FULL_SOC = 96
 
+# v1.12.0 — sustained-dip dwell for the curtailment override's 3φ hold. Same
+# time-dwell primitive the normal downshift (EV_MODBUS_DOWNSHIFT_DWELL_SECONDS)
+# and the sustained-import guard already use, and the pattern EVCC uses for its
+# phase switching: once on three-phase, ride out brief PV dips and only fall
+# back to single-phase when the deficit (grid import / battery discharge
+# covering the 4.14 kW floor) persists CONTINUOUSLY longer than this. A brief
+# dip clears the deficit and resets the timer, so the car keeps harvesting at
+# 3φ; a sustained one drops to 1φ. GUI-adjustable (storage key
+# ev_override_3ph_bridge_max_minutes). The fall-back cooldown reuses
+# EV_OVERRIDE_3PH_RETRY_SECONDS.
+DEFAULT_EV_OVERRIDE_3PH_BRIDGE_MAX_MINUTES = 3   # max minutes to bridge a sustained dip before → 1φ
+
 # v0.38.3 — Once the EV stop-window is armed (surplus dipped below min
 # and we're counting down to actually stop), require this many seconds
 # of sustained ABOVE-min surplus before clearing the stop timer. Without

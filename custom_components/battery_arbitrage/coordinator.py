@@ -218,6 +218,7 @@ from .const import (
     EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW,
     EV_OVERRIDE_NEAR_FULL_SOC,
     EV_OVERRIDE_3PH_RETRY_SECONDS,
+    DEFAULT_EV_OVERRIDE_3PH_BRIDGE_MAX_MINUTES,
     EV_STOP_RECOVERY_SECONDS,
     EV_START_DROP_TIMEOUT_SECONDS,
     EV_COOL_ENTRY_SECONDS,
@@ -298,6 +299,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=fast_poll),
         )
         self.config = config
+        # Integration version (from manifest.json); set by async_setup_entry so
+        # a diagnostic sensor can surface it in the Settings pane.
+        self.sw_version: str = "0.0.0"
         self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._stored: dict[str, Any] = {}
         # v0.49.0 — disk-space alarm: latest reading + latched alarm state
@@ -576,6 +580,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # grid-import guard only drops to 1φ once import has been continuous for
         # EV_MODBUS_IMPORT_SUSTAINED_SECONDS (filters brief battery-balancing blips).
         self._ev_modbus_import_since_ts = None
+        # v1.12.0 — when the override's 3φ hold first went into DEFICIT (PV can't
+        # cover the 4.14 kW floor, so grid/battery is bridging). Reset to None the
+        # moment PV recovers. If the deficit persists longer than the user's
+        # "hold" budget, the 3φ hold gives up and falls to 1φ (see the dip-bridge
+        # dwell). Cleared by _reset_override_3ph_session.
+        self._ev_override_3ph_deficit_since_ts = None
 
     # ------------------------------------------------------------------ #
     # Public helpers                                                        #
@@ -1684,6 +1694,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Raw export price before floor guard (used in chart / plan)
         export_price_raw = spot_ex_vat - export_fee - feed_in_tariff
         export_price = max(0.0, export_price_raw)
+        # v1.12.0 — cache the UN-clamped export price so the EV controller (which
+        # runs later and doesn't receive it) can tell when selling is an actual
+        # loss (price < 0). Used to decide whether it's worth spending a little
+        # battery to hold 3φ, or whether to drop to 1φ and export/store instead.
+        self._ev_export_price_raw = export_price_raw
 
         # ---- load model (reads from storage, always fresh) ----
         load_history = self._stored.get("load_history", [])
@@ -5137,6 +5152,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_modbus_override_3ph_blocked_until = None
             self._ev_session_was_override_induced = False
             self._reset_override_ramp()
+            self._reset_override_3ph_session()
             _LOGGER.info("EV plugged in (Modbus) — mode %s", self._ev_active_mode)
         self._ev_prev_connected = ev_connected
 
@@ -5347,17 +5363,51 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         override_3ph_blocked = (
             self._ev_modbus_override_3ph_blocked_until is not None
             and now_ts < self._ev_modbus_override_3ph_blocked_until)
+        # v1.12.0 — sticky 3φ hold through brief PV dips. `override_active`'s
+        # entry gate (above) re-checks `battery_discharge <= 0.3` and
+        # `grid_import_med <= 0.3` EVERY tick — so it self-de-asserts the instant
+        # a 3φ hold causes any battery draw / grid import, which flipped
+        # `override_3ph` False, re-armed the v1.10.8 fast-downshift, and flapped
+        # to 1φ every ~70 s (measured 2026-07-29). Once on 3φ, keep preferring 3φ
+        # while the curtailment premise holds — independent of the instantaneous
+        # draw. The dip-dwell below (a time budget, not the flip-flopping entry
+        # gate) is what decides when to fall back to 1φ.
+        #
+        # Bridging (spending a little battery/grid to hold 3φ) is only worth it
+        # when the surplus has nowhere better to go: exporting it is a LOSS
+        # (export price < 0), or the inverter is genuinely curtailing PV that
+        # can't be exported at all (reg 49251 — unreliable, kept as a secondary
+        # signal). At a POSITIVE sell price, 1φ + export/store the excess beats
+        # round-tripping the battery into the car. `bridge_ok` gates both the
+        # override's 3φ escalation/hold here AND the sustained-drain downshift in
+        # the dip-dwell below — the user's rule: hold 3φ when selling is a loss,
+        # throttle down otherwise.
+        selling_at_a_loss = (getattr(self, "_ev_export_price_raw", 0.0) or 0.0) < 0.0
+        bridge_ok = selling_at_a_loss or self._pv_power_limited_flag
+        override_holding = (
+            self._ev_modbus_phase == 3
+            and not override_3ph_blocked
+            and effective_mode in (EV_MODE_PV, EV_MODE_PV_BATTERY)
+            and bridge_ok
+            and (
+                self._pv_power_limited_flag
+                or (self._current_floor_block is not None
+                    and battery_soc >= EV_OVERRIDE_NEAR_FULL_SOC)
+            ))
+        # Escalate the override to 3φ only when bridging is worth it; otherwise it
+        # yields to normal hysteresis (→ 1φ + export/store at a positive price).
+        override_escalate = override_active and bridge_ok
         if effective_mode == EV_MODE_FULL:
             phase_pref = 3
-        elif override_active and not override_3ph_blocked:
-            phase_pref = 3   # escalate to three-phase to harvest curtailed PV
+        elif (override_escalate or override_holding) and not override_3ph_blocked:
+            phase_pref = 3   # escalate / hold three-phase to harvest curtailed PV
         elif avg_avail_kw >= upshift_kw:
             phase_pref = 3
         elif avg_avail_kw < EV_MODBUS_DOWNSHIFT_KW:
             phase_pref = 1
         else:
             phase_pref = self._ev_modbus_phase   # within the hysteresis band — hold
-        override_3ph = override_active and not override_3ph_blocked
+        override_3ph = (override_escalate or override_holding) and not override_3ph_blocked
         # Grid-import guard (v0.70.0 — now SUSTAINED). On 3φ and not curtailing, drop
         # to 1φ when the car is genuinely buying from the grid (no battery, or an
         # empty one, can't cover the shortfall). A full battery does brief
@@ -5554,45 +5604,95 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     f"blokeret — EV trækker {ramp_amps:g} A {PHASES}φ ({ramp_kw:.2f} kW), "
                     f"net-import {grid_import_kw:.2f} kW (rå PV {solar_kw:.2f} kW)",
                 )
-            # Drain guard: ramp pinned at min but still importing for a sustained
-            # stretch → MPPT can't cover even the minimum draw from PV at this
-            # phase.
-            if (ramp_amps <= min_amps_sel
+            # 1φ drain guard (kept): if the override is on SINGLE-phase and can't
+            # even cover the 1φ minimum (~1.4 kW) from PV — ramp pinned at min yet
+            # still importing for a sustained stretch — there is nothing to
+            # harvest, so cool down. v1.12.0 — the old THREE-phase branch of this
+            # guard (block 3φ + fall to 1φ) is gone; the bounded bridge budget
+            # below now governs the 3φ hold instead, so a brief dip is ridden out
+            # rather than flapping.
+            if (PHASES == 1
+                    and ramp_amps <= min_amps_sel
                     and grid_import_kw > EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW):
                 if self._ev_modbus_override_fail_since_ts is None:
                     self._ev_modbus_override_fail_since_ts = now_ts
                 elif (now_ts - self._ev_modbus_override_fail_since_ts).total_seconds() >= 120:
                     self._ev_modbus_override_fail_since_ts = None
                     self._reset_override_ramp()
-                    if PHASES == 3:
-                        # Three-phase needs ≥4.14 kW and the sun can't supply it.
-                        # Block 3φ briefly and fall back to single-phase (which
-                        # harvests down to ~1.4 kW); retry 3φ later in case the
-                        # sun strengthens.
-                        self._ev_modbus_override_3ph_blocked_until = (
-                            now_ts + timedelta(seconds=EV_OVERRIDE_3PH_RETRY_SECONDS))
-                        reason = self._msg(
-                            "Override: 3-phase can't be sustained — falling back to single-phase",
-                            "Override: trefaset kan ikke holdes — falder tilbage til enfaset",
-                        )
-                    else:
-                        # Single-phase override also can't cover its minimum from
-                        # PV → nothing to harvest; cool down before retrying.
-                        self._ev_probe_cooldown_until = (
-                            now_ts + timedelta(seconds=EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS))
-                        target_amps = 0
-                        override_forcing = False
-                        reason = self._msg(
-                            "Override paused: MPPT not lifting (grid import at minimum) "
-                            "— cooling down before retry",
-                            "Override pause: MPPT løfter ikke (net-import ved minimum) "
-                            "— afkøling før nyt forsøg",
-                        )
+                    self._ev_probe_cooldown_until = (
+                        now_ts + timedelta(seconds=EV_CURTAILMENT_PROBE_COOLDOWN_SECONDS))
+                    target_amps = 0
+                    override_forcing = False
+                    reason = self._msg(
+                        "Override paused: MPPT not lifting (grid import at minimum) "
+                        "— cooling down before retry",
+                        "Override pause: MPPT løfter ikke (net-import ved minimum) "
+                        "— afkøling før nyt forsøg",
+                    )
             else:
                 self._ev_modbus_override_fail_since_ts = None
         else:
             self._ev_modbus_override_fail_since_ts = None
             self._reset_override_ramp()
+
+        # ── 3φ dip-bridge dwell (v1.12.0) ────────────────────────────────────
+        # `override_3ph` is now sticky (see the phase decision), so it holds 3φ
+        # through PV dips instead of flapping. Here we decide when a dip has gone
+        # on too long to keep bridging: while on 3φ and in DEFICIT (PV can't cover
+        # the 4.14 kW floor, so grid import or battery discharge is bridging), run
+        # a timer. A brief dip clears the deficit → timer resets → the car keeps
+        # harvesting at 3φ. Only when the deficit persists CONTINUOUSLY past the
+        # user's "hold" budget do we give up 3φ and fall back to 1φ, with a
+        # cooldown so it can't immediately re-escalate and re-flap. Since the
+        # deficit rate is capped by the 3φ floor gap, bounding the *time* also
+        # bounds the battery/grid spent — no separate energy budget needed.
+        # v1.12.0 — applies to ANY 3φ (override or normal). While on 3φ and in
+        # DEFICIT (grid import or battery discharge bridging the 4.14 kW floor),
+        # decide whether the bridge is worth continuing:
+        #   • selling at a loss / genuine curtailment (bridge_ok) → KEEP 3φ:
+        #     exporting is worthless, so cram the surplus into the car even at a
+        #     little battery/grid cost. The timer just resets — no fall-back.
+        #   • otherwise → run the hold timer; a brief dip clears the deficit and
+        #     resets it (stay 3φ, harvesting), but once the deficit persists past
+        #     the user's hold budget, drop to 1φ (+ cooldown, so it can't re-flap)
+        #     — let the car take only what solar gives and the excess top the
+        #     battery / export for value, rather than draining the battery into
+        #     the car. This also stops the normal-mode slow battery-drain at high
+        #     SoC (the "5 kW while pulling 0.3 kW from a 96% battery" case). The
+        #     time bound is enough because the deficit rate is capped by the floor
+        #     gap. Full mode exempt.
+        if PHASES == 3 and effective_mode != EV_MODE_FULL:
+            in_deficit = (
+                grid_import_kw > EV_OVERRIDE_RAMP_GRID_IMPORT_THRESHOLD_KW
+                or battery_discharge_kw > EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW
+            )
+            if in_deficit and not bridge_ok:
+                if self._ev_override_3ph_deficit_since_ts is None:
+                    self._ev_override_3ph_deficit_since_ts = now_ts
+                else:
+                    hold_s = 60.0 * float(self._stored.get(
+                        "ev_override_3ph_bridge_max_minutes",
+                        DEFAULT_EV_OVERRIDE_3PH_BRIDGE_MAX_MINUTES))
+                    held = (now_ts - self._ev_override_3ph_deficit_since_ts).total_seconds()
+                    if held > hold_s:
+                        # Sustained draw not worth bridging → single-phase. Force
+                        # the phase (takes effect next tick) and block override
+                        # re-escalation for the cooldown so it can't re-flap.
+                        self._ev_modbus_phase = 1
+                        self._ev_modbus_phase_since_ts = now_ts
+                        self._ev_modbus_override_3ph_blocked_until = (
+                            now_ts + timedelta(seconds=EV_OVERRIDE_3PH_RETRY_SECONDS))
+                        self._reset_override_ramp()
+                        self._ev_override_3ph_deficit_since_ts = None
+                        reason = self._msg(
+                            "3φ was drawing from the battery and export pays — dropping to single-phase",
+                            "3φ trak fra batteriet og salg betaler sig — falder til enfaset",
+                        )
+            else:
+                # Brief dip, or bridging is worth it (selling at a loss) — keep 3φ.
+                self._ev_override_3ph_deficit_since_ts = None
+        else:
+            self._reset_override_3ph_session()
 
         # Brief-dip hold (v0.59.6): on three-phase, if the instantaneous surplus
         # can't meet the 3φ floor (target 0) but the rolling average still favors
@@ -5922,6 +6022,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._ev_override_ramp_amps = 0
         self._ev_override_ramp_last_step_ts = None
         self._ev_override_ramp_freeze_until = None
+
+    def _reset_override_3ph_session(self) -> None:
+        """Clear the override's 3φ dip-bridge deficit timer (v1.12.0).
+
+        Called when no 3φ hold is active (override off, or on 1φ) and on plug-in,
+        so the next dip starts a fresh hold budget.
+        """
+        self._ev_override_3ph_deficit_since_ts = None
 
     def _update_override_ramp(
         self,

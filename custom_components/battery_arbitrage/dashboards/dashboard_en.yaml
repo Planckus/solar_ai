@@ -195,6 +195,10 @@ views:
         name: Surplus ramp-up step (A)
         icon: mdi:trending-up
         help: "How many amps the EV's normal (non-override) target may increase by per control-loop tick (~10s). Only increases are limited — decreases always happen immediately. Lower = smoother, less transient grid draw when solar or the battery's state changes quickly; higher = grabs a new surplus faster, but can occasionally outrun what the battery/grid balance can track for a few seconds."
+      - entity: number.solar_ai_trefaset_dyk_bro_min_hvor_laenge_trefaset_holdes_gennem_et_sol_dyk_for_der_faldes_til_enfaset
+        name: 3φ dip-bridge (min)
+        icon: mdi:timer-sand
+        help: "When the battery is full and the sell price is negative, the charger holds the car on three-phase to soak up otherwise-wasted solar — even through brief solar dips, bridging the gap with a little battery/grid. This is how long a SUSTAINED dip may last before it drops to single-phase. At a positive sell price it drops to single-phase instead, so the surplus tops up the battery or exports for value — the battery isn't drained into the car when selling pays."
       - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
         name: Default mode on connect
         help: The EV mode automatically selected every time the car is plugged into the charger.
@@ -703,6 +707,10 @@ views:
       icon: mdi:harddisk
       show_header_toggle: false
       entities:
+      - entity: sensor.solar_ai_solar_ai_version
+        name: Solar AI version
+        icon: mdi:information-outline
+        help: The version of the Solar AI integration running right now. Tracks each update automatically.
       - entity: sensor.solar_ai_ledig_diskplads
         name: Free disk space
       - entity: binary_sensor.solar_ai_lav_diskplads

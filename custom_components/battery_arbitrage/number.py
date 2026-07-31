@@ -38,6 +38,7 @@ from .const import (
     EV_MODBUS_MIN_DEADBAND_KW,
     EV_MODBUS_PHASE_AVG_WINDOW_SECONDS,
     EV_MODBUS_SUSPEND_INTERVAL_MIN,
+    DEFAULT_EV_OVERRIDE_3PH_BRIDGE_MAX_MINUTES,
     EV_OVERRIDE_RAMP_INTERVAL_SECONDS,
     DEFAULT_EV_SURPLUS_RAMP_STEP_A,
     DEFAULT_EXPORT_FEE,
@@ -393,6 +394,28 @@ async def async_setup_entry(
             unit="min",
             min_val=1,
             max_val=30,
+            step=1,
+            mode=NumberMode.SLIDER,
+            display_precision=0,
+            available_when=_foxess_modbus_active,
+        ),
+        # Curtailment override: 3φ dip-bridge hold (v1.12.0). When the battery is
+        # full and export is blocked, the override holds the car on three-phase
+        # to harvest curtailed PV. If PV dips briefly below the ~4.14 kW
+        # three-phase floor, it rides the dip out (spending a little battery /
+        # grid) for up to this many minutes rather than flapping to single-phase;
+        # a dip that lasts longer drops it to 1φ. Higher = holds three-phase
+        # through longer clouds (more solar into the car, a bit more battery/grid
+        # per dip); lower = gives up sooner. FoxESS Modbus backend only.
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="ev_override_3ph_bridge_max_minutes",
+            translation_key="ev_override_3ph_bridge_max_minutes",
+            default=DEFAULT_EV_OVERRIDE_3PH_BRIDGE_MAX_MINUTES,
+            icon="mdi:timer-sand",
+            unit="min",
+            min_val=1,
+            max_val=5,
             step=1,
             mode=NumberMode.SLIDER,
             display_precision=0,

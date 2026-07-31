@@ -975,6 +975,10 @@ async def async_setup_entry(
     for idx in range(1, _SCHED_MAX + 1):
         entities.append(BatteryArbitrageEvScheduleSlotSensor(coordinator, entry, idx))
 
+    # Diagnostic: the running Solar AI integration version, shown in the
+    # Settings pane. Reads coordinator.sw_version (set from manifest.json).
+    entities.append(BatteryArbitrageVersionSensor(coordinator, entry))
+
     async_add_entities(entities)
 
 
@@ -1015,6 +1019,30 @@ class BatteryArbitrageSensor(CoordinatorEntity[BatteryArbitrageCoordinator], Sen
         if fn is None or self.coordinator.data is None:
             return None
         return fn(self.coordinator.data)
+
+
+class BatteryArbitrageVersionSensor(
+    CoordinatorEntity[BatteryArbitrageCoordinator], SensorEntity
+):
+    """Diagnostic sensor exposing the running Solar AI integration version."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:information-outline"
+    _attr_translation_key = "sw_version"
+
+    def __init__(
+        self,
+        coordinator: BatteryArbitrageCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_sw_version"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def native_value(self) -> str | None:
+        return getattr(self.coordinator, "sw_version", None)
 
 
 class BatteryArbitrageLearnedRateSensor(
