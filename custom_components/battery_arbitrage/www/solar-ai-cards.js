@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  console.info('%c SOLAR AI CARDS %c v1.13.1 loading… ', 'color:white;background:#BA7517;font-weight:bold;', 'color:#BA7517;background:white;font-weight:bold;');
+  console.info('%c SOLAR AI CARDS %c v1.13.2 loading… ', 'color:white;background:#BA7517;font-weight:bold;', 'color:#BA7517;background:white;font-weight:bold;');
 
   // ---------------------------------------------------------------- helpers
 
