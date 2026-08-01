@@ -9,6 +9,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.13.1] — 2026-08-01
+
+### Fixed
+
+- **Curtailment-harvest override no longer refuses three-phase at a positive/low price (regression from 1.12.0).** When the battery is full and export is blocked, PV above the ~3.7 kW single-phase wall is curtailed — thrown away by the inverter. The override exists to grab it into the car at three-phase, which is free at any price. 1.12.0 wrongly required the sell price to be negative (`bridge_ok`) before the override could escalate to three-phase, so at a positive or merely low price the car stayed pinned at the single-phase wall while the curtailed solar went unharvested — the reported "car never jumps to three-phase when solar ramps" in both PV and PV+battery modes. Price no longer gates the escalation; it only governs the dip-bridge downshift, which still drops to single-phase on a *sustained* unfunded battery/grid drain at a positive price (the "5 kW while draining 0.3 kW from a 96 % battery" case). The v1.12.0 anti-flap stickiness and time-dwell are unchanged.
+- **"EV connected" binary sensor now reports the real plug-in state.** The `ev_connected` sensor read `False` permanently — no code ever wrote its data-dict key — so it showed "not connected" even while the car was charging (in Modbus mode especially, where the OCPP-derived plug state is dead). It is now populated from `_ev_prev_connected`, the plug-in flag both the OCPP and Modbus controllers already maintain, so it is correct on every backend.
+
+### Added
+
+- **Connection state on the front-page status card.** The EV tile now always shows whether the car is plugged in — a green car icon with a "Connected" line (prefixed with the phase while charging) when connected, or a muted unplugged icon with "Not connected" when it isn't — so an unplugged car is no longer indistinguishable from a connected-but-idle one.
+- **"Default mode on connect" now has its own mode-picker in the EV view.** The setting (which EV mode is auto-selected each time the car is plugged in) was a single row buried at the bottom of the EV settings list; it is now a button-row picker ("Standard opladningstilstand ved tilslutning") right below the current-mode picker at the top of the EV view, matching that card's look. Both dashboards.
+
+---
+
 ## [1.12.0] — 2026-07-30
 
 ### Fixed

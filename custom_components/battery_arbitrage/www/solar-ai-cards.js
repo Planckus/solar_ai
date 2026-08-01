@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  console.info('%c SOLAR AI CARDS %c v1.12.0 loading… ', 'color:white;background:#BA7517;font-weight:bold;', 'color:#BA7517;background:white;font-weight:bold;');
+  console.info('%c SOLAR AI CARDS %c v1.13.1 loading… ', 'color:white;background:#BA7517;font-weight:bold;', 'color:#BA7517;background:white;font-weight:bold;');
 
   // ---------------------------------------------------------------- helpers
 
@@ -125,6 +125,7 @@
       floor: 'floor', starting_in: (s) => `Starting in ${s}s`,
       ev_stops_in: (s) => `EV stops in ${s}s — low sun`, charge_mode: 'Charge mode',
       battery_charging: 'Charging', battery_discharging: 'Discharging',
+      ev_connected_label: 'Connected', ev_disconnected_label: 'Not connected',
     },
     da: {
       house_load: 'Husforbrug', solar: 'Sol', battery: 'Batteri', grid: 'Elnet', ev: 'EV',
@@ -133,6 +134,7 @@
       floor: 'gulv', starting_in: (s) => `Starter om ${s}s`,
       ev_stops_in: (s) => `EV stopper om ${s}s — lav sol`, charge_mode: 'Opladningstilstand',
       battery_charging: 'Oplader', battery_discharging: 'Aflader',
+      ev_connected_label: 'Tilsluttet', ev_disconnected_label: 'Ikke tilsluttet',
     },
   };
 
@@ -231,7 +233,7 @@
         c.battery_charge_entity, c.battery_discharge_entity,
         c.battery_soc_entity, c.battery_floor_entity,
         c.grid_import_entity, c.grid_export_entity,
-        c.ev_power_entity, c.ev_status_entity,
+        c.ev_power_entity, c.ev_status_entity, c.ev_connected_entity,
         c.buy_price_entity, c.sell_price_entity, c.savings_today_entity,
         c.solar_forecast_entity, c.solar_actual_today_entity,
       ];
@@ -263,6 +265,13 @@
       const livePhases = attr(hass, c.ev_power_entity, 'live_phases', null);
       const targetPhases = attr(hass, c.ev_power_entity, 'target_phases', null);
       const phase = livePhases || targetPhases;
+
+      // Plug-in state for the EV tile. Prefer the explicit ev_connected sensor;
+      // if it isn't configured or is unknown, infer from live power / phase.
+      const evConnRaw = c.ev_connected_entity ? state(hass, c.ev_connected_entity) : null;
+      const evConnected = evConnRaw === 'on'
+        ? true
+        : (evConnRaw === 'off' ? false : (evPower > 0.05 || !!phase));
 
       const armingS = attr(hass, c.ev_status_entity, 'arming_seconds_left', 0) || 0;
       const coolingS = attr(hass, c.ev_status_entity, 'cooling_seconds_left', 0) || 0;
@@ -356,11 +365,13 @@
               <div style="font-size:19px;font-weight:500;color:${gridColor};">${fmt(gridVal, 1)} kW</div>
               <div style="font-size:13px;margin-top:3px;color:${gridColor};">${gridLabel}</div>
             </div>
-            <div class="tile" data-action="more-info" data-entity="${c.ev_power_entity || ''}">
-              <ha-icon icon="mdi:car-electric" style="color:var(--error-color);"></ha-icon>
+            <div class="tile" data-action="more-info" data-entity="${(c.ev_connected_entity || c.ev_power_entity) || ''}">
+              <ha-icon icon="${evConnected ? 'mdi:car-electric' : 'mdi:power-plug-off'}" style="color:${evConnected ? 'var(--success-color, #43a047)' : 'var(--secondary-text-color, #8a8a8a)'};"></ha-icon>
               <div class="tile-label" style="font-size:14px;margin-top:4px;">${t(hass, 'ev')}</div>
-              <div style="font-size:19px;font-weight:500;">${fmt(evPower, 1)} kW</div>
-              ${phase ? `<span style="font-size:13px;border:1px solid var(--divider-color);border-radius:8px;padding:0 5px;margin-top:3px;display:inline-block;">${phase}&phi;</span>` : ''}
+              ${evConnected
+                ? `<div style="font-size:19px;font-weight:500;">${fmt(evPower, 1)} kW</div>
+              <div style="font-size:13px;margin-top:3px;color:var(--success-color, #43a047);">${phase ? `${phase}&phi; &middot; ` : ''}${t(hass, 'ev_connected_label')}</div>`
+                : `<div style="font-size:16px;font-weight:500;color:var(--secondary-text-color, #8a8a8a);margin-top:6px;">${t(hass, 'ev_disconnected_label')}</div>`}
             </div>
           </div>
 
