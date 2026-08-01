@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.13.2] — 2026-08-01
+
+### Changed
+
+- README: the feature overview now describes the EV curtailment-harvest behaviour, the FoxESS Modbus charger backend alongside OCPP, and the connection/default-mode UI; the release list gains a v0.76–v1.13.1 summary. Documentation only — no functional change.
+
+---
+
 ## [1.13.1] — 2026-08-01
 
 ### Fixed

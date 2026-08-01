@@ -2,7 +2,7 @@
 
 [![HACS Custom Repository](https://img.shields.io/badge/HACS-Custom-orange?logo=home-assistant-community-store)](https://hacs.xyz)
 
-A Home Assistant integration that schedules a FoxESS battery against Nord Pool day-ahead prices, drives an OCPP 1.6 EV charger from solar surplus, and learns from observed production and consumption.
+A Home Assistant integration that schedules a FoxESS battery against Nord Pool day-ahead prices, drives an EV charger — OCPP 1.6 or FoxESS Modbus TCP — from solar surplus, and learns from observed production and consumption.
 
 ## What it does
 
@@ -21,11 +21,13 @@ Every 15 minutes it builds a plan over the next 48 hours from the day-ahead elec
 
 ### Charges your EV from spare solar
 
-With an OCPP 1.6 charger, Solar AI charges the car from **surplus solar** — the power that would otherwise be sold cheaply. You pick the behaviour per session or per schedule: solar-only, solar-plus-battery, full-speed, or charging windows you set per weekday. It won't drain the house battery into the car unless you ask it to, and it won't compete with the charger for the cheap night hours.
+Solar AI charges the car from **surplus solar** — the power that would otherwise be sold cheaply. You pick the behaviour per session or per schedule: solar-only, solar-plus-battery, full-speed, or charging windows you set per weekday. It won't drain the house battery into the car unless you ask it to, and it won't compete with the charger for the cheap night hours. The dashboard shows at a glance whether the car is plugged in, and you set which mode a fresh plug-in defaults to.
 
-With a **FoxESS charger in Modbus TCP mode**, it can additionally drop to **single-phase charging (down to ~1.4 kW)** to follow small surpluses on weak-sun days — below the 4.14 kW floor a three-phase OCPP charger is stuck at — and switch back up to three-phase (up to 11 kW) automatically when there's plenty of sun. Single-phase is only available on the Modbus backend.
+Two charger backends are supported: an **OCPP 1.6 charger** (via an embedded server, no separate integration) and a **FoxESS charger in Modbus TCP mode**. On the Modbus backend it can additionally drop to **single-phase charging (down to ~1.4 kW)** to follow small surpluses on weak-sun days — below the 4.14 kW floor a three-phase charger is stuck at — and switch back up to three-phase (up to 11 kW) automatically when there's plenty of sun. Single-phase is only available on the Modbus backend.
 
-**The benefit:** the car charges from your own roof for free where possible, or from the cheapest grid hours when there isn't enough sun — without you touching the charger.
+When the house battery is full and exporting is blocked or would sell at a loss, the inverter throttles your panels down to match the house load and the extra solar is **curtailed — thrown away**. Solar AI detects this and pushes that otherwise-wasted power into the car at three-phase, holding through brief cloud dips. When exporting the surplus actually pays, it does the opposite — throttling the car back rather than draining stored battery into it.
+
+**The benefit:** the car charges from your own roof for free where possible, or from the cheapest grid hours when there isn't enough sun — and it soaks up solar that would otherwise be curtailed — without you touching the charger.
 
 ### Handles prices and tariffs for you
 
@@ -238,7 +240,7 @@ If you have solar panels, a FoxESS hybrid inverter with a battery, and variable 
 
 Solar AI handles all of this in one decision loop. Every hour it runs a backward-induction **dynamic programming optimiser** over a 48-hour horizon at 15-minute resolution. The model includes battery state of charge (1% steps), terminal value of energy left in the battery at the horizon, degradation cost, the full DK or UK price stack (spot + retailer markup + DSO tariff + Energinet + elafgift + VAT on the buy side; spot − indfødningstarif − seller fees on the sell side), and a per-hour learned solar accuracy factor with a short-term residual correction on top. The output is an ordered plan of CHARGE / EXPORT / IDLE actions per slot.
 
-Between plan refreshes a **15-second execution tick** reads live FoxESS Modbus state, decides what the plan implies for *right now*, and writes the inverter's work mode, force-charge / force-discharge power, and export-limit register. An **embedded OCPP 1.6 server** (no separate integration required — the charger connects directly to `ws://<ha-ip>:9000/<cpid>/`) drives a connected EV charger from the same loop. Five EV modes are available: locked, solar-only, solar + battery-to-minimum, full power, and schedule-driven.
+Between plan refreshes a **15-second execution tick** reads live FoxESS Modbus state, decides what the plan implies for *right now*, and writes the inverter's work mode, force-charge / force-discharge power, and export-limit register. An **embedded OCPP 1.6 server** (no separate integration required — the charger connects directly to `ws://<ha-ip>:9000/<cpid>/`) drives a connected EV charger from the same loop; a **FoxESS Modbus TCP** charger backend is also supported, adding single-phase solar-following (~1.4 kW) and a curtailment-harvest mode that pushes otherwise-throttled solar into the car at three-phase when the battery is full and export is blocked. Five EV modes are available: locked, solar-only, solar + battery-to-minimum, full power, and schedule-driven.
 
 The integration **learns**: it tracks per-hour solar forecast accuracy over the last 4 days, intra-hour residual error over the last 2 hours, actual battery charge/discharge rates at different temperatures, and your real house load by hour. Those corrections feed back into the next optimiser run, so after a few weeks of operation the plan reflects your specific install rather than a generic model. A live dashboard shows every decision and why; a session log records each EV charging session split into solar vs grid kWh; a savings tracker accumulates the realised arbitrage spread against a baseline of doing nothing.
 
@@ -247,6 +249,17 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 ---
 
 ## Recent releases
+
+### v0.76.0–v1.13.1 — EV solar-following overhaul, curtailment harvest, and connection UI
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Curtailment harvest into the EV.** When the house battery is full and export is blocked or would sell at a loss, otherwise-throttled solar is pushed into the car at three-phase and held through brief cloud dips. Whether to spend a little battery/grid to hold three-phase through a dip is an economic decision — it bridges only when exporting would be a loss (or the inverter is genuinely curtailing) and throttles to single-phase otherwise, with anti-flap stickiness so the phase contactor isn't churned. A **three-phase dip-bridge** slider tunes how long a dip is bridged.
+- **EV connection made visible.** An `EV connected` sensor now reports the real plug-in state on both the OCPP and FoxESS-Modbus backends, and the front-page status card's EV tile shows connection at a glance. A **default charge mode on connect** picker sets which mode a fresh plug-in starts in; a planned (scheduled) charge survives the car being plugged in rather than being reset to the default.
+- **Custom EV schedule card.** The per-weekday charging schedules (Skema 1–4) moved to a first-party `solar-ai-schedule-card` with inline editing.
+- **Solar-forecast learner fixed for partial curtailment.** When production is throttled (battery full, export blocked), the reduced output is no longer recorded as a forecast miss that would drag the learned accuracy factor down.
+- **Optimiser refinements** — EV demand enters the plan as a headroom allocation rather than a probability cliff; the sell decision accounts for solar-funded battery refill, not just grid charges; the overnight reserve nets solar against house load per slot and uses a user-configurable forecast-error percentile.
+- **Version sensor** — a diagnostic sensor shows the running integration version in the dashboard's Settings pane.
 
 ### v0.67.0–v0.75.2 — first-party dashboard cards, total-savings counter, EV anti-flap tuning
 
