@@ -21,6 +21,7 @@ views:
       grid_export_entity: sensor.foxessmodbus_feed_in
       ev_power_entity: sensor.solar_ai_lader_effekt
       ev_status_entity: sensor.solar_ai_ev_status
+      ev_connected_entity: binary_sensor.battery_arbitrage_ev_tilsluttet
       buy_price_entity: sensor.solar_ai_indkobspris_opdeling
       sell_price_entity: sensor.battery_arbitrage_eksportpris
       savings_today_entity: sensor.solar_ai_samlet_besparelse_i_dag
@@ -132,6 +133,9 @@ views:
     - type: custom:solar-ai-mode-picker-card
       title: EV charge mode
       entity: select.solar_ai_ev_opladningstilstand
+    - type: custom:solar-ai-mode-picker-card
+      title: Default charge mode on connect
+      entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
     - type: custom:solar-ai-status-card
       mode_entity: sensor.battery_arbitrage_driftstilstand
       mode_reason_entity: sensor.battery_arbitrage_begrundelse_for_tilstand
@@ -146,6 +150,7 @@ views:
       grid_export_entity: sensor.foxessmodbus_feed_in
       ev_power_entity: sensor.solar_ai_lader_effekt
       ev_status_entity: sensor.solar_ai_ev_status
+      ev_connected_entity: binary_sensor.battery_arbitrage_ev_tilsluttet
       buy_price_entity: sensor.solar_ai_indkobspris_opdeling
       sell_price_entity: sensor.battery_arbitrage_eksportpris
       savings_today_entity: sensor.solar_ai_samlet_besparelse_i_dag
@@ -199,10 +204,6 @@ views:
         name: 3φ dip-bridge (min)
         icon: mdi:timer-sand
         help: "When the battery is full and the sell price is negative, the charger holds the car on three-phase to soak up otherwise-wasted solar — even through brief solar dips, bridging the gap with a little battery/grid. This is how long a SUSTAINED dip may last before it drops to single-phase. At a positive sell price it drops to single-phase instead, so the surplus tops up the battery or exports for value — the battery isn't drained into the car when selling pays."
-      - entity: select.solar_ai_standard_ev_tilstand_ved_tilslutning
-        name: Default mode on connect
-        help: The EV mode automatically selected every time the car is plugged into the charger.
-        icon: mdi:car-connected
     - type: markdown
       content: '### Charger info'
     - type: markdown
