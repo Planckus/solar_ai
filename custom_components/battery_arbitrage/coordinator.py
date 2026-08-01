@@ -1375,6 +1375,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # Check all loadpoints for EV presence and active non-PV charging
         ev_connected = any(lp_.get("connected", False) for lp_ in loadpoints)
+        # v1.13.0 — EVCC loadpoints are empty on the OCPP / FoxESS-Modbus
+        # backends, so the line above reads False even while the car is plugged
+        # in — which left the "EV connected" binary sensor stuck off (it showed
+        # "not connected" mid-charge in Modbus mode). Fall back to the plug-in
+        # flag both of those controllers maintain (`_ev_prev_connected`), the
+        # same one-tick-lagged pattern as the `ev_charge_power_w` backfill above.
+        # In pure-EVCC mode those controllers never run, so the flag stays False
+        # and this fallback is a no-op — the loadpoint value wins.
+        if not ev_connected and getattr(self, "_ev_prev_connected", False):
+            ev_connected = True
         ev_charging_now = any(
             lp_.get("charging", False) and lp_.get("mode") in (EV_MODE_NOW, EV_MODE_MIN_PV)
             for lp_ in loadpoints
@@ -5373,30 +5383,38 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # draw. The dip-dwell below (a time budget, not the flip-flopping entry
         # gate) is what decides when to fall back to 1φ.
         #
-        # Bridging (spending a little battery/grid to hold 3φ) is only worth it
-        # when the surplus has nowhere better to go: exporting it is a LOSS
-        # (export price < 0), or the inverter is genuinely curtailing PV that
-        # can't be exported at all (reg 49251 — unreliable, kept as a secondary
-        # signal). At a POSITIVE sell price, 1φ + export/store the excess beats
-        # round-tripping the battery into the car. `bridge_ok` gates both the
-        # override's 3φ escalation/hold here AND the sustained-drain downshift in
-        # the dip-dwell below — the user's rule: hold 3φ when selling is a loss,
-        # throttle down otherwise.
+        # PRICE DOES NOT GATE THE ESCALATION. When the battery is full and export
+        # is blocked, PV above the single-phase wall (~3.7 kW) is being CURTAILED —
+        # thrown away by the inverter. Grabbing it into the car at three-phase is
+        # free harvest at ANY price, so the escalation/hold below is premised only
+        # on the curtailment fingerprint (battery full + export blocked, or the
+        # PV-limited flag), never on the sell price.
+        #   v1.12.1 — v1.12.0 wrongly required `bridge_ok` (sell price < 0) here,
+        #   so at a positive/low price the override could not reach three-phase and
+        #   the curtailed PV went unharvested: the car sat pinned at the 1φ wall
+        #   while raw PV tracked the load and the excess was thrown away.
+        #
+        # `bridge_ok` still exists, but its ONLY job is the dip-dwell downshift
+        # below: once on three-phase, if a SUSTAINED deficit appears (a real
+        # battery/grid drain, not free harvest), keep three-phase only when selling
+        # is a loss or PV is genuinely curtailed — otherwise throttle to 1φ. That
+        # is the user's rule and it fixes the "5 kW while draining 0.3 kW from a
+        # 96 % battery at a positive price" case, without blocking free harvest.
         selling_at_a_loss = (getattr(self, "_ev_export_price_raw", 0.0) or 0.0) < 0.0
         bridge_ok = selling_at_a_loss or self._pv_power_limited_flag
         override_holding = (
             self._ev_modbus_phase == 3
             and not override_3ph_blocked
             and effective_mode in (EV_MODE_PV, EV_MODE_PV_BATTERY)
-            and bridge_ok
             and (
                 self._pv_power_limited_flag
                 or (self._current_floor_block is not None
                     and battery_soc >= EV_OVERRIDE_NEAR_FULL_SOC)
             ))
-        # Escalate the override to 3φ only when bridging is worth it; otherwise it
-        # yields to normal hysteresis (→ 1φ + export/store at a positive price).
-        override_escalate = override_active and bridge_ok
+        # Escalate the override to 3φ to harvest curtailed PV whenever the override
+        # premise holds — regardless of price. The dip-dwell below is the economic
+        # backstop that drops to 1φ on a sustained unfunded drain.
+        override_escalate = override_active
         if effective_mode == EV_MODE_FULL:
             phase_pref = 3
         elif (override_escalate or override_holding) and not override_3ph_blocked:
