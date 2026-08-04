@@ -1143,14 +1143,28 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
             # Solar forecast — dispatches on configured source (EVCC / forecast_solar / auto).
             # Best-effort: a failure here must not block startup or the price fetch below.
+            # v1.13.3 — track whether solar is actually usable so the retry cadence
+            # below can react to it. On a cold start (e.g. an HA restart where the
+            # Solcast integration finishes loading a second or two after our first
+            # fetch) the fetch returns no rates while the cache is still empty;
+            # previously the cadence keyed only on price success, so a healthy price
+            # fetch parked solar on the hourly retry and the optimiser ran with a
+            # ZERO solar forecast for up to an hour. `solar_ok` stays True when no
+            # solar source is configured (solar_data is None), so those setups are
+            # unaffected.
+            solar_ok = True
             try:
                 solar_data = await self._fetch_solar_forecast(session, evcc_url)
                 if solar_data and solar_data.get("rates"):
                     self._cached_solar_rates = solar_data
                 elif solar_data is not None:
                     _LOGGER.warning("Solar forecast returned no rates — keeping cached data")
+                    # A source is configured but returned nothing usable — only a
+                    # problem while we have nothing cached yet (cold start).
+                    solar_ok = bool(self._cached_solar_rates.get("rates"))
             except Exception as solar_err:
                 _LOGGER.warning("Solar forecast fetch failed (%s) — using cached/empty data", solar_err)
+                solar_ok = bool(self._cached_solar_rates.get("rates"))
 
             # EDS spot prices — primary price source; _fetch_eds_prices handles its own errors
             eds_data = await self._fetch_eds_prices(session, price_area, now)
@@ -1194,10 +1208,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._last_tariff_refresh = now
             # v0.59.16 — drive the retry cadence: usable rates ⇒ hourly; nothing
             # usable (feed gap + cache drained) ⇒ retry in minutes until it heals.
-            self._last_tariff_fetch_ok = fresh_prices
+            # v1.13.3 — also require a usable solar forecast, so a cold-start race
+            # where the solar source loads late self-heals in minutes, not an hour.
+            self._last_tariff_fetch_ok = fresh_prices and solar_ok
             if not fresh_prices:
                 _LOGGER.info(
                     "Price refresh produced no usable rates — retrying in %d s",
+                    PRICE_RETRY_AFTER_FAIL_SECONDS,
+                )
+            elif not solar_ok:
+                _LOGGER.info(
+                    "Solar forecast cache still empty — retrying in %d s "
+                    "instead of waiting the full hour",
                     PRICE_RETRY_AFTER_FAIL_SECONDS,
                 )
 

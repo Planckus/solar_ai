@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.13.3] — 2026-08-04
+
+### Fixed
+
+- **Solar forecast no longer stays empty for up to an hour after a cold start.** The solar-forecast fetch shares one refresh timer with the grid-price fetch, and the retry cadence was driven only by *price* success. On an HA restart where the solar source (e.g. the Solcast integration) finished loading a moment after the first fetch, the solar fetch returned no rates while the cache was still empty — but because the price fetch succeeded, the timer parked on the hourly cadence, so the optimiser and the dynamic discharge floor ran with a **zero solar forecast** until the next hourly refresh (observed live after a Solcast upgrade + restart). The cadence now also requires a usable solar forecast: while a configured solar source has produced no rates and nothing is cached, it retries on the fast (5-minute) cadence, so it self-heals in minutes. Setups with no solar source configured are unaffected.
+
+---
+
 ## [1.13.2] — 2026-08-01
 
 ### Changed
