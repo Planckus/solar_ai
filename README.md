@@ -250,7 +250,7 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
-### v0.76.0–v1.13.3 — EV solar-following overhaul, curtailment harvest, and connection UI
+### v0.76.0–v1.13.6 — EV solar-following overhaul, curtailment harvest, and connection UI
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
 
@@ -261,6 +261,7 @@ Per-version detail is in the [CHANGELOG](CHANGELOG.md).
 - **Optimiser refinements** — EV demand enters the plan as a headroom allocation rather than a probability cliff; the sell decision accounts for solar-funded battery refill, not just grid charges; the overnight reserve nets solar against house load per slot and uses a user-configurable forecast-error percentile.
 - **Version sensor** — a diagnostic sensor shows the running integration version in the dashboard's Settings pane.
 - **Robust solar forecast on restart.** After a Home Assistant restart where the solar source (e.g. the Solcast integration) finishes loading a moment late, the solar forecast now recovers within minutes instead of potentially running empty for up to an hour — so the optimiser and dynamic discharge floor are never left planning without solar.
+- **Documentation refresh** (v1.13.4–v1.13.6). The README was reorganised (Overview moved directly under "What it does", a duplicated section removed) and its reference tables corrected and brought up to date with the current features (five EV modes, current phase-switch thresholds, config-flow price-area selection, the curtailment-harvest override, dip-bridge, and the EV-connected and version sensors).
 
 ### v0.67.0–v0.75.2 — first-party dashboard cards, total-savings counter, EV anti-flap tuning
 
