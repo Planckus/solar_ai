@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.13.4] — 2026-08-04
+
+### Changed
+
+- README: moved the Overview section directly below "What it does" (before Installation) so the high-level intro flows into the how-it-works framing; extended the "Recent releases" summary to cover v1.13.3 (the solar-forecast cold-start retry fix). Documentation only — no functional change.
+
+---
+
 ## [1.13.3] — 2026-08-04
 
 ### Fixed
