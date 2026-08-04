@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.13.6] — 2026-08-04
+
+### Changed
+
+- README: updated the "Recent releases" summary so its range covers the current version (was lagging at v1.13.3) and added a note for the v1.13.4–v1.13.6 documentation refresh. Documentation only — no functional change.
+
+---
+
 ## [1.13.5] — 2026-08-04
 
 ### Changed
