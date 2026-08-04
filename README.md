@@ -496,20 +496,6 @@ See [CHANGELOG.md](CHANGELOG.md) for the per-version detail.
 
 ---
 
-## What it does
-
-Solar AI operates as a Home Assistant integration. It reads live state from FoxESS (and optionally EVCC), fetches day-ahead spot prices, and runs an hourly dynamic programming optimiser that decides when to charge from the grid, when to export, when to idle, and at what current to drive a connected EV charger.
-
-The decision loop has two layers:
-
-1. **Hourly planning.** Fetch spot prices from Energi Data Service (Nord Pool, area `DK2` by default). Combine with auto-fetched DSO and Energinet tariffs, elafgift, VAT, and seller-side fees to compute per-slot buy and sell prices. Run a 24- to 48-hour DP optimiser over 15-minute slots with battery SoC as state (101 integer steps) and CHARGE / EXPORT / IDLE as actions. The result is an ordered plan: `{slot_start, action, expected SoC, buy, sell}`.
-
-2. **Fast tick.** Every 10–300 seconds (configurable, default 30 s) read live state and execute the plan: set FoxESS work mode, write force-charge / force-discharge power, set the export limit register, and — if the OCPP controller is enabled — send `SetChargingProfile` to the EV charger.
-
-All thresholds are live-configurable via dashboard number entities. No YAML editing required after initial setup.
-
----
-
 ## Features
 
 ### Arbitrage engine
@@ -587,7 +573,7 @@ Optional active control of a connected charger, disabled by default. Enable in *
 
 **Single-phase charging is only available on the Modbus backend.** Over OCPP the charger does not expose phase switching, so it is three-phase only and cannot go below 4.14 kW. The Modbus backend can hold single-phase to follow small surpluses and switch up to three-phase when the surplus is large.
 
-Four modes selectable from the dashboard (both backends):
+Five modes selectable from the dashboard (both backends):
 
 | Mode | Behaviour |
 |---|---|
@@ -595,6 +581,9 @@ Four modes selectable from the dashboard (both backends):
 | Solar-only | Charge only from real-time PV surplus. Stops when surplus drops below the minimum. If the house battery starts discharging to cover the car, charging stops. |
 | Solar+Battery-to-minimum | Solar surplus first; house battery tops up to the minimum when surplus is insufficient. Stops at the battery floor. |
 | Full power | Maximum charge rate from any source. House battery discharge is locked at 0 A while in this mode, so the EV's grid demand cannot be supplemented from the house battery. On the Modbus backend, full mode always uses three-phase. |
+| Scheduled | Follows the per-weekday charging windows (Skema 1–4) set on the dashboard; each window selects one of the modes above, with a configurable fallback outside any window. A planned (scheduled) charge survives the car being plugged in rather than being reset to the default-on-connect mode. |
+
+Which mode a freshly plugged-in car starts in is set by the **default charge mode on connect** picker (both backends).
 
 Control loop properties:
 
@@ -602,7 +591,9 @@ Control loop properties:
 - Ramps the current setpoint between 6 A and 16 A at a maximum of 2 A per tick. The resulting power depends on the active phase count (3-phase: 4.14–11 kW; single-phase: ~1.4–3.7 kW).
 - Subtracts the EV's own current draw from house load when measuring surplus.
 - Anti-flap windows: start window (default 60 s, range 10–600 s) and stop window (default 180 s, range 30–1800 s). After a stop, the start counter resets.
-- **Modbus phase switching** (Modbus backend only): single ↔ three-phase by hysteresis on the available surplus — up at a sustained ≥ 4.5 kW, down at < 4.0 kW — gated by the charger's 5-minute suspend interval so it never flaps or pauses the session. Phase count is read back from the per-phase currents.
+- **Modbus phase switching** (Modbus backend only): single ↔ three-phase by hysteresis on the available surplus — up at a sustained ≥ 5.5 kW, down at < 4.2 kW — with an asymmetric anti-flap dwell so a passing cloud the battery covers doesn't bounce the phase. Phase count is read back from the per-phase currents.
+- **Curtailment harvest** (Modbus backend): when the house battery is full and export is blocked or would sell at a loss, otherwise-throttled solar is pushed into the car at three-phase and held through brief dips. Whether to spend a little battery/grid to hold three-phase is an economic decision — bridge only when selling is a loss or the inverter is genuinely curtailing, otherwise throttle to single-phase — tuned by a **three-phase dip-bridge** slider.
+- **Connection state**: an `EV connected` binary sensor reports the real plug-in state on both backends, surfaced on the front-page status card's EV tile.
 - **Modbus setpoint heartbeat:** the charger's limits expire ~180 s after the last command (reverting to full three-phase), so the controller re-asserts them every cycle.
 - Smart OCPP writes: `SetChargingProfile` is only sent on start, stop, or ≥ 1 A change.
 - `sensor.solar_ai_ev_status` exposes the controller state machine (`IDLE` / `ARMING` / `CHARGING` / `COOLING`) and `arming_until` / `cooling_until` ISO timestamps for live per-second countdowns. On the Modbus backend, `sensor.solar_ai_lader_effekt` reports live power, per-phase currents, and the live vs target phase count.
@@ -641,7 +632,7 @@ Control loop properties:
 
 - Live state (grid power, PV, EV status, battery mode) is fetched on every fast-poll tick.
 - Price and tariff data is refreshed at most once per hour.
-- Live data poll interval is configurable in *Configure* (10–300 s, default 30 s).
+- Live data poll interval is configurable in *Configure* (10–300 s, default 15 s).
 
 ### Settings reference
 
@@ -843,7 +834,7 @@ number.foxessmodbus_force_discharge_power
 On spot price refresh (typically once per hour):
 
 1. Fetch prices:
-   - Energi Data Service Elspotprices (Nord Pool day-ahead, area DK2)
+   - Energi Data Service Elspotprices (Nord Pool day-ahead, configured area DK1/DK2)
    - Falls back to EVCC /api/tariff/grid if EDS is unreachable
    - Buy-side: (spot + markup + DSO tariff + Energinet tariff + elafgift) × VAT
    - Sell-side: spot − seller-side fee − indfødningstarif (auto-fetched daily)
@@ -916,6 +907,7 @@ On spot price refresh (typically once per hour):
 | `switch.*_notifikationer_ved_tilstandsskift` | Mode-change notifications toggle |
 | `sensor.*_driftstilstand` | Current mode: `normal` / `exporting` / `grid_charging` / `disabled` |
 | `sensor.*_begrundelse_for_tilstand` | Plain-language reason for the current decision |
+| `sensor.*_version` | Running Solar AI integration version (diagnostic; shown in the Settings pane) |
 
 ### Price
 
@@ -1004,6 +996,7 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full reference.
 | `sensor.*_lader_effekt` | Live charger power (kW) |
 | `sensor.*_lader_info` | Vendor / model / firmware / serial of the charger |
 | `sensor.*_lader_sessions_log` | Completed session list. `sessions` attribute = last 20 sessions newest-first with `energy_kwh`, `energy_kwh_solar`, `energy_kwh_grid`, `duration_min`, `start_ts`, `end_ts`. |
+| `binary_sensor.*_ev_tilsluttet` | EV plug-in state (connected / not). Works on both the OCPP and FoxESS-Modbus backends; shown on the front-page status card's EV tile. |
 
 ### Savings
 
@@ -1037,7 +1030,7 @@ All settings are in *Settings → Devices & Services → Solar AI → Configure*
 | Notifications | Off | Yes | Persistent HA notification on every mode change |
 | Grid operator (DSO) | Dinel (Jutland/Fyn) | Options flow | DSO for hourly network tariff and indfødningstarif data |
 | Currency | DKK | Options flow | Price and savings sensor currency (DKK, EUR, SEK, NOK, GBP) |
-| Live data poll interval | 30 s | Options flow | Fast-poll cadence (10–300 s) |
+| Live data poll interval | 15 s | Options flow | Fast-poll cadence (10–300 s) |
 | Embedded OCPP server | On | Options flow → OCPP Settings | Integration hosts its own OCPP 1.6 server. Turn off to use `lbbrhzn/ocpp` instead. |
 | Embedded OCPP port | 9000 | Options flow → OCPP Settings | TCP port the embedded server listens on |
 | EV controller enabled | Off | Options flow → OCPP Settings | Master gate for the OCPP-driven EV charge controller |
@@ -1047,7 +1040,7 @@ All settings are in *Settings → Devices & Services → Solar AI → Configure*
 | EV charging detection threshold | 3000 W | Options flow → OCPP Settings | Above this charge power, the EV is considered actually charging (500–10000 W) |
 | EV default mode on plug-in | Locked | Options flow → OCPP Settings | Mode applied when a vehicle is freshly connected |
 | EV min / max charge rate | 4.14 / 11.0 kW | Dashboard sliders | OCPP current setpoint range (6 A / 16 A on 3-phase) |
-| Spot price area | DK2 | `CONF_PRICE_AREA` in `const.py` | Nord Pool price zone. `DK1` = Jutland/Fyn, `DK2` = Zealand/Copenhagen. Config-flow selection planned. |
+| Spot price area | DK2 | Config flow | Nord Pool price zone, selected during setup. `DK1` = Jutland/Fyn, `DK2` = Zealand/Copenhagen. |
 
 ---
 
@@ -1064,7 +1057,7 @@ All settings are in *Settings → Devices & Services → Solar AI → Configure*
 
 ## Known limitations
 
-- **Denmark-focused.** The price model is built around DKK/kWh, Nord Pool Elspot via Energi Data Service, and the Danish DatahubPricelist tariff API. Tariff fetching is Danish-specific. The spot price area defaults to DK2; change `DEFAULT_PRICE_AREA` in `const.py` for DK1.
+- **Denmark-focused.** The price model is built around DKK/kWh, Nord Pool Elspot via Energi Data Service, and the Danish DatahubPricelist tariff API. Tariff fetching is Danish-specific. The spot price area (DK1/DK2) is selected in the config flow; it defaults to DK2.
 - **FoxESS Modbus required.** Work-mode control uses FoxESS-specific entities. Other inverters require code changes in `coordinator.py`.
 - **EVCC required for EV-aware scheduling.** Solar forecasts, live grid power, and EV charge data come from EVCC's API in EVCC and Hybrid modes. FoxESS-only mode loses the EV-aware scheduling features (the OCPP controller still works).
 - **DSO coverage.** Network tariff and indfødningstarif auto-fetch covers Dinel (Jutland/Fyn). Other Danish DSOs can be added in `const.py`; GLN numbers are available in the Energi Data Service DatahubPricelist.
