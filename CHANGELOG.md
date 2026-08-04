@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.13.5] — 2026-08-04
+
+### Changed
+
+- README: consolidated the reference half of the document. Removed a duplicated `## What it does` section; corrected stale details (EV modes four → five with Scheduled; Modbus phase-switch thresholds 4.5/4.0 → 5.5/4.2 kW; live-data poll default 30 s → 15 s; spot-price area now selected in the config flow rather than `const.py`); and documented the current EV features (curtailment-harvest override, three-phase dip-bridge, `EV connected` binary sensor, version sensor). Documentation only — no functional change.
+
+---
+
 ## [1.13.4] — 2026-08-04
 
 ### Changed
