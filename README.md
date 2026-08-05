@@ -250,10 +250,11 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
-### v0.76.0–v1.13.6 — EV solar-following overhaul, curtailment harvest, and connection UI
+### v0.76.0–v1.13.7 — EV solar-following overhaul, curtailment harvest, and connection UI
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
 
+- **PV-mode battery-drain fix (v1.13.7).** During single-phase or OCPP-driven solar charging, if the sun dropped below the car's minimum for the full stop-confirmation window, the house battery would quietly cover the gap for up to three minutes — measurable as a few percent of house-battery loss over a cloudy afternoon. A short dip-bridge dwell now caps that period at 30 seconds: a brief cloud is still absorbed without stopping the session, but a real deficit triggers an immediate hard stop instead of the full stop_window drawn from the battery. The three-phase Modbus path already had this budget via the dip-bridge slider from v1.12.0; this brings the single-phase and OCPP paths to parity.
 - **Curtailment harvest into the EV.** When the house battery is full and export is blocked or would sell at a loss, otherwise-throttled solar is pushed into the car at three-phase and held through brief cloud dips. Whether to spend a little battery/grid to hold three-phase through a dip is an economic decision — it bridges only when exporting would be a loss (or the inverter is genuinely curtailing) and throttles to single-phase otherwise, with anti-flap stickiness so the phase contactor isn't churned. A **three-phase dip-bridge** slider tunes how long a dip is bridged.
 - **EV connection made visible.** An `EV connected` sensor now reports the real plug-in state on both the OCPP and FoxESS-Modbus backends, and the front-page status card's EV tile shows connection at a glance. A **default charge mode on connect** picker sets which mode a fresh plug-in starts in; a planned (scheduled) charge survives the car being plugged in rather than being reset to the default.
 - **Custom EV schedule card.** The per-weekday charging schedules (Skema 1–4) moved to a first-party `solar-ai-schedule-card` with inline editing.
