@@ -222,6 +222,7 @@ from .const import (
     EV_STOP_RECOVERY_SECONDS,
     EV_START_DROP_TIMEOUT_SECONDS,
     EV_COOL_ENTRY_SECONDS,
+    EV_PV_DRAIN_BRIDGE_SECONDS,
     CONF_AUTO_FULL_ON_NEGATIVE_PRICE,
     DEFAULT_AUTO_FULL_ON_NEGATIVE_PRICE,
     AUTO_FULL_DEBOUNCE_SECONDS,
@@ -451,6 +452,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # (before the formal stop timer arms). Mirror of the v0.38.3
         # stop-recovery guard in the opposite direction.
         self._ev_cool_entry_ts: datetime | None = None
+        # v1.13.7 — 1φ / OCPP dip-bridge dwell timer. Runs while COOLING
+        # in PV mode with the house battery covering the sub-min deficit;
+        # a sustained drain past EV_PV_DRAIN_BRIDGE_SECONDS forces an
+        # immediate hard stop, matching the v1.12.0 3φ pattern. Reset on
+        # PV recovery (battery stops discharging), mode change, or plug-in.
+        self._ev_pv_drain_since_ts: datetime | None = None
         # v0.39.0 — Auto-promote-to-Full on negative buy price state.
         # When `auto_full_on_negative_price` is enabled and the buy price
         # has been ≤ 0 for AUTO_FULL_DEBOUNCE_SECONDS, the coordinator
@@ -4592,6 +4599,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_surplus_below_min_since_ts = None
             self._ev_arm_drop_since_ts = None              # v0.38.5
             self._ev_cool_entry_ts = None                  # v0.39.11
+            self._ev_pv_drain_since_ts = None              # v1.13.7
             _LOGGER.info("EV plugged in (%s) — mode %s", charger_id, self._ev_active_mode)
         self._ev_prev_connected = ev_connected
 
@@ -4833,6 +4841,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # PV during that window.
         final_amps = self._apply_ev_time_window(
             target_amps, probing=override_forcing,
+            battery_discharge_kw=battery_discharge_kw,   # v1.13.7 drain guard
         )
 
         # v0.39.18 — soft cool-down on override-induced session end.
@@ -5173,6 +5182,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_surplus_below_min_since_ts = None
             self._ev_arm_drop_since_ts = None
             self._ev_cool_entry_ts = None
+            self._ev_pv_drain_since_ts = None              # v1.13.7
             # Fresh session starts single-phase; let hysteresis upshift later.
             self._ev_modbus_phase = 1
             self._ev_modbus_phase_since_ts = None
@@ -5761,7 +5771,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 f"holder ved trefaset minimum (kortvarigt dyk)",
             )
 
-        final_amps = self._apply_ev_time_window(target_amps, probing=override_forcing)
+        final_amps = self._apply_ev_time_window(
+            target_amps, probing=override_forcing,
+            battery_discharge_kw=battery_discharge_kw,   # v1.13.7 drain guard
+        )
 
         # Soft cool-down on override-induced session end (v0.59.10, mirror of the
         # OCPP path): when an override-induced session ends (was drawing, now
@@ -6544,7 +6557,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "charger_events": list(cp.events),  # v0.40.6 rolling event log
         }
 
-    def _apply_ev_time_window(self, target_amps: int, *, probing: bool = False) -> int:
+    def _apply_ev_time_window(
+        self, target_amps: int, *,
+        probing: bool = False,
+        battery_discharge_kw: float = 0.0,
+    ) -> int:
         """Time-based anti-flap (v0.26.0, narrowed in v0.27.4 to PV-only).
 
         Anti-flap windows are ONLY needed for `pv` mode — they exist to absorb
@@ -6582,6 +6599,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_surplus_below_min_since_ts = None
             self._ev_arm_drop_since_ts = None              # v0.38.5
             self._ev_cool_entry_ts = None                  # v0.39.11
+            self._ev_pv_drain_since_ts = None              # v1.13.7
             return target_amps
         # v0.75.4 — a mode change just landed (see set_ev_mode). One-shot
         # bypass of every anti-flap timer so the new mode's target applies
@@ -6595,6 +6613,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_surplus_below_min_since_ts = None
             self._ev_arm_drop_since_ts = None
             self._ev_cool_entry_ts = None
+            self._ev_pv_drain_since_ts = None              # v1.13.7
             return target_amps
         now = datetime.now()
         start_window = int(self.config.get(
@@ -6615,6 +6634,58 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if target_amps == 0:
             # Want to stop ── arm the stop timer when currently charging
             if self._ev_last_amps > 0:
+                # v1.13.7 — 1φ / OCPP dip-bridge dwell (mirror of v1.12.0's
+                # 3φ bridge at lines ~5705-5734). The v0.40.7 COOLING hold
+                # spends up to stop_window (180 s) drawing at min_amps
+                # while waiting to confirm the stop. On 1φ / OCPP that
+                # hold has no time-bounded deficit budget — if PV can't
+                # cover min and the house battery covers the gap, the
+                # drain runs for the whole window (~35 Wh per cycle,
+                # compounding across cloudy afternoons — one user saw 5%
+                # drop over 2 hours). The 3φ path solves this at 5705-5734
+                # with a bounded bridge budget; this is its 1φ analog.
+                #
+                # While COOLING (or in the entry-debounce) AND the battery
+                # is genuinely discharging (> threshold), arm a timer. If
+                # PV recovers and the battery stops discharging, brief-dip
+                # tolerance is preserved: timer resets, hold continues. If
+                # the drain persists past EV_PV_DRAIN_BRIDGE_SECONDS, issue
+                # an immediate hard stop, skipping the remainder of the
+                # stop_window.
+                #
+                # Safe because:
+                #  - Only reachable in PV mode (early-out at ~line 6580).
+                #  - Only fires when target_amps == 0 (surplus < min, real).
+                #  - Only fires when actively charging (_ev_last_amps > 0).
+                #  - Threshold matches the value used everywhere else for
+                #    "battery is genuinely discharging" (v0.54.0, v1.10.7,
+                #    v1.12.0).
+                #  - 30 s persistence requirement filters single-tick spikes.
+                # 3φ Modbus is unaffected: line ~5755 rewrites target_amps
+                # to min_amps_sel BEFORE we're called, so this branch isn't
+                # entered; the v1.12.0 3φ bridge continues to govern 3φ drain.
+                if battery_discharge_kw > EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW:
+                    if self._ev_pv_drain_since_ts is None:
+                        self._ev_pv_drain_since_ts = now
+                    elif (now - self._ev_pv_drain_since_ts).total_seconds() \
+                            >= EV_PV_DRAIN_BRIDGE_SECONDS:
+                        self._ev_surplus_below_min_since_ts = None
+                        self._ev_cool_entry_ts = None
+                        self._ev_surplus_above_min_since_ts = None
+                        self._ev_arm_drop_since_ts = None
+                        self._ev_pv_drain_since_ts = None
+                        _LOGGER.info(
+                            "PV mode: house battery covered EV for %d s "
+                            "(%.2f kW discharge) — dip-bridge budget "
+                            "exhausted, issuing hard stop.",
+                            EV_PV_DRAIN_BRIDGE_SECONDS, battery_discharge_kw,
+                        )
+                        return 0
+                else:
+                    # Deficit cleared (PV recovered or house load dropped).
+                    # Brief dip absorbed successfully — reset the timer.
+                    self._ev_pv_drain_since_ts = None
+
                 # v0.39.11 — entry debounce. Before setting
                 # `_ev_surplus_below_min_since_ts` (which flips the
                 # state name to COOLING), require EV_COOL_ENTRY_SECONDS
@@ -6674,6 +6745,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 self._ev_surplus_below_min_since_ts = None
                 self._ev_arm_drop_since_ts = None
                 self._ev_cool_entry_ts = None
+                self._ev_pv_drain_since_ts = None          # v1.13.7
                 return target_amps
             if self._ev_surplus_above_min_since_ts is None:
                 self._ev_surplus_above_min_since_ts = now
@@ -6703,12 +6775,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_surplus_above_min_since_ts = None
             self._ev_surplus_below_min_since_ts = None
             self._ev_cool_entry_ts = None                  # v0.39.11
+            self._ev_pv_drain_since_ts = None              # v1.13.7
             return target_amps
 
         # Already charging, no pending stop — normal live ramp.
         self._ev_surplus_above_min_since_ts = None
         self._ev_surplus_below_min_since_ts = None
         self._ev_cool_entry_ts = None                      # v0.39.11
+        self._ev_pv_drain_since_ts = None                  # v1.13.7
         return target_amps
 
     async def _set_ocpp_charge_rate(self, charger_id: str, amps: int, force: bool = False) -> None:
