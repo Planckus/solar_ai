@@ -410,6 +410,16 @@ EV_START_DROP_TIMEOUT_SECONDS = 10
 # what drives the COOLING state name in _ev_telemetry).
 EV_COOL_ENTRY_SECONDS = 10
 
+# v1.13.7 — 1φ / OCPP dip-bridge budget for the COOLING hold. Mirrors the
+# v1.12.0 3φ dip-bridge (`ev_override_3ph_bridge_max_minutes`, default 3 min)
+# but shorter: on 1φ the drain rate is bounded by (min_kw - PV), which is
+# ~5× smaller than 3φ's 4.14 kW floor, and the terminal action is stopping
+# rather than falling to 1φ. 30 s × ~0.7 kW ≈ 6 Wh per COOLING cycle — small
+# enough that multi-cycle compounding across a partly-cloudy afternoon stays
+# negligible (< 0.5 % of a 10 kWh battery). Not user-tunable: derived from
+# the 3φ knob by the physics of the floor gap; SolarAI decides.
+EV_PV_DRAIN_BRIDGE_SECONDS = 30
+
 # v0.39.0 — Auto-promote EV master mode to Full when the live buy price
 # goes negative, then auto-revert to the pre-promotion mode when the
 # price-floor block closes (export price rises back above the user's

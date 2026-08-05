@@ -9,6 +9,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.13.7] — 2026-08-05
+
+### Fixed — PV mode's cool-down hold silently drained the house battery on cloudy days
+
+**The situation.** In PV mode, when solar surplus drops below the EV's minimum charge rate (e.g. 6 A single-phase = 1.38 kW), the controller enters a cool-down state. Since v0.40.7 the charger is held at the *minimum* rate (not the last-commanded rate) during the entry-debounce + stop_window — an intentional trade-off to absorb brief cloud dips without stopping the session. But if PV can't cover even the minimum, the house battery quietly makes up the deficit.
+
+**Observed live**: PV ~1.9 kW, EV drawing 1.3 kW (min, single-phase), non-EV load ~1.2 kW → battery discharging ~0.7 kW for the duration of the cool-down (up to ~190 s: 10 s entry-debounce + 180 s stop_window). Across a partly-cloudy afternoon with several such cycles, the house battery dropped ~5% while Solar AI was reporting "surplus below minimum — stopping". Each cycle burned ~35 Wh from the battery.
+
+**Root cause.** The 3-phase Modbus path has two distinct time budgets for two distinct purposes: `stop_window` (180 s) to confirm the stop, and `ev_override_3ph_bridge_max_minutes` (v1.12.0, default 3 min) as a time-bounded deficit budget for how long it'll bridge a real drain before actually stopping. The single-phase Modbus path and the OCPP path never got that split — they use `stop_window` as double-duty for both purposes, with no time-bounded deficit budget. Result: 1φ silently drains for the full 180 s per cycle.
+
+**Fix**: 1φ dip-bridge dwell. Mirrors the v1.12.0 3φ pattern for the 1φ / OCPP paths. While COOLING (or in the entry-debounce) AND the house battery is discharging above the shared drain threshold, a new timer arms. If PV recovers and the battery stops discharging, brief-dip tolerance is preserved — timer resets, hold continues. If the drain persists past `EV_PV_DRAIN_BRIDGE_SECONDS` (= 30 s), issue an immediate hard stop, skipping the remainder of the stop_window.
+
+**Behaviour under the fix:**
+- 20-second cloud where the battery covers the deficit → session survives; when PV returns and battery stops discharging, timer resets. **~4 Wh loss** for the dip. Brief-dip tolerance intact.
+- Sustained cloud where the battery covers for 30+ s → hard stop at t=30 s. **~6 Wh loss** per cycle. No more silent drain.
+- Multiple cycles across a cloudy afternoon → each capped at ~6 Wh, 5 cycles = ~30 Wh (< 0.5 % of a 10 kWh battery). Down from ~175 Wh (5 %) under v1.13.6.
+
+**Why safe / not a regression:**
+- Only reachable in PV mode (existing early-out at the top of `_apply_ev_time_window`).
+- Only fires when target_amps == 0 (surplus < min, real) AND we were actively charging.
+- Threshold reuses `EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW` (0.3 kW) — the same value used in v0.54.0, v1.10.7, and v1.12.0 for "battery is genuinely discharging".
+- 30-second persistence requirement filters single-tick sensor spikes.
+- 3-phase Modbus path is untouched: line ~5755's rewrite (`target_amps = min_amps_sel` when 3φ + target=0) means the new block isn't reached; the v1.12.0 3φ bridge budget continues to govern 3φ drain.
+- Interacts cleanly with v0.54.0 override yield, v0.75.4 mode-change bypass, v1.10.7 priority-gate guard, and v0.38.3 stop-recovery — see inline code comments.
+
+**Why not user-configurable.** SolarAI decides. The 30 s value is derived from the physics of the 1φ floor gap (drain rate ≈ 5× smaller than 3φ's 4.14 kW floor, so a proportionally shorter budget). The 3φ knob exists because 3φ has a bigger trade-off worth surfacing; 1φ's shorter budget is derivable, not a tuning axis.
+
+An INFO log line fires on each drain-bridge hard-stop so the behaviour is auditable from the logbook: *"PV mode: house battery covered EV for 30 s (0.72 kW discharge) — dip-bridge budget exhausted, issuing hard stop."*
+
+### Internal
+- New constant `EV_PV_DRAIN_BRIDGE_SECONDS = 30` in `const.py`.
+- New instance field `_ev_pv_drain_since_ts: datetime | None` on the coordinator.
+- New optional `battery_discharge_kw` parameter on `_apply_ev_time_window`; both call sites (OCPP `_run_ev_controller` and Modbus `_run_ev_controller_modbus`) pass the already-available value.
+- Timer is reset alongside the other anti-flap timers in 6 places (non-PV bypass, mode-change bypass, probe bypass, post-COOLING recovery, live-ramp path, EV plug-in reset, Modbus fresh-session reset).
+
+---
+
 ## [1.13.6] — 2026-08-04
 
 ### Changed
