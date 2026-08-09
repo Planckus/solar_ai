@@ -6924,14 +6924,31 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         in_pv = (self._ev_effective_mode == EV_MODE_PV)
         if self._ev_last_amps > 0:
             state = "CHARGING"
+            # v1.13.8 — cooling countdown reflects the EFFECTIVE terminal time,
+            # not just stop_window. When v1.13.7's dip-bridge dwell is armed
+            # (battery covering the sub-min deficit), the hold ends at
+            # `_ev_pv_drain_since_ts + EV_PV_DRAIN_BRIDGE_SECONDS`, which is
+            # typically well before the 180 s stop_window. Take the earliest
+            # of whichever timers are armed so the UI countdown matches when
+            # the controller will actually stop the car.
+            cooling_deadlines = []
             if in_pv and self._ev_surplus_below_min_since_ts is not None:
-                state = "COOLING"
-                elapsed = (now - self._ev_surplus_below_min_since_ts).total_seconds()
-                cooling_left = max(0, int(stop_window - elapsed))
-                cooling_until_iso = (
+                cooling_deadlines.append(
                     self._ev_surplus_below_min_since_ts
                     + timedelta(seconds=stop_window)
-                ).isoformat()
+                )
+            if in_pv and self._ev_pv_drain_since_ts is not None:
+                cooling_deadlines.append(
+                    self._ev_pv_drain_since_ts
+                    + timedelta(seconds=EV_PV_DRAIN_BRIDGE_SECONDS)
+                )
+            if cooling_deadlines:
+                state = "COOLING"
+                effective_deadline = min(cooling_deadlines)
+                cooling_left = max(0, int(
+                    (effective_deadline - now).total_seconds()
+                ))
+                cooling_until_iso = effective_deadline.isoformat()
         else:
             state = "IDLE"
             if in_pv and self._ev_surplus_above_min_since_ts is not None:

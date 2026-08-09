@@ -241,6 +241,30 @@
 
     getCardSize() { return 7; }
 
+    // v1.13.8 — per-second countdown for the ARMING/COOLING banner. Ticks
+    // between coordinator updates so the number visibly counts 30-29-28...
+    connectedCallback() {
+      if (this._tickTimer) return;
+      this._tickTimer = setInterval(() => this._tickCountdown(), 1000);
+    }
+    disconnectedCallback() {
+      if (this._tickTimer) {
+        clearInterval(this._tickTimer);
+        this._tickTimer = null;
+      }
+    }
+    _tickCountdown() {
+      const el = this._root && this._root.querySelector('span[data-countdown-until]');
+      if (!el) return;
+      const iso = el.getAttribute('data-countdown-until');
+      const kind = el.getAttribute('data-countdown-kind');
+      if (!iso || !kind || !this._hass) return;
+      const deadline = Date.parse(iso);
+      if (isNaN(deadline)) return;
+      const remaining = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+      el.textContent = t(this._hass, kind, remaining);
+    }
+
     _render() {
       const c = this._config;
       const hass = this._hass;
@@ -275,6 +299,12 @@
 
       const armingS = attr(hass, c.ev_status_entity, 'arming_seconds_left', 0) || 0;
       const coolingS = attr(hass, c.ev_status_entity, 'cooling_seconds_left', 0) || 0;
+      // v1.13.8 — ISO deadlines for a per-second countdown ticked client-
+      // side. The static *_seconds_left values refresh only on the
+      // coordinator tick (~10-30 s), so without live subtraction the
+      // banner jumps in coarse steps.
+      const armingUntil = attr(hass, c.ev_status_entity, 'arming_until', null);
+      const coolingUntil = attr(hass, c.ev_status_entity, 'cooling_until', null);
       const evReason = attr(hass, c.ev_status_entity, 'reason', '');
 
       const buyPrice = num(hass, c.buy_price_entity);
@@ -285,13 +315,19 @@
       const tomorrow = attr(hass, c.solar_forecast_entity, 'tomorrow_kwh', null);
       const actualToday = num(hass, c.solar_actual_today_entity);
 
+      // v1.13.8 — the banner span carries a data-countdown-until attribute
+      // with the deadline ISO string and a data-countdown-kind marking
+      // which translation key to use. _tickCountdown() picks it up and
+      // rewrites the text every second between server updates.
       let banner = '';
       if (armingS > 0) {
+        const iso = armingUntil ? String(armingUntil) : '';
         banner = `<div class="row" style="background:var(--warning-color);opacity:.85;border-radius:12px;padding:6px 12px;margin-bottom:12px;">
-          <span style="font-size:15px;color:#000;">${t(hass, 'starting_in', Math.round(armingS))}</span></div>`;
+          <span style="font-size:15px;color:#000;" data-countdown-until="${iso}" data-countdown-kind="starting_in">${t(hass, 'starting_in', Math.round(armingS))}</span></div>`;
       } else if (coolingS > 0) {
+        const iso = coolingUntil ? String(coolingUntil) : '';
         banner = `<div class="row" style="background:var(--warning-color);opacity:.85;border-radius:12px;padding:6px 12px;margin-bottom:12px;">
-          <span style="font-size:15px;color:#000;">${t(hass, 'ev_stops_in', Math.round(coolingS))}</span></div>`;
+          <span style="font-size:15px;color:#000;" data-countdown-until="${iso}" data-countdown-kind="ev_stops_in">${t(hass, 'ev_stops_in', Math.round(coolingS))}</span></div>`;
       }
 
       const gridColor = gridExp > gridImp ? 'var(--success-color)' : (gridImp > 0.05 ? 'var(--error-color)' : 'var(--secondary-text-color)');
