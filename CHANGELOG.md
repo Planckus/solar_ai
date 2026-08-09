@@ -9,6 +9,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.13.8] — 2026-08-05
+
+### Changed — PV-mode COOLING banner shows the actual terminal time and ticks per second
+
+Two follow-ups to v1.13.7, both dashboard/telemetry only.
+
+**Effective terminal time in the countdown.** The status-card banner *"EV stopper om X s — lav sol"* previously counted down from `stop_window` (180 s) irrespective of what was actually going to end the session. After v1.13.7 the effective terminal is whichever fires first — `stop_window` (180 s, if PV alone dips) or the new dip-bridge dwell (30 s, if the house battery is covering the deficit) — so the counter now takes the earliest of the armed deadlines. On a real drain the number starts near 30 s instead of 180 s.
+
+**Per-second countdown.** The banner previously refreshed only on each coordinator tick (~10-30 s), so the number jumped in coarse steps. It now ticks visibly every second: 30, 29, 28, 27… The server exposes an ISO deadline (`arming_until` / `cooling_until` attributes on the EV status sensor, added in v0.28.1 for exactly this) and the status card runs a `setInterval(1000)` in `connectedCallback` that subtracts `Date.now()` from that deadline between server updates. Timer is cleaned up in `disconnectedCallback`.
+
+### Internal
+
+- `_ev_telemetry` computes `cooling_until` as `min(stop_window_deadline, dip_bridge_deadline_if_armed)` — reads the new `_ev_pv_drain_since_ts` field added in v1.13.7.
+- `SolarAiStatusCard` gains `connectedCallback` / `disconnectedCallback` / `_tickCountdown`; the banner span carries `data-countdown-until` (ISO) and `data-countdown-kind` (translation key) so the tick handler can update either an ARMING or a COOLING banner with the same code path.
+
+---
+
 ## [1.13.7] — 2026-08-05
 
 ### Fixed — PV mode's cool-down hold silently drained the house battery on cloudy days
