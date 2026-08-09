@@ -9,6 +9,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.13.9] — 2026-08-09
+
+### Fixed — 3-phase PV mode could still drain the house battery when export was price-blocked
+
+v1.13.7 stopped the drain on the single-phase and OCPP paths (where the controller genuinely wants `target_amps = 0` during a cool-down). On the FoxESS-Modbus three-phase path a different silent-drain mechanism remained: whenever the battery was near full and export was price-blocked, the `pv_power_limited_flag` from the inverter kept two independent gates open — the curtailment override's `override_holding` (which pins the phase at three regardless of live draw) and the three-phase dip-bridge's `bridge_ok` (which suppresses the fall-back-to-single-phase timer). Together they let the car sit at the 4.14 kW three-phase floor while PV dipped below it, with the house battery quietly covering the deficit and grid import staying near zero. Observed live on 2026-08-09: house battery dropped from 100 % to 95 % over roughly thirty minutes on a partly cloudy afternoon in exactly this state.
+
+Both gates now include the same drain guard v1.13.7 introduced elsewhere: they suppress the three-phase hold when `battery_discharge_kw > EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW` (the shared 0.3 kW threshold). When the battery is genuinely paying the bill, the phase preference drops to single-phase; once on single-phase the v1.13.7 dip-bridge dwell hard-stops the session if PV can't cover the single-phase minimum either.
+
+Scoped to `EV_MODE_PV` only: in PV+Battery mode the user has explicitly opted into battery-covered charging, so the guard yields to that intent.
+
+### Interoperability
+
+- The curtailment harvest (v0.39.17 / v1.13.1) is preserved for its intended case: battery genuinely full and MPPT genuinely throttling with `battery_discharge_kw` near zero — the guard doesn't fire.
+- The v0.75.4 mode-change bypass, v1.10.7 priority-gate guard, v1.10.8 fast-downshift on grid import, and the v1.12.0 three-phase dip-bridge budget are all untouched. The v1.12.0 bridge now arms correctly on the observed drain instead of being shielded by the flag.
+- The v1.13.7 single-phase dip-bridge dwell is the second stage of the safety cascade: after this fix drops to single-phase, it hard-stops in ~30 s if PV can't cover 1φ min either. Two-stage protection.
+
+### Internal
+
+- Two conditions added, no new state, no new timer, no new tunable.
+- coordinator.py `_run_ev_controller_modbus`: `bridge_ok` (line ~5436) and `override_holding` (line ~5437) each gain the discharge-threshold guard with a PV-Battery exemption.
+
+---
+
 ## [1.13.8] — 2026-08-05
 
 ### Changed — PV-mode COOLING banner shows the actual terminal time and ticks per second

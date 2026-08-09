@@ -5433,11 +5433,36 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # is the user's rule and it fixes the "5 kW while draining 0.3 kW from a
         # 96 % battery at a positive price" case, without blocking free harvest.
         selling_at_a_loss = (getattr(self, "_ev_export_price_raw", 0.0) or 0.0) < 0.0
-        bridge_ok = selling_at_a_loss or self._pv_power_limited_flag
+        # v1.13.9 — the curtailment premise (`_pv_power_limited_flag`) shields
+        # this bridge from firing on real battery drain: when battery is full
+        # and MPPT is throttled, the flag stays True even during ticks where
+        # PV briefly can't cover 3φ min and the house battery covers the gap.
+        # Grid import stays ~0 (FoxESS prefers battery over grid), so the
+        # existing v1.10.8 fast-downshift also misses. Observed 2026-08-09:
+        # ~5 % SoC drop over 30 min on a partly-cloudy afternoon while the
+        # override cycled and this bridge held 3φ. The `selling_at_a_loss`
+        # branch stays uncondional — if export is genuinely negative, keep
+        # bridging because stopping would waste worse. Scoped to PV only: in
+        # PV_BATTERY the user has explicitly opted in to battery-covered
+        # charging.
+        bridge_ok = selling_at_a_loss or (
+            self._pv_power_limited_flag
+            and (effective_mode == EV_MODE_PV_BATTERY
+                 or battery_discharge_kw <= EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW)
+        )
         override_holding = (
             self._ev_modbus_phase == 3
             and not override_3ph_blocked
             and effective_mode in (EV_MODE_PV, EV_MODE_PV_BATTERY)
+            # v1.13.9 — matching guard: `override_holding` pins the phase
+            # preference to 3 whenever the curtailment premise holds. Once
+            # battery is genuinely paying, pinning at 3φ means we bridge from
+            # battery even though the harvest excuse ("PV is being wasted")
+            # no longer applies — PV that's now being consumed by house load
+            # isn't wasted, it's being covered by battery. Same PV-only
+            # scoping as bridge_ok above.
+            and (effective_mode == EV_MODE_PV_BATTERY
+                 or battery_discharge_kw <= EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW)
             and (
                 self._pv_power_limited_flag
                 or (self._current_floor_block is not None
