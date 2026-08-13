@@ -1,4 +1,4 @@
-# Solar AI for FoxESS
+# Solar AI
 
 [![HACS Custom Repository](https://img.shields.io/badge/HACS-Custom-orange?logo=home-assistant-community-store)](https://hacs.xyz)
 
