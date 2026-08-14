@@ -9,6 +9,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.13.11] — 2026-08-14
+
+### Fixed — PV+Battery mode was capped at ~1.4 kW and never reached 3-phase
+
+v1.13.10 fixed *how low* PV+Battery mode could draw the house battery (down
+to the inverter's hardware Min-SoC instead of the arbitrage reserve floor),
+but the amount it asked for when the battery was helping was still hard-
+capped at the phase-dependent single-phase minimum (~1.38 kW) — and because
+the phase-upshift decision looks only at solar, never at battery, the mode
+could never generate enough demand to justify or reach 3-phase in the first
+place. Reported live: "still only charging on 1-phase and minimum on
+3-phase."
+
+PV+Battery mode's target is now the 4.14 kW 3-phase floor whenever the
+battery is above its own floor, with the battery covering whatever solar
+doesn't (and nothing once solar exceeds the floor, and no cap above it —
+plentiful solar tracks 1:1 up to the max charge rate). The phase decision
+now follows this directly: PV+Battery holds 3-phase whenever the battery is
+above the floor, independent of the solar-only signal every other mode
+uses. Two existing, unrelated mechanisms needed a matching exemption so
+they don't fight the deliberate floor-crossing stop: the 3-phase dip-bridge
+budget (which would otherwise treat continuous gap-fill as an unfunded
+deficit and force a downshift after 3 minutes) and the phase-switch dwell
+(which would otherwise hold the relay at 3-phase for up to 5 minutes after
+the battery hits its floor, stalling the stop rather than executing it).
+
+No new configuration, no ramp, no separate SoC margin — the hardware floor
+from v1.13.10 is the only threshold, and the battery's contribution is
+exactly the gap to it, nothing more.
+
+### Interoperability
+
+Scoped entirely to PV+Battery mode. Plain PV mode's solar-only phase
+signal — deliberately excluding battery, by design, to prevent exactly
+this kind of battery-funded upshift in every *other* mode — is untouched.
+Full and Locked modes are untouched. The v1.12.0 3-phase dip-bridge and
+v0.69.0 downshift dwell continue to govern every other mode exactly as
+before; only PV+Battery's own floor-fill sessions are exempted from them.
+
+---
+
 ## [1.13.10] — 2026-08-14
 
 ### Fixed — PV+Battery mode never actually used the battery
