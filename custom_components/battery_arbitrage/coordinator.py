@@ -5914,6 +5914,28 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return 0.0
         return live_kw if live_kw > 0.0 else max(0.0, float(max_kw))
 
+    def _ev_pv_battery_floor_soc(self, arbitrage_floor_soc: float) -> float:
+        """v1.13.10 — the SoC limit PV+Battery mode may draw the house battery to.
+
+        PV+Battery exists to bridge a solar shortfall from the battery, so the
+        arbitrage/export reserve floor is the wrong limit for it (that floor is
+        commonly 55-70 % once the dynamic reserve is active, which made the mode
+        a no-op). The real limit is the inverter's own on-grid Min-SoC — it is
+        read live rather than mirrored into a Solar AI setting so the two can
+        never drift apart, and the inverter enforces it in hardware regardless.
+
+        Falls back to the arbitrage floor if the entity is missing (a non-Modbus
+        install has no hardware floor to read, so the conservative floor is the
+        only safe answer), and never returns a value above it — this may only
+        ever lower the limit, never raise it beyond what arbitrage already
+        allows.
+        """
+        entity = self.config.get(CONF_FOXESS_MIN_SOC_ENTITY, FOXESS_MIN_SOC_ON_GRID_ENTITY)
+        hw_floor = self._get_float_state(entity)
+        if hw_floor is None:
+            return float(arbitrage_floor_soc)
+        return min(float(arbitrage_floor_soc), max(0.0, hw_floor))
+
     def _compute_ev_target_kw(
         self, mode: str, solar_surplus: float, battery_soc: float,
         floor_soc: float, min_kw: float, max_kw: float,
@@ -5927,12 +5949,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     ) -> tuple[float, str]:
         """Pure mode→target translation. Returns (target_kw, human-readable reason).
 
-        Battery-priority threshold (v0.26.4): in PV and PV+battery modes, EV
-        charging is held off until `battery_soc >= priority_soc`. The inverter
-        naturally diverts solar surplus to the battery while the EV target is
-        0, so the battery fills first; once the threshold is reached, EV
-        resumes normal surplus tracking. FULL mode ignores this (user wants
-        max charge regardless of battery state).
+        Battery-priority threshold (v0.26.4): in PV mode, EV charging is held
+        off until `battery_soc >= priority_soc`. The inverter naturally diverts
+        solar surplus to the battery while the EV target is 0, so the battery
+        fills first; once the threshold is reached, EV resumes normal surplus
+        tracking. FULL mode ignores this (user wants max charge regardless of
+        battery state), and PV+Battery does too — that mode's whole purpose is
+        to draw the battery for the car, so gating it on battery fullness would
+        contradict itself. (Docstring corrected in v1.13.10: it claimed the gate
+        covered PV+battery, but the code has always checked `mode == EV_MODE_PV`
+        only.)
 
         v0.39.19 — `grid_export_kw` bypasses the priority gate. When the
         inverter is actively exporting more than `min_kw` to the grid,
@@ -6055,7 +6081,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     f"PV+batteri: {solar_surplus:.1f} kW overskud → {target:.1f} kW",
                 )
             # Solar can't reach min — can the battery help?
-            if battery_soc > floor_soc:
+            # v1.13.10 — PV+Battery draws to the inverter's own hardware Min-SoC,
+            # not the arbitrage reserve floor. Using the shared `floor_soc` here
+            # was wrong for this mode: that floor is the *export/arbitrage*
+            # reserve (dynamic, commonly 55-70 %), so "PV+battery" refused to
+            # touch the battery for the car on any normal day and behaved
+            # identically to plain PV. The mode's entire purpose is to bridge
+            # the gap from the battery, so its limit is the hardware floor the
+            # inverter itself enforces (read live, so it can't drift).
+            pv_battery_floor = self._ev_pv_battery_floor_soc(floor_soc)
+            if battery_soc > pv_battery_floor:
                 return min_kw, self._msg(
                     f"PV+battery: solar {solar_surplus:.1f} kW insufficient, "
                     f"battery covers the gap → {min_kw:.1f} kW",
@@ -6063,8 +6098,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     f"batteri dækker forskel → {min_kw:.1f} kW",
                 )
             return 0.0, self._msg(
-                f"PV+battery: solar {solar_surplus:.1f} kW < min and battery at floor — stopped",
-                f"PV+batteri: sol {solar_surplus:.1f} kW < min og batteri ved gulv — stoppet",
+                f"PV+battery: solar {solar_surplus:.1f} kW < min and battery at "
+                f"hardware minimum ({pv_battery_floor:.0f}%) — stopped",
+                f"PV+batteri: sol {solar_surplus:.1f} kW < min og batteri ved "
+                f"hardware-minimum ({pv_battery_floor:.0f}%) — stoppet",
             )
 
         return 0.0, self._msg(f"Unknown mode: {mode}", f"Ukendt mode: {mode}")
