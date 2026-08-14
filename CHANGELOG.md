@@ -9,6 +9,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.13.10] — 2026-08-14
+
+### Fixed — PV+Battery mode never actually used the battery
+
+PV+Battery mode is supposed to charge the car from solar and cover any shortfall from the house battery. It checked the wrong limit before doing so: it used the **arbitrage export reserve floor** — the same floor that stops the optimiser selling the battery to the grid — instead of the inverter's own minimum. With the dynamic discharge floor enabled that reserve typically sits between 55 % and 70 %, so on any normal day the mode refused to touch the battery at all and behaved identically to plain PV mode, reporting `solar 0.0 kW < min and battery at floor — stopped` while the battery sat at 51 % with an 8-point margin above the hardware limit.
+
+The limit for this mode is now the inverter's own on-grid Min-SoC — the floor the hardware itself enforces (13 % on the reporting install). The arbitrage reserve continues to govern selling to the grid, unchanged; it just no longer blocks the one mode whose entire purpose is to draw the battery for the car.
+
+The hardware floor is read live from the inverter each tick rather than mirrored into a Solar AI setting, so the two can never drift out of sync — change it on the inverter or in the FoxESS app and the mode follows. On a non-Modbus install with no readable hardware floor, the mode falls back to the previous conservative behaviour.
+
+### Note on reserve
+
+PV+Battery can now draw the house battery down to the hardware minimum, which will often leave no reserve for the evening — the house may import at the evening rate, or the optimiser may grid-charge later to recover. That is the intended trade-off of the mode: pick PV (solar-only, reserve protected) or Full (grid + battery, ignores solar) if it isn't what you want for a given day.
+
+### Also fixed
+
+- The `_compute_ev_target_kw` docstring claimed the battery-priority gate applied to both PV and PV+Battery modes. The code has only ever applied it to PV; the docstring was wrong, not the code.
+
+---
+
 ## [1.13.9] — 2026-08-09
 
 ### Fixed — 3-phase PV mode could still drain the house battery when export was price-blocked
