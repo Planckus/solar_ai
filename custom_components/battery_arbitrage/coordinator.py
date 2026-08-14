@@ -5445,11 +5445,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # bridging because stopping would waste worse. Scoped to PV only: in
         # PV_BATTERY the user has explicitly opted in to battery-covered
         # charging.
+        # v1.13.11 — PV+Battery's own floor-fill (below) draws the battery for
+        # every sub-4.14kW solar shortfall, all day, independent of price or
+        # curtailment. Without this term the v1.12.0 budget above sees that as
+        # an ordinary unfunded deficit and force-downshifts after 3 minutes —
+        # bridge_ok's existing PV_BATTERY carve-out only fires alongside
+        # `_pv_power_limited_flag`, which a plain daytime shortfall never sets.
+        pv_battery_floor = self._ev_pv_battery_floor_soc(floor_soc)
+        pv_battery_filling = (
+            effective_mode == EV_MODE_PV_BATTERY and battery_soc > pv_battery_floor
+        )
         bridge_ok = selling_at_a_loss or (
             self._pv_power_limited_flag
             and (effective_mode == EV_MODE_PV_BATTERY
                  or battery_discharge_kw <= EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW)
-        )
+        ) or pv_battery_filling
         override_holding = (
             self._ev_modbus_phase == 3
             and not override_3ph_blocked
@@ -5476,6 +5486,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             phase_pref = 3
         elif (override_escalate or override_holding) and not override_3ph_blocked:
             phase_pref = 3   # escalate / hold three-phase to harvest curtailed PV
+        elif pv_battery_filling:
+            # v1.13.11 — PV+Battery's baseline is three-phase, not a solar-
+            # gated upshift: the mode's target formula already asks for the
+            # 4.14 kW floor (battery-topped) whenever it's above its own
+            # floor, so the phase must follow suit rather than waiting on
+            # `avg_avail_kw`, which deliberately excludes battery entirely
+            # (that exclusion is correct for every other mode — see
+            # `_ev_available_surplus_kw`'s docstring — but PV+Battery has
+            # explicitly opted out of it).
+            phase_pref = 3
         elif avg_avail_kw >= upshift_kw:
             phase_pref = 3
         elif avg_avail_kw < EV_MODBUS_DOWNSHIFT_KW:
@@ -5547,8 +5567,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # buying), the battery-full fast downshift (v1.10.8 — no battery cover exists
         # at full SoC, so don't linger on 3φ importing), and the curtailment override
         # (Regime A bump-up never delayed).
+        # v1.13.11 — PV+Battery reaching its own hardware floor is a deliberate,
+        # already-decided stop, not cloud flicker to ride out. Without this
+        # exemption the 5-minute dwell above holds the phase at 3 for up to 5
+        # more minutes after the floor is hit, during which the brief-dip hold
+        # below would keep re-forcing the 4.14 kW minimum — drawing the
+        # battery past the floor it was just told to respect.
+        pv_battery_floor_crossed = (
+            effective_mode == EV_MODE_PV_BATTERY and battery_soc <= pv_battery_floor
+        )
         going_down = phase_pref < self._ev_modbus_phase
-        if going_down and not importing_on_3ph and not battery_full_importing:
+        if (going_down and not importing_on_3ph and not battery_full_importing
+                and not pv_battery_floor_crossed):
             required_dwell = max(interval_s, int(60 * float(self._stored.get(
                 "ev_modbus_downshift_dwell_min",
                 EV_MODBUS_DOWNSHIFT_DWELL_SECONDS / 60))))
@@ -6091,11 +6121,47 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # inverter itself enforces (read live, so it can't drift).
             pv_battery_floor = self._ev_pv_battery_floor_soc(floor_soc)
             if battery_soc > pv_battery_floor:
-                return min_kw, self._msg(
-                    f"PV+battery: solar {solar_surplus:.1f} kW insufficient, "
-                    f"battery covers the gap → {min_kw:.1f} kW",
-                    f"PV+batteri: sol {solar_surplus:.1f} kW utilstrækkelig, "
-                    f"batteri dækker forskel → {min_kw:.1f} kW",
+                # v1.13.11 — target is the 4.14 kW 3-phase floor, not the
+                # phase-dependent `min_kw`. `min_kw` is resolved by the caller
+                # from whichever phase is CURRENTLY active, so while stuck on
+                # 1-phase (which it always was, before the matching phase-
+                # decision fix) it read ~1.38 kW — the mode could never draw
+                # enough to justify, or even reach, 3-phase. Battery fills
+                # only the gap to the fixed floor; above it this is identical
+                # to the branch above (solar alone, uncapped by the floor).
+                target = min(max(DEFAULT_EV_MIN_CHARGE_KW, solar_surplus), max_kw)
+                battery_share = max(0.0, target - solar_surplus)
+                return target, self._msg(
+                    f"PV+battery: solar {solar_surplus:.1f} kW + battery "
+                    f"{battery_share:.1f} kW → {target:.1f} kW",
+                    f"PV+batteri: sol {solar_surplus:.1f} kW + batteri "
+                    f"{battery_share:.1f} kW → {target:.1f} kW",
+                )
+            # v1.13.11 — battery at its own floor: it stops contributing, but
+            # that's not the same as the car stopping. Fall back to solar-
+            # only tracking instead of an unconditional 0 — usable solar
+            # below the 3-phase floor should still charge the car.
+            #
+            # Bug fixed in review: comparing against `min_kw` here is always
+            # false — `min_kw` is the SAME value the branch at the top of
+            # this mode already tested (`solar_surplus >= min_kw`) and found
+            # too low to reach this code at all, so re-testing it can never
+            # pass; this branch was dead. `min_kw` is also phase-CURRENT, not
+            # phase-TARGET: on the tick the floor is crossed the phase relay
+            # may not have caught up yet, so it can still read the 3-phase
+            # value even though we're committing to 1-phase. Compare against
+            # the fixed single-phase minimum instead — the one this fallback
+            # is actually falling back to.
+            single_phase_min_kw = self._amps_to_kw(EV_OCPP_MIN_AMPS, 1)
+            if solar_surplus >= single_phase_min_kw:
+                target = min(solar_surplus, max_kw)
+                return target, self._msg(
+                    f"PV+battery: battery at hardware minimum "
+                    f"({pv_battery_floor:.0f}%) — solar-only {solar_surplus:.1f} kW "
+                    f"→ {target:.1f} kW",
+                    f"PV+batteri: batteri ved hardware-minimum "
+                    f"({pv_battery_floor:.0f}%) — kun sol {solar_surplus:.1f} kW "
+                    f"→ {target:.1f} kW",
                 )
             return 0.0, self._msg(
                 f"PV+battery: solar {solar_surplus:.1f} kW < min and battery at "
