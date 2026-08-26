@@ -2809,7 +2809,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
         else:
             if ev_charging_now:
-                reason = "EV actively charging (now/minpv) — holding battery for EVCC"
+                reason = "EV actively charging (now/minpv) — holding battery for it"
             elif evcc_managing_battery:
                 reason = f"EVCC managing battery ({evcc_battery_mode}) — not overriding"
             elif solar_will_fill:
