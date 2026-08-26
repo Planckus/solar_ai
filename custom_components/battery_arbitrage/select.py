@@ -44,6 +44,10 @@ from .const import (
     CONF_EV_MODBUS_CURRENT_STEP,
     DEFAULT_EV_MODBUS_CURRENT_STEP,
     EV_MODBUS_CURRENT_STEP_OPTIONS,
+    CONF_CARD_STYLE,
+    DEFAULT_CARD_STYLE,
+    CARD_STYLE_NATIVE,
+    CARD_STYLE_ROUNDED,
 )
 from .coordinator import BatteryArbitrageCoordinator
 from .sensor import _device_info
@@ -104,6 +108,8 @@ async def async_setup_entry(
         # _setting, so flipping it on the Advanced pane applies next cycle.
         BatteryArbitrageChargerBackendSelect(coordinator, entry),
         BatteryArbitrageEvCurrentStepSelect(coordinator, entry),
+        # v1.14.0 — dashboard card style (Native Solar AI vs Rounded theme).
+        BatteryArbitrageCardStyleSelect(coordinator, entry),
     ]
     # v0.38.0 — always create 4 per-slot mode selects (one per maximum
     # slot index). The select reads/writes `_stored["ev_schedules"]`
@@ -444,6 +450,23 @@ class BatteryArbitrageEvCurrentStepSelect(_ConfigSelectBase):
                 CONF_EV_CHARGER_BACKEND, DEFAULT_EV_CHARGER_BACKEND,
             ) == EV_BACKEND_FOXESS_MODBUS
         )
+
+
+class BatteryArbitrageCardStyleSelect(_ConfigSelectBase):
+    """Dashboard card style — "Native Solar AI" (today's look) vs "Rounded theme"
+    (the rounded control-room look) (v1.14.0).
+
+    Per HA instance. The bundled Lovelace cards read this select's state and
+    switch their surface treatment (radius/surfaces/accents); colours still come
+    from the active HA theme in both styles. Backed by `_stored["card_style"]`
+    via `_ConfigSelectBase`; default keeps existing installs on the native look.
+    """
+
+    _attr_translation_key = "card_style"
+    _attr_icon = "mdi:palette-swatch-outline"
+    _attr_options = [CARD_STYLE_NATIVE, CARD_STYLE_ROUNDED]
+    _key = CONF_CARD_STYLE
+    _default = DEFAULT_CARD_STYLE
 
 
 class BatteryArbitrageProviderSelect(

@@ -110,6 +110,47 @@
     }[c]));
   }
 
+  // -------------------------------------------------- card style (v1.14.0)
+  // "Native Solar AI" vs "Rounded theme", chosen via select.solar_ai_card_style
+  // (Indstillinger). The select entity_id is language-dependent (en/da), so we
+  // probe both known ids. Colours keep coming from the active HA theme in both
+  // styles; ROUNDED only changes radius/surface/accents. Applied centrally by
+  // SolarAiBaseCard so the whole bundle re-skins from one place.
+  const CARD_STYLE_ENTITY_IDS = ['select.solar_ai_card_style', 'select.solar_ai_kortstil'];
+
+  function cardStyleEntityId(hass) {
+    if (!hass || !hass.states) return null;
+    for (const id of CARD_STYLE_ENTITY_IDS) if (hass.states[id]) return id;
+    return null;
+  }
+
+  function getCardStyle(hass) {
+    const id = cardStyleEntityId(hass);
+    const s = id ? hass.states[id].state : null;
+    return s === 'rounded' ? 'rounded' : 'native';
+  }
+
+  // Shadow-root CSS injected per card. Native = no overrides (HA defaults).
+  // Rounded = larger radius + subtle border on the outer ha-card, plus
+  // control-room accent custom properties that themed inner elements can use.
+  function cardStyleCss(mode) {
+    if (mode !== 'rounded') return '';
+    return `
+      :host {
+        --sai-radius: 20px;
+        --sai-radius-sm: 12px;
+        --sai-accent-amber: oklch(0.78 0.14 55);
+        --sai-accent-blue: oklch(0.78 0.12 220);
+        --sai-accent-green: oklch(0.78 0.16 150);
+        --sai-accent-violet: oklch(0.75 0.12 300);
+      }
+      ha-card {
+        border-radius: var(--sai-radius) !important;
+        border: 1px solid var(--divider-color) !important;
+      }
+    `;
+  }
+
   // ---------------------------------------------------------- localization
   //
   // The dashboard YAML is language-forked (dashboard_en.yaml / dashboard_da.yaml,
@@ -208,6 +249,7 @@
         if (s === this._lastSig) return;
         this._lastSig = s;
         this._render();
+        this._applyCardStyle();
       } catch (err) {
         console.error('Solar AI card render error (' + this.tagName + '):', err);
         this._root.innerHTML = `<ha-card style="padding:16px;color:var(--error-color);">
@@ -218,7 +260,30 @@
     }
 
     _watchedEntities() { return []; }
-    _signature(hass) { return sig(hass, this._watchedEntities()); }
+    _signature(hass) {
+      // Include the card-style select so every card re-renders when it flips.
+      const sid = cardStyleEntityId(hass);
+      const styleState = sid && hass.states[sid] ? hass.states[sid].state : 'native';
+      return sig(hass, this._watchedEntities()) + '|style:' + styleState;
+    }
+
+    // v1.14.0 — (re)inject the card-style CSS into this card's shadow root after
+    // each render. _render() replaces innerHTML (wiping any prior style), so this
+    // runs right after it. Native mode injects nothing.
+    _applyCardStyle() {
+      try {
+        const css = cardStyleCss(getCardStyle(this._hass));
+        let st = this._root.querySelector('#sai-style');
+        if (!css) { if (st) st.remove(); return; }
+        if (!st) {
+          st = document.createElement('style');
+          st.id = 'sai-style';
+          this._root.appendChild(st);
+        }
+        st.textContent = css;
+      } catch (e) { /* never let styling break a card */ }
+    }
+
     getCardSize() { return 3; }
   }
 
@@ -535,10 +600,18 @@
 
   // -------------------------------------------------------------- nav card
 
+  // v1.14.0 — the four key accents resolve to the control-room palette via the
+  // `--sai-accent-*` custom properties SolarAiBaseCard sets on :host in ROUNDED
+  // mode; the var() fallback is the original Material colour, so NATIVE mode is
+  // unchanged. Purple carries the schedule accent (SCHED_ACCENT below). No JS
+  // mode-threading needed — the cascade inside each card's shadow root does it.
   const NAMED_COLORS = {
-    red: '#e51c23', pink: '#e91e63', purple: '#9c27b0', 'deep-purple': '#673ab7',
-    blue: '#2196f3', 'light-blue': '#03a9f4', cyan: '#00bcd4', teal: '#009688',
-    green: 'var(--success-color)', amber: 'var(--warning-color)', orange: '#ff9800',
+    red: '#e51c23', pink: '#e91e63',
+    purple: 'var(--sai-accent-violet, #9c27b0)', 'deep-purple': '#673ab7',
+    blue: 'var(--sai-accent-blue, #2196f3)', 'light-blue': '#03a9f4',
+    cyan: '#00bcd4', teal: '#009688',
+    green: 'var(--sai-accent-green, var(--success-color))',
+    amber: 'var(--sai-accent-amber, var(--warning-color))', orange: '#ff9800',
     'blue-grey': '#607d8b', grey: 'var(--secondary-text-color)', brown: '#795548',
   };
 

@@ -42,6 +42,7 @@ CONF_CREATE_DASHBOARD = "create_dashboard"   # v0.51.0 — auto-create the bundl
 CONF_FOXESS_WORK_MODE_ENTITY = "foxess_work_mode_entity"
 CONF_FOXESS_FORCE_CHARGE_ENTITY = "foxess_force_charge_entity"
 CONF_FOXESS_FORCE_DISCHARGE_ENTITY = "foxess_force_discharge_entity"
+CONF_FOXESS_MAX_DISCHARGE_ENTITY = "foxess_max_discharge_entity"
 CONF_STROMLIGNING_ENTITY = "stromligning_entity"   # legacy key — migrated to CONF_SPOT_PRICE_ENTITY
 CONF_SPOT_PRICE_ENTITY = "spot_price_entity"        # generic spot-price source (any DKK/kWh sensor)
 
@@ -180,6 +181,17 @@ CONF_EV_CHARGER_BACKEND = "ev_charger_backend"
 EV_BACKEND_OCPP = "ocpp"
 EV_BACKEND_FOXESS_MODBUS = "foxess_modbus"
 DEFAULT_EV_CHARGER_BACKEND = EV_BACKEND_OCPP
+
+# v1.14.0 — dashboard card style selector (per HA instance). The bundled Lovelace
+# cards read this to switch their surface treatment: NATIVE = today's look;
+# ROUNDED = the rounded "control-room" look (radius/surfaces/accents). Colours
+# still come from the active HA theme in both. Default keeps existing installs
+# unchanged.
+CONF_CARD_STYLE = "card_style"
+CARD_STYLE_NATIVE = "native"
+CARD_STYLE_ROUNDED = "rounded"
+CARD_STYLE_OPTIONS = [CARD_STYLE_NATIVE, CARD_STYLE_ROUNDED]
+DEFAULT_CARD_STYLE = CARD_STYLE_NATIVE
 
 # FoxESS Modbus charger connection (only used when backend == foxess_modbus).
 CONF_FOXESS_CHARGER_HOST = "foxess_charger_host"
@@ -530,6 +542,9 @@ FOXESS_FORCE_DISCHARGE_ENTITY = "number.foxessmodbus_force_discharge_power"
 # self-use is never blocked.
 FOXESS_MIN_SOC_ON_GRID_ENTITY = "number.foxessmodbus_min_soc_on_grid"
 CONF_FOXESS_MIN_SOC_ENTITY = "foxess_min_soc_entity"
+# EV battery-lock mechanism (v0.27.2) — zeroed to stop the house battery
+# from feeding the EV while it draws from grid in FULL mode.
+FOXESS_MAX_DISCHARGE_ENTITY = "number.foxessmodbus_max_discharge_current"
 FOXESS_EXPORT_LIMIT_REGISTER = 46616
 # RO holding register: 0 = inverter not curtailing PV; 1 = MPPT actively
 # throttled (set whenever the inverter is clipping PV output for any

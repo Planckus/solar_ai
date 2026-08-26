@@ -157,6 +157,12 @@ def discover_force_discharge_power(hass: HomeAssistant) -> Optional[str]:
     return _by_uid_suffix(hass, "_force_discharge_power")
 
 
+def discover_max_discharge_current(hass: HomeAssistant) -> Optional[str]:
+    """Number entity controlling the max battery discharge current (A) — used
+    by the EV battery-lock mechanism to stop house-battery discharge."""
+    return _by_uid_suffix(hass, "_max_discharge_current")
+
+
 def discover_inverter_id(hass: HomeAssistant) -> Optional[str]:
     """Infer the inverter ID from a known unique_id pattern.
 
@@ -200,6 +206,7 @@ def discover_all(hass: HomeAssistant) -> dict[str, Optional[str]]:
         CONF_FOXESS_WORK_MODE_ENTITY,
         CONF_FOXESS_FORCE_CHARGE_ENTITY,
         CONF_FOXESS_FORCE_DISCHARGE_ENTITY,
+        CONF_FOXESS_MAX_DISCHARGE_ENTITY,
         CONF_FOXESS_INVERTER_ID,
     )
     return {
@@ -216,5 +223,6 @@ def discover_all(hass: HomeAssistant) -> dict[str, Optional[str]]:
         CONF_FOXESS_WORK_MODE_ENTITY: discover_work_mode_select(hass),
         CONF_FOXESS_FORCE_CHARGE_ENTITY: discover_force_charge_power(hass),
         CONF_FOXESS_FORCE_DISCHARGE_ENTITY: discover_force_discharge_power(hass),
+        CONF_FOXESS_MAX_DISCHARGE_ENTITY: discover_max_discharge_current(hass),
         CONF_FOXESS_INVERTER_ID: discover_inverter_id(hass),
     }

@@ -72,6 +72,8 @@ from .const import (
     FOXESS_FORCE_DISCHARGE_ENTITY,
     FOXESS_MIN_SOC_ON_GRID_ENTITY,
     CONF_FOXESS_MIN_SOC_ENTITY,
+    FOXESS_MAX_DISCHARGE_ENTITY,
+    CONF_FOXESS_MAX_DISCHARGE_ENTITY,
     FOXESS_LOAD_POWER,
     FOXESS_WORK_MODE_ENTITY,
     FOXESS_EXPORT_LIMIT_REGISTER,
@@ -6290,8 +6292,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     # raiding the house battery). Battery may still charge from solar.
     # ────────────────────────────────────────────────────────────────────
 
-    FOXESS_MAX_DISCHARGE_ENTITY = "number.foxessmodbus_max_discharge_current"
-
     async def _set_battery_lock(self, locked: bool) -> None:
         """Apply or release the house-battery discharge lock (v0.27.4 hardened).
 
@@ -6315,18 +6315,22 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if locked == self._ev_battery_locked:
             return
 
+        max_discharge_entity = self.config.get(
+            CONF_FOXESS_MAX_DISCHARGE_ENTITY, FOXESS_MAX_DISCHARGE_ENTITY,
+        )
+
         # ─── ENGAGE LOCK ──────────────────────────────────────────────
         if locked:
             mechanisms_ok = []
             mechanisms_failed = []
 
             # Mechanism 1: max_discharge_current → 0
-            entity_state = self.hass.states.get(self.FOXESS_MAX_DISCHARGE_ENTITY)
+            entity_state = self.hass.states.get(max_discharge_entity)
             if entity_state is None:
                 _LOGGER.error(
                     "Battery lock: entity %s not found — cannot apply "
                     "max_discharge_current mechanism. Verify FoxESS Modbus is loaded.",
-                    self.FOXESS_MAX_DISCHARGE_ENTITY,
+                    max_discharge_entity,
                 )
                 mechanisms_failed.append("max_discharge_current (entity missing)")
             else:
@@ -6336,7 +6340,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                         self._ev_battery_lock_prev_a = prev
                     await self.hass.services.async_call(
                         "number", "set_value",
-                        {"entity_id": self.FOXESS_MAX_DISCHARGE_ENTITY, "value": 0},
+                        {"entity_id": max_discharge_entity, "value": 0},
                         blocking=True,
                     )
                     mechanisms_ok.append(
@@ -6381,12 +6385,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             mechanisms_failed = []
 
             restore_a = self._ev_battery_lock_prev_a or 50.0
-            entity_state = self.hass.states.get(self.FOXESS_MAX_DISCHARGE_ENTITY)
+            entity_state = self.hass.states.get(max_discharge_entity)
             if entity_state is not None:
                 try:
                     await self.hass.services.async_call(
                         "number", "set_value",
-                        {"entity_id": self.FOXESS_MAX_DISCHARGE_ENTITY, "value": restore_a},
+                        {"entity_id": max_discharge_entity, "value": restore_a},
                         blocking=True,
                     )
                     mechanisms_ok.append(f"max_discharge_current → {restore_a:.1f} A")

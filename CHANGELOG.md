@@ -9,6 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.14.0] — 2026-08-27
+
+### Added — dashboard card style selector
+
+A new `select.solar_ai_card_style` (or `select.solar_ai_kortstil` on Danish installs) entity lets you choose between **Native Solar AI** (today's look, unchanged) and **Rounded theme** — a rounded control-room treatment (larger corner radius, a subtle card border, and four accent colors carried via CSS custom properties). Colors still come from the active Home Assistant theme in both styles; Rounded only changes surface shape and accent tone, not the underlying palette. Applies across the whole bundled card set from one setting. Defaults to Native, so existing installs render exactly as before until changed.
+
+### Fixed — the EV battery-lock entity was hardcoded, unlike every other FoxESS entity reference
+
+The house-battery discharge lock (used to stop the EV drawing from the battery while charging from grid in Full mode) wrote to `number.foxessmodbus_max_discharge_current` as a hardcoded constant — the one FoxESS entity reference in the whole integration that bypassed the config-driven entity-selection pattern every other entity uses. A user with a renamed or non-default entity would have had the lock silently fail with no error. Now configurable via `foxess_max_discharge_entity` (config flow + Options), auto-detected the same way the sibling Force Charge/Discharge entities are, with the old hardcoded value kept as the fallback default so existing installs are unaffected.
+
+---
+
 ## [1.13.11] — 2026-08-14
 
 ### Fixed — PV+Battery mode was capped at ~1.4 kW and never reached 3-phase
