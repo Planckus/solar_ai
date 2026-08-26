@@ -34,13 +34,15 @@
           "foxess_inverter_id": "Invertér-ID",
           "foxess_work_mode_entity": "Arbejdstilstand (select-enhed)",
           "foxess_force_charge_entity": "Tvungen opladningseffekt",
-          "foxess_force_discharge_entity": "Tvungen afladningseffekt"
+          "foxess_force_discharge_entity": "Tvungen afladningseffekt",
+          "foxess_max_discharge_entity": "Maks. afladningsstrøm"
         },
         "data_description": {
           "foxess_inverter_id": "FoxESS Modbus invertér-ID (hexstreng). Bruges til direkte registerskriv.",
           "foxess_work_mode_entity": "Select-enhed til at sætte invertérens arbejdstilstand (Self Use / Feed-in First / Force Charge)",
           "foxess_force_charge_entity": "Number-enhed til tvungen opladningseffekt (W)",
-          "foxess_force_discharge_entity": "Number-enhed til tvungen afladnings-/eksporteffekt (W)"
+          "foxess_force_discharge_entity": "Number-enhed til tvungen afladnings-/eksporteffekt (W)",
+          "foxess_max_discharge_entity": "Number-enhed til maks. batteriafladningsstrøm (A) — nulstilles for at låse husbatteriet mens EV'en trækker fra nettet"
         }
       },
       "battery_sensors": {
@@ -185,6 +187,7 @@
           "foxess_work_mode_entity": "Arbejdstilstand (select-enhed)",
           "foxess_force_charge_entity": "Tvungen opladningseffekt",
           "foxess_force_discharge_entity": "Tvungen afladningseffekt",
+          "foxess_max_discharge_entity": "Maks. afladningsstrøm",
           "battery_soc_entity": "Batteri-ladetilstand (%)",
           "cell_temp_entity": "Celletemperatur (laveste)",
           "battery_charge_entity": "Opladningseffekt (kW)",
@@ -350,6 +353,13 @@
         "state": {
           "ocpp": "OCPP (indlejret server)",
           "foxess_modbus": "FoxESS Modbus TCP (enfaset)"
+        }
+      },
+      "card_style": {
+        "name": "Kortstil",
+        "state": {
+          "native": "Native Solar AI",
+          "rounded": "Rounded theme"
         }
       },
       "ev_modbus_current_step": {
