@@ -31,6 +31,7 @@ from .const import (
     CONF_FORECAST_SOLAR_ENTITY,
     CONF_FOXESS_FORCE_CHARGE_ENTITY,
     CONF_FOXESS_FORCE_DISCHARGE_ENTITY,
+    CONF_FOXESS_MAX_DISCHARGE_ENTITY,
     CONF_FOXESS_INVERTER_ID,
     CONF_FOXESS_WORK_MODE_ENTITY,
     CONF_MIN_SPREAD_ARBITRAGE,
@@ -144,6 +145,7 @@ from .const import (
     FOXESS_CELL_TEMP_LOW,
     FOXESS_FORCE_CHARGE_ENTITY,
     FOXESS_FORCE_DISCHARGE_ENTITY,
+    FOXESS_MAX_DISCHARGE_ENTITY,
     FOXESS_WORK_MODE_ENTITY,
     STROMLIGNING_SPOTPRICE_EX_VAT,  # used as the default entity ID hint
 )
@@ -430,6 +432,7 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
         detected_work_mode      = discovery.discover_work_mode_select(self.hass)
         detected_force_charge   = discovery.discover_force_charge_power(self.hass)
         detected_force_discharge = discovery.discover_force_discharge_power(self.hass)
+        detected_max_discharge  = discovery.discover_max_discharge_current(self.hass)
 
         return self.async_show_form(
             step_id="foxess",
@@ -444,6 +447,9 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="number")),
                 vol.Required(CONF_FOXESS_FORCE_DISCHARGE_ENTITY,
                              default=detected_force_discharge or FOXESS_FORCE_DISCHARGE_ENTITY):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="number")),
+                vol.Required(CONF_FOXESS_MAX_DISCHARGE_ENTITY,
+                             default=detected_max_discharge or FOXESS_MAX_DISCHARGE_ENTITY):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="number")),
             }),
         )
@@ -1153,6 +1159,9 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="number")),
                 vol.Required(CONF_FOXESS_FORCE_DISCHARGE_ENTITY,
                              default=data.get(CONF_FOXESS_FORCE_DISCHARGE_ENTITY, FOXESS_FORCE_DISCHARGE_ENTITY)):
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="number")),
+                vol.Required(CONF_FOXESS_MAX_DISCHARGE_ENTITY,
+                             default=data.get(CONF_FOXESS_MAX_DISCHARGE_ENTITY, FOXESS_MAX_DISCHARGE_ENTITY)):
                     selector.EntitySelector(selector.EntitySelectorConfig(domain="number")),
                 vol.Required(CONF_BATTERY_SOC_ENTITY,
                              default=data.get(CONF_BATTERY_SOC_ENTITY, FOXESS_BATTERY_SOC)):
