@@ -48,7 +48,7 @@ Phase A shipped. New EV mode `Scheduled` + up to four `(HA schedule helper → E
 
 ---
 
-## 8. Stale "EVCC" reference in the mode-reason sensor on non-EVCC setups
+## ~~8. Stale "EVCC" reference in the mode-reason sensor on non-EVCC setups~~ (resolved 2026-08-27 in v1.14.1)
 
 Screenshot from a live FoxESS-only install (`select.solar_ai_live_data_source = foxess`, no EVCC involved) shows the reason line: **"EV actively charging (now/minpv) — holding battery for EVCC"**. Misleading — the battery-hold logic itself is correct (don't sell the battery while the EV controller is drawing from it), but the wording attributes it to EVCC even when EVCC isn't configured at all. This is Solar AI's own native EV controller (OCPP or FoxESS-Modbus backend) doing the holding.
 
@@ -62,7 +62,7 @@ Fix sketch (not yet designed/approved): reword the string to be source-agnostic 
 
 ---
 
-## 9. `evcc_battery_mode` sensor is created on every install, not just EVCC/Hybrid ones
+## ~~9. `evcc_battery_mode` sensor is created on every install, not just EVCC/Hybrid ones~~ (resolved 2026-08-27 in v1.14.1)
 
 `sensor.py:205-209` registers `sensor.solar_ai_evcc_batteritilstand` (translation key `evcc_battery_mode`) unconditionally in the sensor description list — no check against `live_data_source`. `value_fn=lambda d: d.get("evcc_battery_mode", "normal")` means on a FoxESS-only install (where the `evcc_battery_mode` key is never written into the coordinator's data dict) it permanently reads the hardcoded fallback `"normal"`. Dead entity: exists, shows a value, never means anything, for every FoxESS-only user.
 
@@ -70,7 +70,7 @@ Fix sketch (not yet approved): filter the sensor description out at `async_setup
 
 ---
 
-## 10. `force_grid_charge` service description is factually wrong — the real mechanism is FoxESS Work Mode, not EVCC
+## ~~10. `force_grid_charge` service description is factually wrong — the real mechanism is FoxESS Work Mode, not EVCC~~ (resolved 2026-08-27 in v1.14.1)
 
 `strings.json` / `translations/en.json` / `translations/da.json`: *"Immediately activate grid charging via EVCC."* / *"Aktiverer øjeblikkeligt netopladning via EVCC."*
 

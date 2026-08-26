@@ -25,7 +25,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_CURRENCY, DEFAULT_CURRENCY, DOMAIN, TEMP_BUCKETS
+from .const import (
+    CONF_CURRENCY, DEFAULT_CURRENCY, DOMAIN, TEMP_BUCKETS,
+    CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE, LIVE_SOURCE_FOXESS,
+)
 from .coordinator import BatteryArbitrageCoordinator
 
 
@@ -950,8 +953,17 @@ async def async_setup_entry(
     """Set up Battery Arbitrage sensors from config entry."""
     coordinator: BatteryArbitrageCoordinator = hass.data[DOMAIN][entry.entry_id]
 
+    # v1.14.1 — evcc_battery_mode has no meaning on a FoxESS-only install
+    # (nothing ever writes that key into the coordinator's data dict, so it
+    # would sit permanently on its hardcoded "normal" fallback). Skip it
+    # there rather than create a dead entity.
+    live_source = entry.data.get(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE)
+    sensor_descs = SENSORS
+    if live_source == LIVE_SOURCE_FOXESS:
+        sensor_descs = [d for d in SENSORS if d.key != "evcc_battery_mode"]
+
     entities: list[SensorEntity] = [
-        BatteryArbitrageSensor(coordinator, entry, desc) for desc in SENSORS
+        BatteryArbitrageSensor(coordinator, entry, desc) for desc in sensor_descs
     ]
 
     # One sensor per temperature bucket for the learned charge rates

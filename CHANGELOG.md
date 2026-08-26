@@ -9,6 +9,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.14.1] — 2026-08-27
+
+### Fixed — three stale/incorrect "EVCC" references in the GUI on non-EVCC installs
+
+Found during an audit of every user-facing EVCC mention (dashboard reasons, entities, service descriptions) — the setup wizard's own EVCC options and entity discovery were all correctly gated already; these three were not.
+
+- **Battery-hold reason string.** "EV actively charging (now/minpv) — holding battery for EVCC" fired whenever the EV controller was drawing from the battery, regardless of `live_data_source` — so it named EVCC even on FoxESS-only installs where EVCC was never configured. The hold logic itself was correct; only the wording was wrong. Reworded to be source-agnostic: "…holding battery for it."
+- **`evcc_battery_mode` sensor.** Was created unconditionally on every install. On a FoxESS-only install nothing ever writes that key into the coordinator's data, so the entity sat permanently on its hardcoded `"normal"` fallback — a dead entity that only ever meant anything on EVCC/Hybrid installs. Now skipped at setup when `live_data_source == "foxess"`.
+- **`force_grid_charge` service description.** Named EVCC as the actuator on every install (two independently-worded copies existed — `strings.json`/`translations/*.json` for the localized UI, and `services.yaml`, which is what Home Assistant's service registration and the `/api/services` API actually read; the first pass here only caught the former). The actual mechanism — traced through `_transition_to("grid_charging")` — is the FoxESS Work Mode select (Force Charge); EVCC only ever receives a courtesy notification, and only when `live_data_source` is EVCC or Hybrid. Both files reworded to name Force Charge instead.
+
+### Internal
+
+Full findings and fix sketches were tracked in INBOX.md items 8–10 before implementation.
+
+---
+
 ## [1.14.0] — 2026-08-27
 
 ### Added — dashboard card style selector

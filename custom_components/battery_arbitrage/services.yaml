@@ -8,8 +8,9 @@ force_export:
 force_grid_charge:
   name: Force grid charge
   description: >
-    Immediately tell EVCC to charge the battery from the grid at the current
-    learned rate. Useful for pre-charging before a known high-price window.
+    Immediately switch the inverter to Force Charge mode and charge the
+    battery from the grid at the current learned rate. Useful for
+    pre-charging before a known high-price window.
   fields: {}
 
 restore_normal:
