@@ -546,7 +546,7 @@
     },
     "force_grid_charge": {
       "name": "Tving netopladning",
-      "description": "Aktiverer øjeblikkeligt netopladning via EVCC."
+      "description": "Aktiverer øjeblikkeligt netopladning (Force Charge)."
     },
     "restore_normal": {
       "name": "Gendan normal drift",

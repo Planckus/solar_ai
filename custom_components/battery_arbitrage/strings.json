@@ -560,7 +560,7 @@
     },
     "force_grid_charge": {
       "name": "Force grid charge",
-      "description": "Immediately activate grid charging via EVCC."
+      "description": "Immediately activate grid charging (Force Charge)."
     },
     "restore_normal": {
       "name": "Restore normal",
