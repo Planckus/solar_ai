@@ -84,6 +84,7 @@ from .const import (
     SAVINGS_LOG_MAX_DAYS,
     MIN_GRID_CHARGE_KWH,
     MIN_PRICE_SLOTS_FOR_GRID_CHARGE,
+    MIN_PRICE_RANGE_FOR_GRID_CHARGE,
     MODE_DISABLED,
     MODE_EXPORTING,
     MODE_GRID_CHARGING,
@@ -105,6 +106,7 @@ from .const import (
     PLAN_REFRESH_SECONDS,
     DYNAMIC_FLOOR_MIN_SOC,
     DYNAMIC_FLOOR_MAX_SOC,
+    DEFAULT_PHYSICAL_FLOOR_SOC,
     DYNAMIC_FLOOR_REFILL_MAX_H,
     DYNAMIC_FLOOR_SOLAR_ONSET_FACTOR,
     DYNAMIC_FLOOR_RESERVE_FACTOR,
@@ -150,6 +152,13 @@ from .const import (
     CAPACITY_MIN_CHARGE_KW,
     CAPACITY_MIN_SAMPLES,
     CAPACITY_MAX_SAMPLES,
+    CAPACITY_DIS_MIN_SOC,
+    CAPACITY_DIS_MAX_SOC,
+    CAPACITY_DIS_MIN_DROP_SOC,
+    CAPACITY_DIS_MAX_CHARGE_KW,
+    CAPACITY_DIS_MIN_SAMPLES,
+    CAPACITY_DIS_MAX_SAMPLES,
+    CAPACITY_DIS_CLAMP_FRAC,
     CONF_SPOT_PRICE_ENTITY,
     CONF_STROMLIGNING_ENTITY,
     CONF_PRICE_AREA,
@@ -388,6 +397,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._last_plan_refresh: datetime | None = None
         # v0.47.0 — dynamic discharge floor: last computed value + bridge state.
         self._dynamic_floor_soc: float | None = None
+        self._cap_dis_last_applied: float | None = None
+        # Discharge-run capacity sampler; in-memory so a restart voids the run.
+        self._cap_dis_soc_start: float | None = None
+        self._cap_dis_kwh: float = 0.0
         # Currently open export/charge session (closed when mode exits)
         self._open_action: dict | None = None
         # Currently open solar-floor-blocked event (closed when price rises
@@ -1799,6 +1812,31 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         configured_capacity = self.config.get("battery_capacity", DEFAULT_BATTERY_CAPACITY)
         capacity_kwh = float(self._stored.get("battery_capacity", configured_capacity))
         learned_capacity = self.get_learned_capacity()  # diagnostic only
+        # v1.15.0 — the discharge-run learner DOES drive the model once warm.
+        # It measures real energy out against the SoC it cost, which is the
+        # quantity every other model actually depends on: an over-stated
+        # capacity makes each SoC point look bigger than it is, so the planner
+        # under-predicts how fast the battery falls and never sees a shortfall
+        # coming. Clamped to a band around the user's own figure so a bad run of
+        # samples can only nudge the value, never redefine the battery.
+        learned_discharge_capacity = self.get_learned_discharge_capacity()
+        if learned_discharge_capacity is not None and capacity_kwh > 0:
+            applied = max(
+                capacity_kwh * (1.0 - CAPACITY_DIS_CLAMP_FRAC),
+                min(capacity_kwh * (1.0 + CAPACITY_DIS_CLAMP_FRAC),
+                    learned_discharge_capacity),
+            )
+            if (self._cap_dis_last_applied is None
+                    or abs(applied - self._cap_dis_last_applied) > 0.1):
+                _LOGGER.info(
+                    "Capacity: using %.2f kWh learned from %d discharge run(s) "
+                    "(set value %.2f kWh)",
+                    applied,
+                    len(self._stored.get("capacity_discharge_samples", [])),
+                    capacity_kwh,
+                )
+                self._cap_dis_last_applied = applied
+            capacity_kwh = applied
 
         # Efficiency: use FoxESS lifetime totals if available
         auto_efficiency = self.get_auto_efficiency()
@@ -1817,6 +1855,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # it fires. (The BMS-based sampler, `_learn_capacity_from_bms`, was
             # removed entirely in v0.75.7 rather than left as dead code.)
             self._learn_capacity(battery_soc, battery_charge_kw)
+            # v1.15.0 — capacity from ordinary discharge runs. Needs no
+            # grid-charge to fire, so it keeps learning on installs (or in
+            # seasons) where Force Charge never runs.
+            self._learn_capacity_discharge(
+                battery_soc, battery_discharge_kw, battery_charge_kw, soc_reliable,
+            )
             # v0.61.x step 2 — passively learn the overnight house-load forecast
             # error (base_load_kw already excludes the EV). soc_reliable marks a
             # night dirty so a restart-time 0 read can't pollute the sample.
@@ -2019,6 +2063,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 current_soc=battery_soc,
                 capacity_kwh=capacity_kwh,
                 floor_soc=float(floor_soc),
+                physical_floor_soc=self._physical_floor_soc(),
                 max_soc=float(max_soc),
                 efficiency=efficiency,
                 charge_rate_kw=capped_charge_rate_kw if capped_charge_rate_kw > 0 else learned_charge_rate,
@@ -2064,9 +2109,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # the reactive fallback below would grid-charge at whatever — possibly
         # expensive — price is loaded. Require real data before any reactive
         # grid-charge; otherwise fall through to self-consumption.
+        #
+        # v1.15.0 — the range half used to compare against the user's `min_spread`
+        # ("Minimum arbitrage spread"). That is a sell-side profitability setting,
+        # not a description of feed health, and since `should_grid_charge` requires
+        # this flag, any value above the day's total price range disabled BUYING
+        # outright — silently, and no matter what the optimiser had planned. A DK1
+        # day rarely spans more than ~1.3 DKK/kWh, so a spread set for picky
+        # selling stopped every grid charge. The sanity test now uses its own small
+        # threshold; `min_spread` still governs the export decisions it was written
+        # for (`grid_arbitrage_worthwhile`, and `grid_spread_ok`/`solar_refill_ok`
+        # inside the optimiser).
         price_data_sufficient = (
             len(grid_vals) >= MIN_PRICE_SLOTS_FOR_GRID_CHARGE
-            and (price_max - price_min) >= min_spread
+            and (price_max - price_min) >= MIN_PRICE_RANGE_FOR_GRID_CHARGE
         )
         # v0.59.19 — price-data HEALTH (distinct from "sufficient", which also
         # requires a real spread). Degraded = a feed problem: too few price
@@ -2695,6 +2751,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             capacity_source="manual" if "battery_capacity" in self._stored else "configured",
             efficiency_source="auto" if auto_efficiency is not None else "configured",
             capacity_sample_count=len(self._stored.get("capacity_samples", [])),
+            learned_discharge_capacity=learned_discharge_capacity,
+            capacity_discharge_sample_count=len(
+                self._stored.get("capacity_discharge_samples", [])),
+            capacity_in_use=round(capacity_kwh, 2),
             price_chart_slots=price_chart_slots,
             buy_price_forecast=buy_price_forecast,
             solar_chart_slots=solar_chart_slots,
@@ -3729,6 +3789,80 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         """Return median of capacity samples, or None if not enough data yet."""
         samples: list[float] = self._stored.get("capacity_samples", [])
         if len(samples) < CAPACITY_MIN_SAMPLES:
+            return None
+        return round(statistics.median(samples), 2)
+
+    def _learn_capacity_discharge(
+        self,
+        battery_soc: float,
+        battery_discharge_kw: float,
+        battery_charge_kw: float,
+        soc_reliable: bool,
+    ) -> None:
+        """Sample usable capacity from a clean discharge run.
+
+            capacity = energy_out / (SoC drop / 100)
+
+        Only the battery's own energy balance matters, so where the energy goes
+        is irrelevant — an ordinary house night and a Force-Discharge export are
+        equally valid runs. The one thing that invalidates a run is energy going
+        back IN, which is why any charge power at all ends it.
+
+        A run is closed and re-opened each time it has fallen far enough to
+        yield a sample, so a long night produces several rather than one.
+
+        Run state is deliberately held in memory rather than storage: a restart
+        mid-run means missed ticks, so the accumulated energy would no longer
+        explain the SoC drop and the run would bank an under-estimate. Keeping
+        it in memory discards such a run automatically.
+        """
+        def _reset(start: float | None) -> None:
+            self._cap_dis_soc_start = None if start is None else float(start)
+            self._cap_dis_kwh = 0.0
+
+        # A restart-time SoC read, or anything charging, voids the run outright.
+        if not soc_reliable or battery_charge_kw > CAPACITY_DIS_MAX_CHARGE_KW:
+            _reset(None)
+            return
+        # Outside the usable band the BMS's SoC/energy relationship is not linear.
+        if not (CAPACITY_DIS_MIN_SOC <= battery_soc <= CAPACITY_DIS_MAX_SOC):
+            _reset(None)
+            return
+
+        start = self._cap_dis_soc_start
+        if start is None:
+            _reset(battery_soc)
+            return
+        if battery_soc > float(start):
+            # SoC climbed above where the run began — something put energy in
+            # that the charge-power gate missed. The accumulated kWh no longer
+            # explains the delta, so start over rather than bank a bad sample.
+            _reset(battery_soc)
+            return
+
+        interval_h = LEARNING_TICK_INTERVAL_SECONDS / 3600
+        self._cap_dis_kwh = round(
+            self._cap_dis_kwh + max(0.0, battery_discharge_kw) * interval_h, 4)
+
+        drop = float(start) - battery_soc
+        if drop < CAPACITY_DIS_MIN_DROP_SOC:
+            return
+
+        kwh = self._cap_dis_kwh
+        sample = round(kwh / (drop / 100.0), 2)
+        # Same plausible-battery-size guard as the Force-Charge sampler.
+        if 3.0 <= sample <= 30.0:
+            samples: list[float] = self._stored.setdefault(
+                "capacity_discharge_samples", [])
+            samples.append(sample)
+            if len(samples) > CAPACITY_DIS_MAX_SAMPLES:
+                del samples[: len(samples) - CAPACITY_DIS_MAX_SAMPLES]
+        _reset(battery_soc)
+
+    def get_learned_discharge_capacity(self) -> float | None:
+        """Median of the discharge-run capacity samples, or None until warm."""
+        samples: list[float] = self._stored.get("capacity_discharge_samples", [])
+        if len(samples) < CAPACITY_DIS_MIN_SAMPLES:
             return None
         return round(statistics.median(samples), 2)
 
@@ -5945,6 +6079,33 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if not forced:
             return 0.0
         return live_kw if live_kw > 0.0 else max(0.0, float(max_kw))
+
+    def _physical_floor_soc(self) -> float:
+        """v1.15.0 — the SoC the battery actually stops discharging at.
+
+        Distinct from the export floor: that one is a policy reserve ("don't
+        SELL below this"), while this is a hardware limit ("the battery cannot
+        deliver below this"). The optimiser needs both — the export floor to
+        gate selling, this one to bound the SoC state space — because the band
+        between them is real energy the house still draws overnight.
+
+        Reads the inverter's own on-grid Min-SoC, but prefers the value stashed
+        by `_apply_export_floor_min_soc`: during a Force Discharge that register
+        is temporarily RAISED to the export floor, so a naive live read mid-sell
+        would report the export floor as the hardware limit and reintroduce
+        exactly the conflation this exists to avoid.
+        """
+        prev = self._stored.get("export_min_soc_prev")
+        if prev is not None:
+            try:
+                return max(0.0, min(100.0, float(prev)))
+            except (TypeError, ValueError):
+                pass
+        entity = self.config.get(CONF_FOXESS_MIN_SOC_ENTITY, FOXESS_MIN_SOC_ON_GRID_ENTITY)
+        hw_floor = self._get_float_state(entity)
+        if hw_floor is None:
+            return float(DEFAULT_PHYSICAL_FLOOR_SOC)
+        return max(0.0, min(100.0, float(hw_floor)))
 
     def _ev_pv_battery_floor_soc(self, arbitrage_floor_soc: float) -> float:
         """v1.13.10 — the SoC limit PV+Battery mode may draw the house battery to.
@@ -8282,6 +8443,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         current_soc: float,
         capacity_kwh: float,
         floor_soc: float,
+        physical_floor_soc: float,
         max_soc: float,
         efficiency: float,
         charge_rate_kw: float,
@@ -8325,7 +8487,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         try:
             return self._dp_solve(
                 now, grid_slot_data, solar_slot_data, solar_accuracy_factor, current_soc,
-                capacity_kwh, floor_soc, max_soc, efficiency,
+                capacity_kwh, floor_soc, physical_floor_soc, max_soc, efficiency,
                 charge_rate_kw, house_load_profile, ev_charge_hourly, ev_max_kw,
                 vat_factor, tariff_sched, elafgift, spot_markup,
                 export_fee, feed_in_tariff, min_export_price, min_spread, max_export_kw,
@@ -8345,6 +8507,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         current_soc: float,
         capacity_kwh: float,
         floor_soc: float,
+        physical_floor_soc: float,
         max_soc: float,
         efficiency: float,
         charge_rate_kw: float,
@@ -8438,6 +8601,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         while len(house_load_weekend) < 24:
             house_load_weekend.append(0.5)
 
+        # Efficiency split: assume symmetric charge/discharge. Defined here
+        # because the per-slot idle dynamics below need it too.
+        charge_eff = efficiency ** 0.5
+        discharge_eff = efficiency ** 0.5
+
         slot_data: list[dict] = []
         for slot_start, dur_h, h, m, spot in grid_slot_data:
             # v0.29.0: buy price routes through _compute_buy_price so the DP
@@ -8481,7 +8649,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             solar_to_ev = min(solar_remaining, ev_kw)
             solar_to_battery = max(0.0, solar_remaining - solar_to_ev)
             # SoC drift over the slot duration (% of capacity)
-            idle_delta_pct = (solar_to_battery - house_from_battery) * dur_h / capacity_kwh * 100.0
+            # v1.15.0 — neither leg is lossless, and the idle drift used to treat
+            # both as if they were. Storing surplus solar banks only charge_eff of
+            # it; covering the house deficit costs the battery MORE than the house
+            # receives (divide by discharge_eff). The CHARGE and EXPORT branches
+            # already price both losses, so the idle path was the one place the
+            # model got energy for free — drift ran optimistic in both directions,
+            # understating overnight drain and overstating the solar refill.
+            idle_delta_pct = (
+                solar_to_battery * charge_eff - house_from_battery / discharge_eff
+            ) * dur_h / capacity_kwh * 100.0
 
             slot_data.append({
                 "slot_start": slot_start,
@@ -8556,10 +8733,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Effective export rate: use user cap if set, else same as charge rate
         export_rate_kw = max_export_kw if max_export_kw > 0 else charge_rate_kw
 
-        # Efficiency split: assume symmetric charge/discharge
-        charge_eff = efficiency ** 0.5
-        discharge_eff = efficiency ** 0.5
-
         # Battery degradation cost per kWh cycled (read once from storage)
         degradation_cost = float(self._stored.get(
             "battery_degradation_cost", DEFAULT_BATTERY_DEGRADATION_COST,
@@ -8567,8 +8740,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         SOC_STATES = 101  # SoC 0–100 %
 
-        # Floor/max as integers
+        # Floor/max as integers.
+        # v1.15.0 — two DISTINCT floors. `soc_floor` is the EXPORT reserve: it
+        # gates selling only. `phys_floor` is where the battery actually stops
+        # delivering, so it bounds the SoC state space and the value of retained
+        # charge. Passing the export floor for both (the pre-v1.15.0 behaviour)
+        # made the model unable to represent the battery below the reserve: any
+        # projection that dipped under it was clamped back up and the shortfall
+        # booked as a grid import at that slot's price, so the planner never saw
+        # the overnight drain coming and CHARGE was strictly dominated by IDLE
+        # (both land on the same clamped state, leaving only the charge's own
+        # efficiency + degradation cost). Never above the export floor.
         soc_floor = int(max(0, round(floor_soc)))
+        phys_floor = int(max(0, min(round(physical_floor_soc), soc_floor)))
         soc_max = int(min(100, round(max_soc)))
 
         # ── Backward induction ────────────────────────────────────────────
@@ -8576,7 +8760,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # V_terminal[s] = (usable kWh at SoC s) × discharge_eff × expected_terminal_value
         V: list[float] = []
         for s in range(SOC_STATES):
-            remaining_kwh = max(0.0, (s - soc_floor) / 100.0 * capacity_kwh)
+            remaining_kwh = max(0.0, (s - phys_floor) / 100.0 * capacity_kwh)
             V.append(remaining_kwh * discharge_eff * expected_terminal_value)
 
         policy: list[list[str]] = [["I"] * SOC_STATES for _ in range(N)]
@@ -8663,11 +8847,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 #   above max    → solar surplus exported to grid at sell_h
                 #   in range     → SoC drifts within bounds; no extra grid flow
                 unclamped = s + idle_delta
-                if unclamped < soc_floor:
-                    deficit_pct = soc_floor - unclamped
+                if unclamped < phys_floor:
+                    deficit_pct = phys_floor - unclamped
                     deficit_kwh = deficit_pct / 100.0 * capacity_kwh
                     grid_import_cost = deficit_kwh * buy_h
-                    s_idle = soc_floor
+                    s_idle = phys_floor
                     val_idle = V[s_idle] - grid_import_cost
                 elif unclamped > soc_max:
                     overflow_pct = unclamped - soc_max
@@ -8694,11 +8878,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 if s < soc_max and effective_charge_rate_kw >= GRID_MIN_CHARGE_KW:
                     unclamped_ch = s + charge_delta_slot + idle_delta
                     val_ch = -charge_kwh_slot * (buy_h + degradation_cost)
-                    if unclamped_ch < soc_floor:
-                        deficit_pct = soc_floor - unclamped_ch
+                    if unclamped_ch < phys_floor:
+                        deficit_pct = phys_floor - unclamped_ch
                         deficit_kwh = deficit_pct / 100.0 * capacity_kwh
                         val_ch -= deficit_kwh * buy_h
-                        s_ch = soc_floor
+                        s_ch = phys_floor
                     elif unclamped_ch > soc_max:
                         overflow_pct = unclamped_ch - soc_max
                         overflow_kwh = overflow_pct / 100.0 * capacity_kwh
@@ -8721,11 +8905,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     actual_exp_kwh = actual_exp_pct / 100.0 * capacity_kwh
                     val_ex = actual_exp_kwh * (discharge_eff * sell_h - degradation_cost)
                     unclamped_ex = s - actual_exp_pct + idle_delta
-                    if unclamped_ex < soc_floor:
-                        deficit_pct = soc_floor - unclamped_ex
+                    if unclamped_ex < phys_floor:
+                        deficit_pct = phys_floor - unclamped_ex
                         deficit_kwh = deficit_pct / 100.0 * capacity_kwh
                         val_ex -= deficit_kwh * buy_h
-                        s_ex = soc_floor
+                        s_ex = phys_floor
                     elif unclamped_ex > soc_max:
                         overflow_pct = unclamped_ex - soc_max
                         overflow_kwh = overflow_pct / 100.0 * capacity_kwh
@@ -8769,14 +8953,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             export_delta_slot = export_rate_kw * dur_h / capacity_kwh * 100.0
             idle_delta = sd["idle_delta_pct"]
 
+            # The SoC path is physics, so it clamps at phys_floor; only the
+            # exportable AMOUNT is measured against the export reserve.
             if act_code == "C":
-                soc_s = int(max(float(soc_floor), min(float(soc_max), soc_s + charge_delta_slot + idle_delta)) + 0.5)
+                soc_s = int(max(float(phys_floor), min(float(soc_max), soc_s + charge_delta_slot + idle_delta)) + 0.5)
             elif act_code == "E":
                 avail_pct = soc_s - soc_floor
                 actual_exp_pct = min(export_delta_slot, float(avail_pct))
-                soc_s = int(max(float(soc_floor), min(float(soc_max), soc_s - actual_exp_pct + idle_delta)) + 0.5)
+                soc_s = int(max(float(phys_floor), min(float(soc_max), soc_s - actual_exp_pct + idle_delta)) + 0.5)
             else:
-                soc_s = int(max(float(soc_floor), min(float(soc_max), soc_s + idle_delta)) + 0.5)
+                soc_s = int(max(float(phys_floor), min(float(soc_max), soc_s + idle_delta)) + 0.5)
             soc_s = max(0, min(100, soc_s))
 
         n_charge = sum(1 for s in plan if s["action"] == "CHARGE")
