@@ -250,6 +250,15 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.15.0 — grid charging works again, and the optimiser stops confusing the export reserve with the battery's real floor
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Battery capacity is learned again — from ordinary discharge runs.** Capacity is the most load-bearing number in the model: overstate it and every SoC point looks bigger than it is, so the planner under-predicts how fast the battery falls and never sees a shortfall coming. The previous auto-learner read a BMS register that lagged reality and was retired; the remaining one only samples during a grid charge, so on an install that rarely runs one it never learns anything. The new learner measures energy out against the SoC it cost over a clean discharge run — nothing charging the battery, SoC falling, away from the BMS's non-linear ends — which an ordinary night supplies two or three times over. It takes the median of a rolling window and may only move capacity within ±50 % of the value you set, so it can refine your figure but never redefine your battery. Replayed against two weeks of recorded data it warmed up in three days and settled 21 % below the configured value, matching an independent measurement of the same period.
+- **The Minimum arbitrage spread setting silently disabled grid charging.** The guard that protects against a broken price feed compared the whole day's price range against that setting — but the setting is a sell-side profitability preference, not a description of feed health. A Danish price day rarely spans more than about 1.3 DKK/kWh, so a spread set above the day's range could never be satisfied, and since the grid-charge decision depends on that guard, buying was switched off entirely: silently, every day, regardless of what the plan said or how cheap the window was. Raising the bar for selling stopped all buying. The feed-health test now uses its own small threshold; the setting still governs the export decisions it was written for, so selling behaviour is unchanged.
+- **The optimiser's idle drift treated the battery as lossless.** When the battery was neither charging nor exporting, the model converted surplus solar into stored charge, and the house deficit into battery drain, at face value — with no round-trip loss on either leg, although the charge and export actions both priced theirs. Projections therefore ran optimistic in both directions: less overnight drain and more solar refill than the battery can actually deliver. Idle drift now uses the same efficiency split as the other actions.
+- **The planner could not represent the battery below the export reserve.** The Minimum SoC (export) setting — raised further by the dynamic reserve, commonly to 55–70 % — was passed to the optimiser as if it were the point the battery stops discharging. It is not: it governs selling only, and the house keeps drawing down to the inverter's own on-grid Min-SoC. Any projection that dipped under the reserve was clamped back up to it and the shortfall booked as a grid import, so the plan predicted the battery sitting flat at the reserve overnight while it was really heading for its hardware floor. Two consequences: the predicted-SoC scorecard showed a large standing error against reality, and grid-charging was arithmetically unable to win — with both IDLE and CHARGE landing on the same clamped state, charging only ever added its own efficiency loss and degradation cost, so the optimiser idled through cheap overnight windows and met the morning peak on an empty battery. The optimiser now takes both floors: the export floor still gates selling and the exportable amount, while the physical floor bounds the state space and the value of retained charge. Energy between the two is counted as the usable house energy it is.
+
 ### v0.76.0–v1.13.11 — EV solar-following overhaul, curtailment harvest, and connection UI
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
@@ -657,7 +666,7 @@ Every setting below is editable from the dashboard (**Indstillinger / Settings**
 |---|---|---|---|
 | **Minimum SoC (export)**<br>_Minimum SoC (eksport)_ | 10–100 % | 50 % | The static export floor — the battery is never *exported* below this SoC, reserving the rest for the house. With *Dynamic discharge floor* on this is a hard minimum the dynamic reserve can only raise, never go below. |
 | **Maximum SoC (grid charge)**<br>_Maksimum SoC (netopladning)_ | 10–100 % | 100 % | Ceiling that grid-charging will fill the battery to. |
-| **Battery capacity**<br>_Batterikapacitet (kWh)_ | 3–30 kWh | from setup | Usable capacity used for all the energy maths (reserve sizing, exportable energy, cycle planning). The value here is authoritative — it overrides the auto-detected estimate. |
+| **Battery capacity**<br>_Batterikapacitet (kWh)_ | 3–30 kWh | from setup | Usable capacity used for all the energy maths (reserve sizing, exportable energy, cycle planning). Your value is the anchor: once the discharge-run learner has measured the real capacity it refines this, but only within ±50 % of what you set. |
 | **Reserve safety factor**<br>_Reserve-sikkerhedsfaktor_ | 1.0–2.0× | 1.3× | Multiplier on the predicted overnight need that the *Dynamic discharge floor* reserves. Lower = sell more into peaks; higher = hold more for the night. Used until the adaptive learner has ≈7 clean nights of data, after which the measured value takes over. |
 | **Blocked sell hours**<br>_Blokerede salgstimer_ | hours of day | none | Hours in which the battery is never sold — set with the clickable hour grid on the Settings page (or as a comma list, e.g. `20,21`). Solar export and house self-consumption are unaffected; only the battery *sell* is held. |
 | **Export power cap**<br>_Eksporteffekt-grænse (0 = ingen)_ | 0–10 kW | 0 (no cap) | Limits how fast the battery discharges to the grid. 0 = use the full available rate. |
@@ -850,7 +859,10 @@ On spot price refresh (typically once per hour):
    - Inputs: per-slot buy/sell prices, learned house load profile (24 slots),
              per-slot solar forecast (with per-hour + short-term correction),
              EV hourly probability × learned max rate, charge/discharge
-             efficiency, floor SoC, max SoC
+             efficiency, export floor SoC, physical floor SoC, max SoC
+   - Two distinct floors: the export floor gates selling; the physical floor
+     (the inverter's own on-grid Min-SoC) bounds the SoC state space, since
+     the house keeps drawing the band between them
    - EXPORT allowed only when:
        sell_price > min_export_price floor
        AND sell_price − cheapest_recharge / efficiency ≥ min_spread
@@ -969,7 +981,7 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full reference.
 | `sensor.*_tid_til_fuld_opladning` | Hours to reach max SoC at current rate |
 | `sensor.*_batteritemperatur_laveste_celle` | Lowest cell temperature |
 | `sensor.*_laert_opladningshastighed_*` | Learned charge rate per temperature bucket (kW) |
-| `sensor.*_laert_batterikapacitet` | Learned usable capacity (kWh). Active after ~20 samples. |
+| `sensor.*_laert_batterikapacitet` | Learned usable capacity (kWh), measured from discharge runs — active after 5 runs, typically 2–3 days. Attributes show the value actually in use, both learners' estimates and their sample counts. |
 | `sensor.*_auto_detekteret_effektivitet` | Measured round-trip efficiency from FoxESS lifetime totals (%) |
 | `sensor.*_kapacitets_laeringseksempler` | Number of capacity learning samples collected |
 
@@ -1018,7 +1030,7 @@ All settings are in *Settings → Devices & Services → Solar AI → Configure*
 
 | Parameter | Default | Live | Description |
 |---|---|---|---|
-| Battery capacity | 11.52 kWh | No (config flow) | Fallback. Replaced by learned value after ~20 Force Charge samples. |
+| Battery capacity | 11.52 kWh | No (config flow) | Anchor value. Refined by the discharge-run learner after 5 runs, clamped to ±50 % of what you set. |
 | Round-trip efficiency | 92% | No (config flow) | Fallback. Replaced by FoxESS lifetime totals after 100+ kWh cycled. |
 | Forecast horizon | 24 h | No (config flow) | Hours of price data to analyse |
 | Min SoC during export | 50% | Yes | Battery will not export below this SoC |
