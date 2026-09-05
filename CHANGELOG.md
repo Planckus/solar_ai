@@ -9,6 +9,60 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.15.0] — 2026-09-05
+
+### Added — battery capacity learned from discharge runs
+
+Capacity is the most load-bearing number in the model. Every SoC-to-energy conversion goes through it, so an overstated value makes each percent look bigger than it is: the planner under-predicts how fast the battery falls, never projects a shortfall, and so never pre-buys against one.
+
+Both existing samplers left a gap. The BMS-register learner was retired in v0.64.1 for drifting high (it reached 25.7 kWh against a real 12.1). The Force-Charge learner that replaced it is reliable but only fires *during a grid charge* — so on an install that seldom runs one, it never accumulates samples and capacity stays at whatever was typed during setup, uncorrected.
+
+The new sampler measures the same quantity from ordinary discharge:
+
+```
+capacity = energy_out / (SoC drop / 100)
+```
+
+accumulated over a *run* rather than a tick — SoC is reported in whole percent, so a single tick moves it 0 or 1 point and the per-tick quotient is noise. A run is valid while nothing is charging the battery, SoC is falling, and SoC is inside 20–95 % (outside that the BMS's SoC/energy relationship is not linear). Where the energy goes is irrelevant, so a house night and a Force-Discharge export are both usable; only energy going back *in* voids a run. Each time a run has fallen 15 points it yields a sample and reopens, so a single night contributes two or three.
+
+Safeguards, given the history of this particular learner: the median of a rolling 30-run window (not an EMA — the retired one ratcheted and was poisoned by a single bad read), a plausible-size guard, a minimum of 5 runs before the value is used at all, run state held in memory so a restart mid-run discards it rather than banking an under-count, and a hard clamp to ±50 % of the capacity you set. It can refine your figure; it cannot redefine your battery.
+
+Replayed against two weeks of recorded history it warmed up in three days, produced 23 samples, and settled on a value 21 % below the configured one — matching an independent measurement of the same period to within 0.3 kWh. The `learned_capacity` sensor now reports it, with the value actually in use, both learners' estimates and their sample counts as attributes.
+
+### Fixed — the "Minimum arbitrage spread" setting silently disabled grid charging
+
+`should_grid_charge` requires a `price_data_sufficient` flag, a v0.59.15 sanity guard meant to catch a broken price feed — the case where a failed fetch leaves a handful of slots all reporting the same value, making the "is now a cheap hour?" percentile test meaningless. It tested two things: enough price slots, and a price range of at least `min_spread`.
+
+That second half was the wrong comparison. `min_spread` is the user's **Minimum arbitrage spread** — a sell-side profitability preference — while the guard is asking whether the price data is intact. The two are unrelated, and the guard compares it against the **entire day's price range**. A DK1 day rarely spans more than about 1.3 DKK/kWh, so any spread set above that could never be satisfied and the flag was permanently false. Because `should_grid_charge` depends on it, **grid charging was switched off outright** — silently, on every day, regardless of what the optimiser had planned or how cheap the window was. Raising the bar for selling stopped all buying.
+
+The sanity test now uses its own small threshold (`MIN_PRICE_RANGE_FOR_GRID_CHARGE`, 0.05 DKK/kWh), which is all it needs to tell real varying prices from a degenerate feed. `min_spread` continues to govern the export decisions it was written for — `grid_arbitrage_worthwhile`, and `grid_spread_ok` / `solar_refill_ok` inside the optimiser — so selling behaviour is unchanged.
+
+Verified against real recorded price data: the guard admits a normal day (range 0.65–0.88 DKK/kWh) while still rejecting a flat feed (range 0.00) and a truncated one (2 slots).
+
+### Fixed — the optimiser's idle drift treated the battery as lossless
+
+Inside `_dp_solve`, the per-slot SoC drift for an idling battery was computed as `(solar_to_battery - house_from_battery)`, converting both straight to SoC with no efficiency term. Storing surplus solar banks only `charge_eff` of it, and covering the house deficit costs the battery more than the house receives (`/ discharge_eff`). The CHARGE and EXPORT branches already price both losses; the idle path was the one place the model got energy for free, so every projection drifted optimistic in both directions — understating overnight drain and overstating the solar refill. Idle drift now applies the same efficiency split as the other two actions.
+
+Consequences are small per slot but accumulate across a 48-hour horizon: projected SoC is slightly lower throughout, and a marginal export that only cleared the spread by ignoring its own round-trip loss no longer does.
+
+### Fixed — the DP optimiser treated the export reserve as the battery's physical floor
+
+`_dp_solve` received a single `floor_soc` and used it for two unrelated jobs: gating export (correct) and bounding the battery's SoC state space (wrong). That value is the user's **Minimum SoC (export)** setting, raised further by the dynamic overnight reserve — commonly 55–70 %. The battery does not stop discharging there; it stops at the inverter's on-grid Min-SoC, and the house draws the whole band in between.
+
+The effect was in the IDLE transition: any projected SoC that fell below the reserve was clamped back **up** to it, with the shortfall charged as a grid import at that slot's price. The model therefore could not represent the battery below the reserve at all.
+
+- **The plan predicted a battery that does not exist.** Projected SoC sat pinned at the reserve overnight while the real battery ran down to its hardware floor, leaving a large standing error in the prediction scorecard that read as model noise rather than a modelling fault.
+- **Grid-charging was arithmetically unable to win.** With IDLE and CHARGE both terminating on the same clamped state, the value difference reduced to the charge's own efficiency loss plus degradation — negative at every possible price. The optimiser idled through cheap overnight windows and met the morning peak on an empty battery, because in its model there was no shortfall to pre-empt.
+- **Retained charge in the reserve band was valued at zero.** Terminal value measured energy above the export floor, so the kWh between the two floors — real energy the house runs on — counted for nothing at the planning horizon.
+
+`_dp_solve` and `_run_optimizer` now take `physical_floor_soc` alongside `floor_soc`. The export floor keeps gating the export decision and the exportable amount; the physical floor bounds the state space, the IDLE/CHARGE/EXPORT SoC transitions, the forward-pass SoC path, and terminal value. It is read from the inverter's on-grid Min-SoC and can never exceed the export floor.
+
+One subtlety is handled explicitly: while Force-Discharging, `_apply_export_floor_min_soc` temporarily raises that same register to the export floor as a hardware backstop. Reading it naively mid-sell would report the export floor as the hardware limit and reintroduce the conflation, so the pre-export value saved by that backstop is preferred whenever it is set. Installations without a readable on-grid Min-SoC fall back to `DEFAULT_PHYSICAL_FLOOR_SOC`.
+
+No user-facing setting changes, and the export reserve behaves exactly as before — this only stops the planner mistaking it for physics.
+
+---
+
 ## [1.14.1] — 2026-08-27
 
 ### Fixed — three stale/incorrect "EVCC" references in the GUI on non-EVCC installs

@@ -658,6 +658,12 @@ PLAN_REFRESH_SECONDS = 900            # 15 min
 # self-corrects from whether the reserve actually lasted the night.
 DYNAMIC_FLOOR_MIN_SOC = 20            # never reserve below this (battery health)
 DYNAMIC_FLOOR_MAX_SOC = 85            # never reserve above this (leave room to arbitrage)
+# v1.15.0 — the PHYSICAL floor is a different quantity from the export floor
+# above: it is the SoC the inverter actually stops discharging at, so it bounds
+# the battery's real state space. Used when the inverter's own on-grid Min-SoC
+# cannot be read (non-Modbus install). The export floor may sit far above this;
+# the band between them is real energy the house can still draw.
+DEFAULT_PHYSICAL_FLOOR_SOC = 10
 DYNAMIC_FLOOR_REFILL_MAX_H = 18.0     # cap the bridge horizon used for the reserve
 # v0.52.0 — solar must EXCEED house load by this factor to count as a "refill"
 # (covering the house), so the slow dawn ramp where solar ≈ house is still
@@ -776,6 +782,16 @@ SOLAR_SURPLUS_HOLD_KW = 0.5
 # slots AND a real cheap-vs-expensive range before any reactive grid-charge;
 # otherwise run self-consumption only.
 MIN_PRICE_SLOTS_FOR_GRID_CHARGE = 8
+# v1.15.0 — the range half of that sanity test gets its own small threshold.
+# It used to reuse the user's "Minimum arbitrage spread", which is a SELL-side
+# profitability preference, not a statement about whether the price feed is
+# intact. The two are unrelated, and coupling them meant raising the sell bar
+# silently switched grid-charging off entirely: the guard compares the whole
+# day's price RANGE against it, and a spread set above the day's range can
+# never be met, so `should_grid_charge` was False regardless of the plan.
+# This threshold only has to separate real varying prices from a degenerate
+# feed reporting one value across every slot.
+MIN_PRICE_RANGE_FOR_GRID_CHARGE = 0.05   # DKK/kWh
 
 # Grid overcurrent protection
 GRID_MAX_KW = 17.0                  # Default circuit breaker limit (kW) — user-adjustable via number entity
@@ -988,6 +1004,27 @@ CAPACITY_MIN_DELTA_SOC = 0.3        # % — minimum SoC rise per tick to count a
 CAPACITY_MIN_CHARGE_KW = 0.5        # kW — minimum charge power to count as a valid sample
 CAPACITY_MIN_SAMPLES = 20           # Need this many samples before trusting the learned value
 CAPACITY_MAX_SAMPLES = 300          # Rolling window size
+
+# v1.15.0 — discharge-run capacity learner. Capacity is measured as
+#     energy_out / (SoC drop / 100)
+# accumulated over a clean discharge RUN: nothing charging the battery, SoC
+# falling, and away from the BMS's non-linear ends. Per-tick sampling cannot
+# work here — SoC is reported in whole percent, so one tick moves it 0 or 1
+# point and the quotient is noise; a run accumulates real metered energy until
+# the drop is large enough for that quantisation to stop mattering. Unlike the
+# retired BMS sampler this reads measured energy rather than a lagging
+# kWh-remaining register, and unlike the Force-Charge sampler it needs no
+# grid-charge to fire: an ordinary night yields one or more samples.
+CAPACITY_DIS_MIN_SOC = 20           # % — ignore a run below this (BMS edge effects near empty)
+CAPACITY_DIS_MAX_SOC = 95           # % — and above this (charge taper near full)
+CAPACITY_DIS_MIN_DROP_SOC = 15      # % — SoC drop a run needs before it yields a sample
+CAPACITY_DIS_MAX_CHARGE_KW = 0.05   # kW — any charge above this voids the run
+CAPACITY_DIS_MIN_SAMPLES = 5        # runs needed before the learned value is trusted
+CAPACITY_DIS_MAX_SAMPLES = 30       # rolling window of runs
+# The learned value may not stray further than this fraction from the value the
+# user set. A median over runs plus this clamp is what keeps this learner from
+# running away the way the BMS one did (it reached 25.7 kWh against a real 12.1).
+CAPACITY_DIS_CLAMP_FRAC = 0.5
 EFFICIENCY_MIN_TOTAL_KWH = 100      # kWh — minimum lifetime charge before trusting auto-efficiency
 
 # ── Disk-space alarm (v0.49.0) ────────────────────────────────────────────────

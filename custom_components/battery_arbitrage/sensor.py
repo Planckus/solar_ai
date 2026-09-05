@@ -347,7 +347,23 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:battery-heart-variant",
-        value_fn=lambda d: round(d["learned_capacity"], 2) if d.get("learned_capacity") is not None else None,
+        # v1.15.0 — prefer the discharge-run learner. It measures energy out
+        # against the SoC it cost and samples every night, where the
+        # Force-Charge learner only fires during a grid charge and so reports
+        # nothing on installs that rarely (or never) run one.
+        value_fn=lambda d: (
+            round(d["learned_discharge_capacity"], 2)
+            if d.get("learned_discharge_capacity") is not None
+            else (round(d["learned_capacity"], 2)
+                  if d.get("learned_capacity") is not None else None)
+        ),
+        attrs_fn=lambda d: {
+            "in_use": d.get("capacity_in_use"),
+            "from_discharge_runs": d.get("learned_discharge_capacity"),
+            "discharge_runs": d.get("capacity_discharge_sample_count"),
+            "from_force_charge": d.get("learned_capacity"),
+            "force_charge_samples": d.get("capacity_sample_count"),
+        },
     ),
     BatteryArbitrageSensorDescription(
         key="auto_efficiency",
