@@ -104,7 +104,6 @@ from .const import (
     DEFAULT_SOLAR_CONFIDENCE_PCT,
     EV_SESSION_DP_HORIZON_H,
     PLAN_REFRESH_SECONDS,
-    DYNAMIC_FLOOR_MIN_SOC,
     DYNAMIC_FLOOR_MAX_SOC,
     DEFAULT_PHYSICAL_FLOOR_SOC,
     DYNAMIC_FLOOR_REFILL_MAX_H,
@@ -400,7 +399,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._cap_dis_last_applied: float | None = None
         # Discharge-run capacity sampler; in-memory so a restart voids the run.
         self._cap_dis_soc_start: float | None = None
-        self._cap_dis_kwh: float = 0.0
+        self._cap_dis_total_start: float | None = None
         # Currently open export/charge session (closed when mode exits)
         self._open_action: dict | None = None
         # Currently open solar-floor-blocked event (closed when price rises
@@ -1085,6 +1084,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if not self._stored.get("capacity_bms_retired_v0641"):
             self._stored["capacity_samples"] = []
             self._stored["capacity_bms_retired_v0641"] = True
+        # v1.15.1 — the discharge-run learner's first samples were taken by
+        # integrating the discharge-POWER sensor, which under-reads by ~10 %
+        # over 5-minute ticks, so every one of them is biased low. Clear them
+        # once; the counter-based sampler re-populates within a few nights.
+        if not self._stored.get("capacity_dis_counter_v1151"):
+            self._stored["capacity_discharge_samples"] = []
+            self._stored["capacity_dis_counter_v1151"] = True
 
     # ------------------------------------------------------------------ #
     # Legacy automation management                                          #
@@ -1859,7 +1865,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # grid-charge to fire, so it keeps learning on installs (or in
             # seasons) where Force Charge never runs.
             self._learn_capacity_discharge(
-                battery_soc, battery_discharge_kw, battery_charge_kw, soc_reliable,
+                battery_soc,
+                self._get_float_state(self.config.get(
+                    CONF_BATTERY_DISCHARGE_TOTAL_ENTITY,
+                    FOXESS_BATTERY_DISCHARGE_TOTAL)),
+                battery_charge_kw,
+                soc_reliable,
             )
             # v0.61.x step 2 — passively learn the overnight house-load forecast
             # error (base_load_kw already excludes the EV). soc_reliable marks a
@@ -2872,6 +2883,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 reason = "EV actively charging (now/minpv) — holding battery for it"
             elif evcc_managing_battery:
                 reason = f"EVCC managing battery ({evcc_battery_mode}) — not overriding"
+            # v1.15.1 — report the hard blocker before the heuristics. A full
+            # battery makes grid charging impossible whatever the plan says, so
+            # naming a heuristic here (and "solar will fill" is usually true at
+            # the same time) hid the real reason.
+            elif importable_kwh < MIN_GRID_CHARGE_KWH:
+                reason = (
+                    f"Battery full ({importable_kwh:.1f} kWh room) — "
+                    "no space to grid-charge"
+                )
             elif solar_will_fill:
                 reason = "Solar will fill battery — grid charging not needed"
             elif ev_likely_charging:
@@ -3495,11 +3515,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if not slots:
             return None
 
+        # v1.15.1 — the reserve sits on top of the SoC the battery actually
+        # stops delivering at, which is the inverter's own on-grid Min-SoC, not
+        # the DYNAMIC_FLOOR_MIN_SOC constant this used to assume. That constant
+        # is 20 while a typical setting is 10-13, so the base was over-stated
+        # and every computed floor came out several points too high — holding
+        # back battery that was in fact available.
+        hw_floor = self._physical_floor_soc()
+
         # Next bridge = first upcoming slot where solar does NOT cover the house.
         start_idx = next((i for i, x in enumerate(slots) if not x[3]), None)
         if start_idx is None:
             # Solar covers the house across the whole horizon — no bridge.
-            return float(DYNAMIC_FLOOR_MIN_SOC)
+            return hw_floor
 
         # Across the dark bridge (until solar covers the house again, or the
         # horizon cap): sum the house energy consumed and the grid-charge hours
@@ -3564,11 +3592,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # the safe/conservative direction.
         charge_kwh = max(0.0, float(grid_charge_kw)) * bridge_charge_h * (eff ** 0.5)
         reserve_kwh = max(0.0, house_need_kwh - charge_kwh) * margin
-        # The battery only delivers down to the hardware minimum SoC
-        # (DYNAMIC_FLOOR_MIN_SOC), so the reserve must sit ON TOP of it: the
-        # export floor = hardware_floor + reserve%. Otherwise only
-        # (floor − hardware_floor) would actually be usable overnight.
-        floor_soc = float(DYNAMIC_FLOOR_MIN_SOC) + reserve_kwh / capacity_kwh * 100.0
+        # The battery only delivers down to the hardware minimum SoC, so the
+        # reserve must sit ON TOP of it: export floor = hardware_floor +
+        # reserve%. Otherwise only (floor − hardware_floor) would actually be
+        # usable overnight.
+        floor_soc = hw_floor + reserve_kwh / capacity_kwh * 100.0
         return min(float(DYNAMIC_FLOOR_MAX_SOC), floor_soc)
 
     def _update_daily_solar(self, pv_power_w: float) -> None:
@@ -3795,13 +3823,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     def _learn_capacity_discharge(
         self,
         battery_soc: float,
-        battery_discharge_kw: float,
+        discharge_total_kwh: float | None,
         battery_charge_kw: float,
         soc_reliable: bool,
     ) -> None:
         """Sample usable capacity from a clean discharge run.
 
             capacity = energy_out / (SoC drop / 100)
+
+        Energy out is read from the inverter's own cumulative discharge counter
+        (end minus start), not by integrating the discharge-power sensor. That
+        sensor under-reads by roughly 10 % once integrated over 5-minute ticks —
+        it reports a rounded instantaneous value, so a step-function integral
+        misses whatever happens between samples. The counter is accumulated in
+        hardware and has no such gap.
 
         Only the battery's own energy balance matters, so where the energy goes
         is irrelevant — an ordinary house night and a Force-Discharge export are
@@ -3812,16 +3847,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         yield a sample, so a long night produces several rather than one.
 
         Run state is deliberately held in memory rather than storage: a restart
-        mid-run means missed ticks, so the accumulated energy would no longer
-        explain the SoC drop and the run would bank an under-estimate. Keeping
-        it in memory discards such a run automatically.
+        mid-run means the counter start no longer pairs with the SoC start, so
+        keeping it in memory discards such a run automatically.
         """
         def _reset(start: float | None) -> None:
             self._cap_dis_soc_start = None if start is None else float(start)
-            self._cap_dis_kwh = 0.0
+            self._cap_dis_total_start = (
+                None if start is None else discharge_total_kwh)
 
-        # A restart-time SoC read, or anything charging, voids the run outright.
-        if not soc_reliable or battery_charge_kw > CAPACITY_DIS_MAX_CHARGE_KW:
+        # A restart-time SoC read, anything charging, or no counter to read
+        # from, voids the run outright.
+        if (not soc_reliable
+                or discharge_total_kwh is None
+                or battery_charge_kw > CAPACITY_DIS_MAX_CHARGE_KW):
             _reset(None)
             return
         # Outside the usable band the BMS's SoC/energy relationship is not linear.
@@ -3835,20 +3873,22 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return
         if battery_soc > float(start):
             # SoC climbed above where the run began — something put energy in
-            # that the charge-power gate missed. The accumulated kWh no longer
-            # explains the delta, so start over rather than bank a bad sample.
+            # that the charge-power gate missed. The counter delta no longer
+            # explains the SoC delta, so start over rather than bank a bad sample.
             _reset(battery_soc)
             return
 
-        interval_h = LEARNING_TICK_INTERVAL_SECONDS / 3600
-        self._cap_dis_kwh = round(
-            self._cap_dis_kwh + max(0.0, battery_discharge_kw) * interval_h, 4)
+        total_start = self._cap_dis_total_start
+        if total_start is None or discharge_total_kwh < total_start:
+            # No paired start, or the counter went backwards (firmware reset).
+            _reset(battery_soc)
+            return
 
         drop = float(start) - battery_soc
         if drop < CAPACITY_DIS_MIN_DROP_SOC:
             return
 
-        kwh = self._cap_dis_kwh
+        kwh = discharge_total_kwh - float(total_start)
         sample = round(kwh / (drop / 100.0), 2)
         # Same plausible-battery-size guard as the Force-Charge sampler.
         if 3.0 <= sample <= 30.0:
