@@ -9,6 +9,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.15.1] — 2026-09-06
+
+### Fixed — the overnight reserve was built on an assumed hardware floor, not the real one
+
+`_compute_dynamic_floor_soc` adds the overnight reserve on top of the SoC the battery stops delivering at, and took that base from `DYNAMIC_FLOOR_MIN_SOC` — a hardcoded 20 %, described in the code as "the hardware minimum SoC". A real on-grid Min-SoC is typically 10–13 %, so the base was around 7 points too high and every computed export floor inherited the error, holding back battery that was in fact available. The base now comes from the inverter's own on-grid Min-SoC, read live by the same helper the optimiser uses. The constant is removed rather than left misleading.
+
+On a 13 % inverter setting this lowers the effective floor by about 7 points — roughly 0.75 kWh more battery released for arbitrage each cycle, with no change to how much is genuinely reserved for the night.
+
+### Fixed — "Solar will fill battery" was reported when the battery was simply full
+
+When neither export nor grid charging ran, the decision reason picked the first true flag in a list of heuristics. A full battery makes grid charging impossible whatever the plan says — and "solar will fill battery" is usually true at the same moment — so the displayed reason named a heuristic while the actual blocker went unmentioned. The hard blocker is now reported first, with the room remaining.
+
+### Fixed — the capacity learner read energy from the wrong source and came out ~10 % low
+
+The v1.15.0 learner measured energy out by integrating the battery discharge-**power** sensor across 5-minute ticks. That sensor reports a rounded instantaneous value, so a step-function integral misses whatever happens between samples and lands about 10 % under the truth. Every capacity sample inherited that bias.
+
+It now reads the inverter's cumulative discharge-energy **counter** — start of run subtracted from end. That value is accumulated in hardware, so there is no sampling gap, and it needs no integration at all. A counter that runs backwards (firmware reset) voids the run, as does a missing reading.
+
+Verified against the same fourteen days of recorded history: the counter-based sampler settles on 10.67 kWh where the power-integration version reported 9.60. Two independent checks agree with the higher figure — the inverter's own BMS kWh-remaining register (10.73 kWh at 96 % SoC, implying 11.18 kWh across the full span) and a direct comparison of counter delta against SoC drop over eight clean nights (10.53 kWh).
+
+Samples collected by the old method are cleared once on upgrade, since all of them are biased. The learner re-populates within a few nights.
+
+---
+
 ## [1.15.0] — 2026-09-05
 
 ### Added — battery capacity learned from discharge runs
