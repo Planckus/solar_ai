@@ -656,7 +656,10 @@ PLAN_REFRESH_SECONDS = 900            # 15 min
 # load) until the next "refill" — sunrise solar or a cheap grid window — instead
 # of a fixed SoC. Clamped to a battery-health band; a learned safety margin
 # self-corrects from whether the reserve actually lasted the night.
-DYNAMIC_FLOOR_MIN_SOC = 20            # never reserve below this (battery health)
+# v1.15.1 — DYNAMIC_FLOOR_MIN_SOC is gone. It was the assumed base the overnight
+# reserve was added on top of, described as "the hardware minimum SoC", but it was
+# a hardcoded 20 while a real on-grid Min-SoC is typically 10-13. The reserve now
+# sits on the inverter's actual value, read live by _physical_floor_soc().
 DYNAMIC_FLOOR_MAX_SOC = 85            # never reserve above this (leave room to arbitrage)
 # v1.15.0 — the PHYSICAL floor is a different quantity from the export floor
 # above: it is the SoC the inverter actually stops discharging at, so it bounds
@@ -701,7 +704,7 @@ DEFAULT_RESERVE_PERCENTILE_PCT = 80  # default; user-configurable 50-95 (v0.75.1
 # p-percentile pull the reserve down to what the data supports, freeing
 # battery for evening peaks. Still bounded below by the per-sample sanity
 # filter (RESERVE_RATIO_SANE_LO=0.3) and — the real hard floor — the
-# hardware DYNAMIC_FLOOR_MIN_SOC that the reserve sits ON TOP of. Only the
+# inverter's own on-grid Min-SoC that the reserve sits ON TOP of. Only the
 # LEARNED path (≥7 clean nights) uses this floor; the manual fallback slider
 # stays clamped ≥1.0 as an explicit user safety knob.
 RESERVE_FACTOR_MIN = 0.8             # clamp (learned path): never reserve less than -20 %

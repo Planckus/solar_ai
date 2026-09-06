@@ -250,6 +250,14 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.15.1 — capacity measured from the right sensor, and the reserve built on the real hardware floor
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The capacity learner was reading the wrong sensor** and came out about 10 % low. It integrated battery discharge *power* across 5-minute ticks; that sensor reports a rounded instantaneous value, so the integral misses whatever happens between samples. It now reads the inverter's cumulative discharge-energy counter, which is accumulated in hardware and needs no integration. Samples taken by the old method are cleared once on upgrade.
+- **The overnight reserve sat on an assumed hardware floor of 20 %** rather than the inverter's real on-grid Min-SoC, which is commonly 10–13 %. Every computed export floor was therefore several points too high, holding back battery that was actually available. The reserve now sits on the value read from the inverter.
+- **The decision reason said "Solar will fill battery" when the battery was simply full.** A full battery blocks grid charging regardless of the plan, and that hard blocker is now reported ahead of the heuristics.
+
 ### v1.15.0 — grid charging works again, and the optimiser stops confusing the export reserve with the battery's real floor
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
