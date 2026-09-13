@@ -250,6 +250,13 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.15.2 — the planner now respects the battery-first rule
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **A restart could leave the inverter in a work mode nothing would correct.** The work mode was only written when the mode changed, and since the internal state resets to normal on restart, a restart whose first decision was also normal issued no write at all — leaving the inverter wherever it happened to be. A restart during a grid charge was seen to leave it in Back-up, which reserves the battery rather than using it for the house. The mode is now asserted once on the first decision after startup, so a restart mid-session resumes correctly instead of stranding the inverter.
+- **The optimiser bought grid power that the sun was about to supply.** While the house battery sits below the Battery-first threshold the EV controller holds the car at 0 A, so the whole solar surplus reaches the battery — but the planner's model served the car first at every state of charge and had no knowledge of the threshold at all. With a car plugged in below the threshold it therefore concluded the battery could not fill from sun and bought grid power to finish the job. It now models both allocations and applies whichever the EV controller will actually use at that state of charge. Above the threshold nothing changes, because there the car genuinely does compete for the surplus.
+
 ### v1.15.1 — capacity measured from the right sensor, and the reserve built on the real hardware floor
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).

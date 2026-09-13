@@ -319,6 +319,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._disk_usage: dict[str, Any] = {}
         self._disk_low: bool = False
         self._current_mode = MODE_NORMAL
+        # Forces one mode assertion on the first decision after startup, so a
+        # restart cannot leave the inverter in a mode this coordinator is
+        # unaware of. In-memory by design: it must re-arm on every restart.
+        self._startup_mode_asserted = False
         self._mode_reason = ""
         # v0.41.0 — language for user-facing strings (reasons, notifications).
         # Follows HA's configured language: Danish HA → Danish, anything else
@@ -2075,6 +2079,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 capacity_kwh=capacity_kwh,
                 floor_soc=float(floor_soc),
                 physical_floor_soc=self._physical_floor_soc(),
+                # v1.15.2 — the battery-first rule the EV controller enforces:
+                # below this SoC it commands 0 A and the battery takes the whole
+                # solar surplus. Passed as 0 when the rule is not in force, so
+                # the optimiser keeps its previous EV-takes-first dynamics. It
+                # only applies in plain PV mode, and only while the car is not
+                # already charging — an established session is allowed to
+                # continue below the threshold, so the car really does compete
+                # for solar in that case.
+                ev_priority_soc=(
+                    float(self._stored.get("ev_battery_priority_soc", 0.0))
+                    if (self._ev_effective_mode == EV_MODE_PV and ev_session_kw <= 0.0)
+                    else 0.0
+                ),
                 max_soc=float(max_soc),
                 efficiency=efficiency,
                 charge_rate_kw=capped_charge_rate_kw if capped_charge_rate_kw > 0 else learned_charge_rate,
@@ -2897,8 +2914,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             elif ev_likely_charging:
                 reason = f"EV typically charges now ({ev_block_prob:.0%} learned) — skipping grid charge"
 
-        if target_mode != self._current_mode:
+        # v1.15.2 — assert the mode once on the first decision after startup,
+        # even when it already matches. `_current_mode` resets to MODE_NORMAL on
+        # restart, so a restart that interrupts a Force Charge or Force
+        # Discharge leaves the inverter in whatever mode it was in (or whatever
+        # it fell back to) while this believes it is already normal — the
+        # equality check below then never fires and the stale mode is never
+        # corrected. Observed live: a restart mid-Force-Charge left the inverter
+        # in Back-up, which reserves the battery instead of self-consuming, and
+        # nothing brought it back. Asserting once on startup is cheap and makes
+        # the inverter's state match this coordinator's belief about it.
+        if target_mode != self._current_mode or not self._startup_mode_asserted:
             await self._transition_to(target_mode, capped_charge_rate_kw, reason=reason)
+        self._startup_mode_asserted = True
 
         self._current_mode = target_mode
         self._mode_reason = reason
@@ -2958,8 +2986,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 self._we_set_evcc_mode = False
                 await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_NORMAL}")
 
-        # Send HA notification on mode change if enabled
-        if self._stored.get("notifications_enabled", False):
+        # Send HA notification on mode change if enabled. v1.15.2 — only when
+        # the mode actually changed: the startup assertion re-applies the
+        # current mode on purpose, and announcing a change that did not happen
+        # would put a notification on every restart.
+        if (self._stored.get("notifications_enabled", False)
+                and self._current_mode != new_mode):
             await self._send_mode_notification(self._current_mode, new_mode, reason)
 
     async def _maintain_export_limit(
@@ -8484,6 +8516,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         capacity_kwh: float,
         floor_soc: float,
         physical_floor_soc: float,
+        ev_priority_soc: float,
         max_soc: float,
         efficiency: float,
         charge_rate_kw: float,
@@ -8527,7 +8560,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         try:
             return self._dp_solve(
                 now, grid_slot_data, solar_slot_data, solar_accuracy_factor, current_soc,
-                capacity_kwh, floor_soc, physical_floor_soc, max_soc, efficiency,
+                capacity_kwh, floor_soc, physical_floor_soc, ev_priority_soc, max_soc, efficiency,
                 charge_rate_kw, house_load_profile, ev_charge_hourly, ev_max_kw,
                 vat_factor, tariff_sched, elafgift, spot_markup,
                 export_fee, feed_in_tariff, min_export_price, min_spread, max_export_kw,
@@ -8548,6 +8581,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         capacity_kwh: float,
         floor_soc: float,
         physical_floor_soc: float,
+        ev_priority_soc: float,
         max_soc: float,
         efficiency: float,
         charge_rate_kw: float,
@@ -8686,6 +8720,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             solar_to_house = min(solar_kw, house_kw)
             house_from_battery = max(0.0, house_kw - solar_kw)
             solar_remaining = solar_kw - solar_to_house
+            # v1.15.2 — solar is allocated TWO ways, because the EV controller
+            # changes who gets it depending on SoC. Below the battery-first
+            # threshold it returns 0 A and the car gets nothing; above it the
+            # car takes the surplus first. Which applies depends on the SoC
+            # state, which is not known here — so both are computed and the
+            # backward induction picks per state below.
             solar_to_ev = min(solar_remaining, ev_kw)
             solar_to_battery = max(0.0, solar_remaining - solar_to_ev)
             # SoC drift over the slot duration (% of capacity)
@@ -8696,9 +8736,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # already price both losses, so the idle path was the one place the
             # model got energy for free — drift ran optimistic in both directions,
             # understating overnight drain and overstating the solar refill.
-            idle_delta_pct = (
-                solar_to_battery * charge_eff - house_from_battery / discharge_eff
-            ) * dur_h / capacity_kwh * 100.0
+            def _drift(to_battery: float) -> float:
+                return (
+                    to_battery * charge_eff - house_from_battery / discharge_eff
+                ) * dur_h / capacity_kwh * 100.0
+
+            idle_delta_pct = _drift(solar_to_battery)
+            # Below the battery-first threshold the EV controller commands 0 A,
+            # so the whole surplus reaches the battery. Modelling the car as
+            # taking its share there made the planner believe the battery could
+            # not fill from sun, and buy grid power to finish the job the sun
+            # was about to do for free.
+            idle_delta_batt_first_pct = _drift(solar_remaining)
 
             slot_data.append({
                 "slot_start": slot_start,
@@ -8708,6 +8757,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "buy": round(buy_h, 4),
                 "sell": round(sell_h, 4),
                 "idle_delta_pct": idle_delta_pct,
+                "idle_delta_batt_first_pct": idle_delta_batt_first_pct,
                 # v0.75.13 — the expected/certain EV draw for this slot,
                 # kept instead of collapsing straight to a binary "blocked"
                 # flag; see the CHARGE branch below for how it's used.
@@ -8793,6 +8843,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # efficiency + degradation cost). Never above the export floor.
         soc_floor = int(max(0, round(floor_soc)))
         phys_floor = int(max(0, min(round(physical_floor_soc), soc_floor)))
+        # 0 disables the battery-first rule (any EV mode but PV, or a
+        # session already charging), so `s < ev_priority_soc` never fires.
+        ev_priority_soc = int(max(0, min(100, round(ev_priority_soc))))
         soc_max = int(min(100, round(max_soc)))
 
         # ── Backward induction ────────────────────────────────────────────
@@ -8809,7 +8862,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             sd = slot_data[t]
             buy_h = sd["buy"]
             sell_h = sd["sell"]
-            idle_delta = sd["idle_delta_pct"]
+            idle_delta_ev_first = sd["idle_delta_pct"]
+            idle_delta_batt_first = sd["idle_delta_batt_first_pct"]
             ev_kw = sd["ev_kw"]
             dur_h = sd["dur_h"]
 
@@ -8881,6 +8935,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             new_V: list[float] = [0.0] * SOC_STATES
 
             for s in range(SOC_STATES):
+                # v1.15.2 — pick the solar split that the EV controller will
+                # actually apply at this SoC. Below the battery-first threshold
+                # the car is held at 0 A, so the battery receives the whole
+                # surplus. `ev_priority_soc` is 0 when the rule does not apply
+                # (any EV mode but PV, or a session already running), which
+                # makes this branch never fire and preserves prior behaviour.
+                idle_delta = (
+                    idle_delta_batt_first if s < ev_priority_soc
+                    else idle_delta_ev_first
+                )
                 # ── IDLE ──────────────────────────────────────────────────
                 # Three regimes depending on where idle dynamics land SoC:
                 #   below floor  → house deficit imported from grid at buy_h
@@ -8991,7 +9055,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
             charge_delta_slot = charge_rate_kw * charge_eff * dur_h / capacity_kwh * 100.0
             export_delta_slot = export_rate_kw * dur_h / capacity_kwh * 100.0
-            idle_delta = sd["idle_delta_pct"]
+            # Same SoC-dependent solar split as the backward induction above.
+            idle_delta = (
+                sd["idle_delta_batt_first_pct"] if soc_s < ev_priority_soc
+                else sd["idle_delta_pct"]
+            )
 
             # The SoC path is physics, so it clamps at phys_floor; only the
             # exportable AMOUNT is measured against the export reserve.
