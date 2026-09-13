@@ -9,6 +9,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.15.2] — 2026-09-13
+
+### Fixed — the optimiser ignored the battery-first rule and bought grid power the sun was about to supply
+
+The EV controller holds the car at 0 A while the house battery is below the **Battery-first threshold**, so below that SoC every watt of surplus reaches the battery. `_dp_solve` did not model this. Its per-slot solar split served the car first at every SoC:
+
+```
+solar_to_ev      = min(solar_remaining, ev_kw)
+solar_to_battery = max(0.0, solar_remaining - solar_to_ev)
+```
+
+`ev_battery_priority_soc` existed only in the EV controller and its setter — it never reached the planner. So whenever SoC sat below the threshold with a car plugged in, the planner believed the car was taking solar the car was in fact forbidden from touching, concluded the battery could not fill from sun, and bought grid power to finish a job the sun was about to do for nothing.
+
+The split is now computed both ways per slot — battery-first and EV-first — and the backward induction and forward pass each select per SoC state. The threshold is passed as 0 when the rule is not in force (any EV mode but PV, or a session already charging, since an established session is allowed to continue below the threshold), which restores the previous dynamics exactly.
+
+Observed on a real case: at 69 % SoC with the car plugged in and waiting, the planner had scheduled two grid-charge slots and projected SoC falling to 65 %. With the rule modelled it schedules one, and projects solar taking the battery to 100 %. Above the threshold the plans are identical, since there the car really does compete.
+
+### Fixed — a restart could leave the inverter in a work mode nothing would correct
+
+The work mode was only written on a mode *transition*. `_current_mode` resets to `normal` on restart, so when the first post-restart decision was also `normal` the equality check never fired and no write was issued — leaving the inverter in whatever mode it happened to be in. A restart during a Force Charge was observed to leave it in **Back-up**, which reserves the battery for grid-outage support instead of self-consumption, so the battery would not have covered the evening peak it had just been charged for. Nothing in the code could recover from this; it took manual intervention.
+
+The mode is now asserted once on the first decision after startup, whether or not it matches the internal state. It writes the mode that decision implies — Self Use, Force Charge or Force Discharge as appropriate — so a restart mid-session resumes correctly rather than stranding the inverter. The assertion waits for a trustworthy SoC reading, since the decision loop is already gated on one, and steady-state behaviour is unchanged.
+
+### Fixed — mode-change notifications could announce a change that did not happen
+
+`_send_mode_notification` fired whenever notifications were enabled, without checking that the mode had actually changed. Harmless previously, because it was only ever reached from a real transition — but the startup assertion above re-applies the current mode deliberately, which would have produced a notification on every restart. The notification is now conditional on the mode actually differing.
+
+---
+
 ## [1.15.1] — 2026-09-06
 
 ### Fixed — the overnight reserve was built on an assumed hardware floor, not the real one
