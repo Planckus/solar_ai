@@ -9,6 +9,75 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.17.0] — 2026-09-16
+
+### Fixed — the battery ran flat before sunrise two nights running
+
+Two things, both measured on two recorded nights.
+
+**The overnight reserve did not count the inverter's own consumption.** The house meter recorded 1.95 kWh and 2.4 kWh across the two core nights; the battery gave up 2.5 kWh and 2.9 kWh to deliver them. The difference is a steady ~0.07 kW of inverter overhead, not a proportional loss, and the reserve was sized on house load plus a one-way discharge efficiency only. Over a 13-hour night that is ~0.9 kWh, or about 9 points of SoC — which is why the battery reached the hardware floor around 07:00 instead of lasting to the solar refill. The learned hourly house-load profile was accurate (2.42 kWh predicted against 2.4 kWh measured) and is unchanged. The dark-bridge reserve now adds `INVERTER_STANDBY_KW × bridge hours`.
+
+**Nothing bought the shortfall.** The reserve only gates selling. When the battery does not hold enough to reach the next solar refill, the house imports the missing energy in the morning instead, at a higher price than the overnight trough. The optimiser does not close this gap on its own: a CHARGE slot adds a full quarter hour at the charge rate, far more than the gap, and the surplus is worth nothing on a day the sun refills the battery anyway, so the trade prices out.
+
+Solar AI now buys that shortfall directly. While the battery holds less than the night needs, it grid-charges in the cheapest slot before the next solar refill (within 5% of it, so a flat night does not wait for a minimum it never meets), and only while solar is not expected to fill the battery anyway. If that price is also in the day's cheapest quarter and the 24-hour solar forecast is below the house's own 24-hour need, it fills the battery instead of buying only the gap.
+
+Replayed against both nights: a single purchase in the cheapest slot of the night, ending well above the floor instead of on it, at a lower cost after charging losses and degradation.
+
+All prices here are the full delivered price (spot plus tariffs, levies and VAT), which is what the decision compares. The `Næste slots pris` sensor shows raw spot and is not comparable to them.
+
+The decision reason names it — "Night bridge: battery X kWh short of the house need until solar returns" — rather than reporting a p25 trade it is not.
+
+---
+
+## [1.16.1] — 2026-09-16
+
+### Fixed — the car was throttled with headroom to spare
+
+The Net import limit cap sized the car at 230 V per amp. Measured live, the car drew 10.3–10.4 kW at 16 A on three phases, not the 11.04 kW the nominal figure assumes. The cap compared that overstated figure against headroom derived from real meter readings, so with the battery grid-charging beside it the car was trimmed from 16 A to 14–15 A while roughly 1 kW of the limit went unused. Observed on the first grid charge after v1.16.0: grid import 15.5–16.4 kW against a 17 kW limit, battery at 6.2 kW, car reduced anyway.
+
+The cap now uses the car's measured power per amp — live draw divided by the last commanded current — and falls back to 230 V nominal when the measurement cannot describe the commanded current: the car is not drawing, it is still ramping, it is tapering, or the phase count has just changed. The measured rate is only accepted within 0.85–1.1× nominal, so a stale or unrelated reading cannot widen the cap.
+
+---
+
+## [1.16.0] — 2026-09-15
+
+### Added — the car is throttled to keep total grid import within the Net import limit
+
+Until now the Net import limit only capped the battery's Force Charge setpoint. The EV charger was never limited, so the car plus the house could take grid import above the limit on their own.
+
+Both EV controllers (OCPP and FoxESS Modbus) now apply a final cap to the charging current, after every other rule that can raise it. The car may use only the headroom that is free: the limit, minus the 0.5 kW safety margin, minus everything else drawing from the grid. If that is below the charger's minimum current, the car pauses instead of being held at a minimum that would break the limit. The EV reason reads "Throttled to the 17.0 kW net import limit" while the cap is active. On OCPP a throttle is always sent, never deduplicated.
+
+The house battery yields before the car. The EV controllers record the power the car is asking for (its mode target), and the battery's grid-charge cap is sized against that request. When the car and a grid charge together exceed the limit, the battery's setpoint comes down first. The car is throttled only when the battery has nothing left to give, or for the few seconds until the battery's next re-cap. A car the cap has just paused is still yielded to for 120 s. A car that is plugged in but full does not reduce the battery's charge.
+
+Grid import can still pass the limit briefly after a load the controller does not control starts, such as an oven, or when the car starts on its own. The next EV control tick corrects it, by default within 10 s.
+
+### Fixed — Force Charge delivered nothing while a car charged in Full mode
+
+In Full mode the EV controller sets the battery's max discharge current to 0 A while the car draws, so the car is not fed from the house battery. On the FoxESS H3 this also stops Force Charge. Observed live: the battery took 0 kW for 15 minutes at a 4.5–9.8 kW Force Charge setpoint, and grid charging with a car in Full mode never charged the battery.
+
+The lock is now released while Force Charge is active, where the battery charges and cannot feed the car. The handover is ordered so the battery is never unlocked in Self Use: entering Force Charge releases the lock only after the inverter reports Force Charge, and leaving it re-engages the lock before the mode changes. If the Force Charge write fails, the lock stays on.
+
+---
+
+## [1.15.3] — 2026-09-15
+
+### Fixed — the battery grid charge stopped when the car started, instead of throttling down
+
+Starting the car during a grid charge should reduce the battery's share of the Net import limit. The live control did exactly that — the Force Charge setpoint dropped from 9.8 kW to 6.4 kW — but within two minutes the planner removed the charge from the plan and the battery stopped entirely.
+
+Two things combined in the planner:
+
+- **The car was subtracted twice.** The headroom handed to the planner was computed from live grid import, which already contained the car's draw. Inside the planner, the live EV session was then subtracted again.
+- **The car was subtracted from the wrong limit.** `effective_charge_rate_kw = charge_rate_kw − ev_kw` took the car's grid draw off the battery's charge rate. The battery is limited on the inverter side and the car draws from the grid; they share the Net import limit, not each other's capacity. Whenever the battery rate was the smaller term, the car wiped it out — a 10.5 kW car against a 9.74 kW battery rate left zero, while the grid still had 6 kW spare.
+
+The planner now receives the battery charge rate and the grid headroom separately, with the headroom excluding the car's live draw, and computes `min(battery rate, grid headroom − car)`. On the same situation it keeps charging alongside the car at the reduced rate rather than deferring until the car is finished. With no car the plan is unchanged.
+
+The live Force Charge setpoint and the overcurrent guard are untouched and still use headroom that includes the car, since those are what protect the breaker.
+
+Behaviour change: when a car is only expected to charge rather than plugged in, the planner may now allow the battery a higher rate in the same slots, because the grid headroom can carry both draws.
+
+---
+
 ## [1.15.2] — 2026-09-13
 
 ### Fixed — the optimiser ignored the battery-first rule and bought grid power the sun was about to supply

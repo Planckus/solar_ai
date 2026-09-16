@@ -770,6 +770,18 @@ VACATION_THRESHOLD = 0.25           # 25% of long-term baseline → vacation
 VACATION_MIN_DURATION = 48          # Must be below threshold for 4h (48 × 5min samples)
 MIN_EXPORTABLE_KWH = 0.5            # Don't bother exporting less than this
 MIN_GRID_CHARGE_KWH = 0.5           # Don't bother grid-charging less than this
+# How far above the cheapest price before the next solar refill the overnight
+# bridge buy still accepts a slot. A flat night has no meaningful minimum to
+# wait for, and waiting for one costs the whole bridge.
+BRIDGE_PRICE_TOLERANCE = 1.05
+
+# Inverter overhead the house meter never sees: its own standby/conversion draw
+# while discharging. Measured on two consecutive nights here — the battery gave
+# up 2.5 kWh for 1.95 kWh of house load, and 2.9 kWh for 2.4 kWh — i.e. a steady
+# ~0.07 kW on top of the house load, not a proportional loss. Over a 13-hour
+# night that is ~0.9 kWh, which is why a reserve sized on house load alone ran
+# the battery flat about two hours before sunrise.
+INVERTER_STANDBY_KW = 0.07
 # v1.10.7 — live "sell the solar, hold the battery" guard. When real solar
 # surplus (PV above house load) of at least this many kW is already flowing to
 # grid AND the battery has room, a battery export below the day-peak is held:
@@ -843,6 +855,11 @@ DSO_OPTIONS: list[dict[str, str | None]] = [
 # wouldn't pull power for hours. Now the lock follows actual draw — engages
 # when observed charger power exceeds the threshold, releases when it drops.
 EV_BATTERY_LOCK_POWER_THRESHOLD_KW = 0.3
+# How long the EV controller's last requested power stays valid for sizing the
+# battery's share of the Net import limit. Longer than the slowest EV control
+# interval (60 s), so a normal tick always refreshes it; a controller that has
+# stopped reaching the cap (car disconnected, controller off) ages out.
+EV_REQUEST_STALE_SECONDS = 120
 
 # ── Strømligning retailer pricing (v0.29.0) ─────────────────────────────────
 # Strømligning aggregates Danish electricity retailer pricing and exposes a
