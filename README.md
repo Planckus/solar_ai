@@ -250,6 +250,32 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.17.0 — the battery reaches sunrise
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The overnight reserve ignored the inverter's own consumption.** Delivering house load costs the battery a steady ~0.07 kW more than the house meter shows. Over a long night that is ~0.9 kWh, so the reserve was about 9 points of SoC short and the battery hit the hardware floor before the sun returned. The dark-bridge reserve now includes it. The learned house-load profile was accurate and is unchanged.
+- **Nothing bought the difference when the battery was short for the night.** The reserve only gates selling, and the optimiser's smallest charge is far larger than the gap, so the house imported the missing energy at the morning price instead. Solar AI now buys the shortfall in the cheapest slot before the next solar refill — and fills the battery instead when that price is in the day's cheapest quarter and the solar forecast is below the house's own 24-hour need.
+
+### v1.16.1 — the car keeps its current when the limit has room
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The Net import limit trimmed the car while headroom was unused.** The cap assumed 230 V per amp, while the car actually drew 10.3–10.4 kW at 16 A, so it throttled against power that was never drawn. It now sizes the car from its measured power per amp, falling back to the nominal figure whenever the measurement cannot describe the commanded current.
+
+### v1.16.0 — the car respects the Net import limit, and Force Charge works alongside a Full-mode car
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The EV charger is now throttled to keep total grid import within the Net import limit**, on both the OCPP and FoxESS Modbus backends. The house battery's grid charge yields first; the car is reduced only when the battery has nothing left to give, and pauses rather than being held at a minimum current that would break the limit.
+- **Force Charge delivered 0 kW while a car charged in Full mode.** The Full-mode battery lock (max discharge current 0 A) also blocks Force Charge on the H3. The lock is now released while Force Charge is active and re-engaged before the inverter returns to Self Use, so the battery still never feeds the car.
+
+### v1.15.3 — the battery charge throttles alongside the car instead of stopping
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Starting the car stopped a battery grid charge instead of throttling it.** The live setpoint already reduced the battery's share of the Net import limit when the car started, but the planner then counted the car twice and subtracted its grid draw from the battery's own charge rate. With a car drawing more than the battery's rate, that left nothing, and the planner cancelled the charge. It now takes the car off the grid headroom and caps the battery at whichever limit binds first, so the battery keeps charging at the reduced rate while the car runs.
+
 ### v1.15.2 — the planner now respects the battery-first rule
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
@@ -609,7 +635,7 @@ Five modes selectable from the dashboard (both backends):
 | Locked | No charging. |
 | Solar-only | Charge only from real-time PV surplus. Stops when surplus drops below the minimum. If the house battery starts discharging to cover the car, charging stops. |
 | Solar+Battery-to-minimum | Solar surplus first; house battery tops up to the minimum when surplus is insufficient. Stops at the battery floor. |
-| Full power | Maximum charge rate from any source. House battery discharge is locked at 0 A while in this mode, so the EV's grid demand cannot be supplemented from the house battery. On the Modbus backend, full mode always uses three-phase. |
+| Full power | Maximum charge rate from any source, within the Net import limit. House battery discharge is locked at 0 A while the car draws, so the EV's grid demand cannot be supplemented from the house battery. The lock is lifted while Solar AI is grid-charging the battery (Force Charge), where the battery cannot feed the car. On the Modbus backend, full mode always uses three-phase. |
 | Scheduled | Follows the per-weekday charging windows (Skema 1–4) set on the dashboard; each window selects one of the modes above, with a configurable fallback outside any window. A planned (scheduled) charge survives the car being plugged in rather than being reset to the default-on-connect mode. |
 
 Which mode a freshly plugged-in car starts in is set by the **default charge mode on connect** picker (both backends).
@@ -685,7 +711,7 @@ Every setting below is editable from the dashboard (**Indstillinger / Settings**
 | **Reserve safety factor**<br>_Reserve-sikkerhedsfaktor_ | 1.0–2.0× | 1.3× | Multiplier on the predicted overnight need that the *Dynamic discharge floor* reserves. Lower = sell more into peaks; higher = hold more for the night. Used until the adaptive learner has ≈7 clean nights of data, after which the measured value takes over. |
 | **Blocked sell hours**<br>_Blokerede salgstimer_ | hours of day | none | Hours in which the battery is never sold — set with the clickable hour grid on the Settings page (or as a comma list, e.g. `20,21`). Solar export and house self-consumption are unaffected; only the battery *sell* is held. |
 | **Export power cap**<br>_Eksporteffekt-grænse (0 = ingen)_ | 0–10 kW | 0 (no cap) | Limits how fast the battery discharges to the grid. 0 = use the full available rate. |
-| **Grid import limit**<br>_Net-importgrænse_ | 5–63 kW | 17 kW | Your main breaker rating. Total grid draw is kept under this — grid-charge power is reduced (and re-checked every cycle) to leave headroom for house + EV load. |
+| **Grid import limit**<br>_Net-importgrænse_ | 5–63 kW | 17 kW | Your main breaker rating. Total grid draw is kept under this, less a 0.5 kW margin. Grid-charge power is reduced first to leave headroom for the house and the car; the EV charging current is then capped to what remains, pausing the car if that is below its minimum current. |
 | **Dynamic discharge floor**<br>_Dynamisk afladningsgulv (selvlærende)_ | on/off | off | When on, raises the export floor to the SoC needed to run the house from now until solar covers it again (net of any planned grid-charge), on top of your *Minimum SoC*. The reserve is a deterministic calculation from the learned load profile and accuracy-corrected solar forecast, multiplied by the *Reserve safety factor*. Short bright night → lower floor (export more); long winter night → higher floor (hold more). While Force-Discharging it also raises the inverter's own on-grid Min-SoC to the floor as a hardware backstop, and restores it the moment selling stops. |
 | **Effective discharge floor**<br>_Effektivt afladningsgulv_ | read-only | — | Shows the floor actually in effect right now (the static value, or the computed dynamic reserve), with the reserve factor in use as an attribute. |
 

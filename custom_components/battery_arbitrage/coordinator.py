@@ -82,6 +82,8 @@ from .const import (
     MIN_EXPORTABLE_KWH,
     SOLAR_SURPLUS_HOLD_KW,
     SAVINGS_LOG_MAX_DAYS,
+    BRIDGE_PRICE_TOLERANCE,
+    INVERTER_STANDBY_KW,
     MIN_GRID_CHARGE_KWH,
     MIN_PRICE_SLOTS_FOR_GRID_CHARGE,
     MIN_PRICE_RANGE_FOR_GRID_CHARGE,
@@ -255,6 +257,7 @@ from .const import (
     CONF_TARIFF_FETCH_ENABLED,
     DEFAULT_TARIFF_FETCH_ENABLED,
     EV_BATTERY_LOCK_POWER_THRESHOLD_KW,
+    EV_REQUEST_STALE_SECONDS,
     EV_MODE_SCHEDULED,
     CONF_EV_SCHEDULE_LINKS,
     CONF_EV_SCHEDULED_FALLBACK_MODE,
@@ -400,7 +403,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._last_plan_refresh: datetime | None = None
         # v0.47.0 — dynamic discharge floor: last computed value + bridge state.
         self._dynamic_floor_soc: float | None = None
+        # v1.17.0 — the dark bridge the floor last sized: the battery energy the
+        # house needs to reach the next solar refill, and when that refill
+        # starts. The floor only gates selling; these let the decision buy the
+        # shortfall at the cheapest price before the bridge instead of importing
+        # it at the morning price after the battery runs out.
+        self._bridge_reserve_kwh: float = 0.0
+        self._bridge_end: datetime | None = None
         self._cap_dis_last_applied: float | None = None
+        # Net import limit enforcement: the power the EV controller last asked
+        # for (before the grid cap), and when. The battery's grid-charge cap
+        # counts this rather than the car's live draw, so the house battery
+        # throttles down before the car does.
+        self._ev_requested_kw: float = 0.0
+        self._ev_requested_ts: datetime | None = None
+        self._ev_last_draw_ts: datetime | None = None
         # Discharge-run capacity sampler; in-memory so a restart voids the run.
         self._cap_dis_soc_start: float | None = None
         self._cap_dis_total_start: float | None = None
@@ -498,6 +515,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # charge from solar — only the discharge path is blocked.
         self._ev_battery_locked: bool = False
         self._ev_battery_lock_prev_a: float | None = None
+        # v1.16.0 — max_discharge_current = 0 also stops Force Charge on the H3
+        # (observed: 0 kW into the battery for 15 min at a 4.5–9.8 kW setpoint).
+        # The lock is therefore held off while Force Charge is active, where the
+        # battery cannot feed the car anyway. `_ev_lock_demand` is the lock
+        # condition without that exception, so a transition out of Force Charge
+        # can re-engage the lock before the inverter returns to Self Use.
+        self._ev_lock_demand: bool = False
+        self._force_charge_active: bool = False
         # ── Short-term solar correction (v0.28.6) ────────────────────────
         # Intra-hour Kalman-style residual: compare actual mean PV in each
         # closed 15-min slot against the Solcast forecast for that slot,
@@ -1979,9 +2004,51 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             base_grid_kw = max(0.0, grid_import_kw - battery_charge_kw)
         else:
             base_grid_kw = grid_import_kw
-        grid_headroom_kw = max(0.0, grid_max_kw - GRID_SAFETY_MARGIN_KW - base_grid_kw)
+        ev_live_kw = max(0.0, float(ev_charge_power_w or 0) / 1000.0)
+        non_ev_grid_kw = max(0.0, base_grid_kw - ev_live_kw)
+        # The house battery throttles down before the car. While the car is
+        # actually drawing, the battery's share of the Net import limit is sized
+        # against what the car is ASKING for rather than what it currently draws
+        # — when the car starts, or has just been throttled by the grid cap, its
+        # live draw is still below its request, and sizing against the live
+        # value would let the battery hold its share and leave the car
+        # squeezed. Only a car that is drawing, or drew within
+        # EV_REQUEST_STALE_SECONDS, is yielded to: that covers a car the grid
+        # cap has just paused (it must get its share back to resume), while a
+        # car that is plugged in but full still carries a high request in Full
+        # mode and, never drawing, would otherwise block battery grid charging
+        # for as long as it stays plugged in. A request older than EV_REQUEST_STALE_SECONDS (the
+        # controller stopped reaching the cap, e.g. the car disconnected) is
+        # ignored.
+        ev_requested_fresh = (
+            self._ev_requested_ts is not None
+            and (now - self._ev_requested_ts).total_seconds() <= EV_REQUEST_STALE_SECONDS
+        )
+        ev_drew_recently = (
+            self._ev_last_draw_ts is not None
+            and (now - self._ev_last_draw_ts).total_seconds() <= EV_REQUEST_STALE_SECONDS
+        )
+        if ev_requested_fresh and (
+                ev_live_kw > EV_BATTERY_LOCK_POWER_THRESHOLD_KW or ev_drew_recently):
+            ev_grid_claim_kw = max(ev_live_kw, self._ev_requested_kw)
+        else:
+            ev_grid_claim_kw = ev_live_kw
+        grid_headroom_kw = max(
+            0.0, grid_max_kw - GRID_SAFETY_MARGIN_KW - non_ev_grid_kw - ev_grid_claim_kw)
         # Cap the charge rate to what the grid can safely supply
         capped_charge_rate_kw = min(learned_charge_rate if learned_charge_rate > 0 else GRID_MAX_KW, grid_headroom_kw)
+        # v1.15.3 — the planner gets the same net import limit, but without the
+        # car's live draw in it. grid_import already includes the car, so
+        # capped_charge_rate_kw is net of it — and the planner then subtracts
+        # the EV session again per slot (ev_kw in _dp_solve). With the car at
+        # 10.4 kW that turned 6.4 kW of real headroom into zero, the planner
+        # dropped the charge, and the battery stopped instead of throttling.
+        # The live inverter setpoint and the overcurrent gate keep using
+        # capped_charge_rate_kw, which is the one that protects the breaker.
+        planner_headroom_kw = max(
+            0.0, grid_max_kw - GRID_SAFETY_MARGIN_KW - non_ev_grid_kw)
+        planner_charge_rate_kw = min(
+            learned_charge_rate if learned_charge_rate > 0 else GRID_MAX_KW, planner_headroom_kw)
 
         # ---- spread calculations ----
         # True cost of arbitrage has two components:
@@ -2094,7 +2161,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 ),
                 max_soc=float(max_soc),
                 efficiency=efficiency,
-                charge_rate_kw=capped_charge_rate_kw if capped_charge_rate_kw > 0 else learned_charge_rate,
+                charge_rate_kw=planner_charge_rate_kw if planner_charge_rate_kw > 0 else learned_charge_rate,
+                grid_headroom_kw=planner_headroom_kw,
                 house_load_profile=self.get_house_load_profile(weekend=False),
                 house_load_weekend=self.get_house_load_profile(weekend=True),
                 ev_charge_hourly=list(self._stored.get("ev_charge_hourly", [0.0] * 24)),
@@ -2303,6 +2371,67 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
         ):
             should_grid_charge = True
+
+        # ── Overnight bridge buy (v1.17.0) ───────────────────────────────────
+        # The dynamic floor sizes the energy the house needs to reach the next
+        # solar refill, but it only gates SELLING. When the battery simply does
+        # not hold that much, nothing buys the difference: it runs to the
+        # hardware floor before sunrise and the house then imports the same
+        # energy at the morning price. Observed twice: the battery ran
+        # out before sunrise with the overnight trough unused, and the
+        # morning imported at a higher price.
+        # The optimiser's own plan does not close
+        # this: one CHARGE slot adds a full quarter-hour at the charge rate, far
+        # more than the gap, and the surplus is worthless on a day the sun refills the
+        # battery anyway — so the trade prices out even though the gap itself is
+        # worth covering.
+        #
+        # The rule buys that shortfall, and only it: the cheapest slot before
+        # the bridge ends (within BRIDGE_PRICE_TOLERANCE of it, so a flat night
+        # does not wait for a minimum it never beats), and only while solar is
+        # not expected to fill the battery anyway.
+        bridge_buy_active = False
+        bridge_buy_fill_up = False
+        bridge_shortfall_kwh = 0.0
+        if self._bridge_reserve_kwh > 0 and self._bridge_end is not None and now < self._bridge_end:
+            usable_kwh = max(
+                0.0,
+                (battery_soc - self._physical_floor_soc()) / 100.0
+                * capacity_kwh * (efficiency ** 0.5),
+            )
+            bridge_shortfall_kwh = max(0.0, self._bridge_reserve_kwh - usable_kwh)
+        if (
+            bridge_shortfall_kwh > 0.0
+            and bool(grid_slot_data)
+            and price_data_sufficient
+            and not should_export
+            and not solar_will_fill
+            and importable_kwh >= MIN_GRID_CHARGE_KWH
+            and battery_soc < max_soc
+            and not evcc_managing_battery
+            and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
+        ):
+            bridge_buys = [
+                _buy(value, start, local_hour)
+                for start, _dur_h, local_hour, _local_minute, value in grid_slot_data
+                if start < self._bridge_end
+            ]
+            cheapest_before_bridge = min(bridge_buys) if bridge_buys else 0.0
+            at_cheapest = (
+                cheapest_before_bridge > 0.0
+                and buy_price_next_slot <= cheapest_before_bridge * BRIDGE_PRICE_TOLERANCE
+            )
+            # "Really cheap and the sun will not do it": at a price in the day's
+            # cheapest quarter, with the 24 h solar forecast below the house's
+            # own 24 h need, fill the battery rather than buying the gap alone.
+            fill_up = (
+                buy_price_next_slot <= buy_price_p25
+                and solar_kwh < predicted_house_load_24h
+            )
+            if at_cheapest and (bridge_shortfall_kwh >= MIN_GRID_CHARGE_KWH or fill_up):
+                should_grid_charge = True
+                bridge_buy_active = True
+                bridge_buy_fill_up = fill_up
 
         # ── Price chart data ──────────────────────────────────────────────────
         # When price_resolution_15min is enabled: emit every native slot (15-min or
@@ -2544,6 +2673,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 ev_charging_now, ev_likely_charging, ev_block_prob,
                 evcc_battery_mode, evcc_managing_battery,
                 capped_charge_rate_kw,
+                bridge_shortfall_kwh if bridge_buy_active else 0.0,
+                bridge_buy_fill_up,
             )
             # ---- action log: detect export/charge session transitions ----
             # v0.75.8 — deliberately scoped inside this branch, not evaluated
@@ -2878,6 +3009,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         evcc_battery_mode: str,
         evcc_managing_battery: bool,
         capped_charge_rate_kw: float = 0.0,
+        bridge_shortfall_kwh: float = 0.0,
+        bridge_fill_up: bool = False,
     ) -> tuple[str, str]:
         target_mode = MODE_NORMAL
         reason = "Conditions not met for export or grid charging"
@@ -2891,10 +3024,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
         elif should_grid_charge:
             target_mode = MODE_GRID_CHARGING
-            reason = (
-                f"Grid charging: buy price {buy_price_next_slot:.2f} ≤ p25 {buy_price_p25:.2f} DKK/kWh (incl. tariffs + VAT), "
-                f"{importable_kwh:.1f} kWh room available"
-            )
+            # v1.17.0 — an overnight bridge buy is not a p25 trade and must not
+            # be reported as one: it buys at the cheapest price before the next
+            # solar refill because the battery is short for the night, which can
+            # be above p25.
+            if bridge_shortfall_kwh > 0.0:
+                reason = (
+                    f"Night bridge: battery {bridge_shortfall_kwh:.1f} kWh short of the "
+                    f"house need until solar returns — buying at "
+                    f"{buy_price_next_slot:.2f} DKK/kWh, the cheapest price before then"
+                )
+                if bridge_fill_up:
+                    reason += " (filling up: price in the cheapest quarter, little sun forecast)"
+            else:
+                reason = (
+                    f"Grid charging: buy price {buy_price_next_slot:.2f} ≤ p25 {buy_price_p25:.2f} DKK/kWh (incl. tariffs + VAT), "
+                    f"{importable_kwh:.1f} kWh room available"
+                )
         else:
             if ev_charging_now:
                 reason = "EV actively charging (now/minpv) — holding battery for it"
@@ -2950,6 +3096,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         live_source = self._setting(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE)
         coordinate_with_evcc = live_source in (LIVE_SOURCE_EVCC, LIVE_SOURCE_HYBRID) and evcc_url
 
+        # v1.16.0 — leaving Force Charge: re-engage the EV battery lock before
+        # the inverter changes mode, so there is no window in which the battery
+        # can feed a FULL-mode car.
+        if new_mode != MODE_GRID_CHARGING:
+            self._force_charge_active = False
+            if self._ev_lock_demand and not self._ev_battery_locked:
+                await self._set_battery_lock(True)
+
         if new_mode == MODE_EXPORTING:
             # v0.47.6 — Force Discharge actively pushes the battery to the grid.
             # (The old "Feed-in First" only re-routes solar surplus and does not
@@ -2974,6 +3128,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             await self._restore_export_min_soc()  # leaving export — give the house its SoC back
             await self._set_work_mode(WORK_MODE_FORCE_CHARGE)
             await self._set_charge_power(inverter_id, max_kw=capped_charge_rate_kw)
+            # v1.16.0 — the discharge lock also blocks Force Charge. Release it
+            # only after the inverter reports Force Charge (_set_work_mode logs
+            # and swallows write failures), so the battery is never unlocked
+            # in Self Use.
+            wm = self.hass.states.get(
+                self.config.get("foxess_work_mode_entity", "select.foxessmodbus_work_mode"))
+            if wm is not None and wm.state == WORK_MODE_FORCE_CHARGE:
+                self._force_charge_active = True
+                if self._ev_battery_locked:
+                    await self._set_battery_lock(False)
             if coordinate_with_evcc:
                 self._we_set_evcc_mode = True
                 await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
@@ -3500,6 +3664,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         bridge, dropping the floor to the bare minimum and letting the evening
         export sell the SoC the house needed overnight (drain to ~11 %).
         """
+        # v1.17.0 — the bridge this call sizes, cleared first so an early return
+        # cannot leave a stale one behind for the overnight bridge buy.
+        self._bridge_reserve_kwh = 0.0
+        self._bridge_end = None
+
         if capacity_kwh <= 0 or not solar_slot_data:
             return None
 
@@ -3584,11 +3753,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         bridge_house_kwh = 0.0
         bridge_charge_h = 0.0
         bridge_h = 0.0
+        bridge_end = slots[-1][0] + timedelta(hours=float(slots[-1][2]))
         for i in range(start_idx, len(slots)):
             _st, house_kw, dur_h, solar_covers, charge_here, solar_kw = slots[i]
             if i > start_idx and solar_covers:
+                bridge_end = _st
                 break
             if bridge_h >= DYNAMIC_FLOOR_REFILL_MAX_H:
+                bridge_end = _st
                 break
             bridge_house_kwh += max(0.0, house_kw - solar_kw) * dur_h
             if charge_here:
@@ -3613,7 +3785,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # eff**0.5 to match the DP optimiser's own split (discharge_eff =
         # efficiency ** 0.5); dividing by the full round-trip eff over-reserved
         # the floor by ~4%.
-        house_need_kwh = bridge_house_kwh / (eff ** 0.5)
+        # v1.17.0 — plus the inverter's own overhead across the bridge. The house
+        # meter does not see it, so a reserve sized on house load alone is short
+        # by ~0.07 kW × the length of the night (see INVERTER_STANDBY_KW).
+        house_need_kwh = (
+            bridge_house_kwh + INVERTER_STANDBY_KW * bridge_h) / (eff ** 0.5)
         # Energy a planned grid-charge actually returns to the battery over the
         # bridge (one-way CHARGE leg → eff**0.5, v1.10.6, same DP consistency
         # as above). Credited in PROPORTION to how long it runs — a token
@@ -3624,6 +3800,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # the safe/conservative direction.
         charge_kwh = max(0.0, float(grid_charge_kw)) * bridge_charge_h * (eff ** 0.5)
         reserve_kwh = max(0.0, house_need_kwh - charge_kwh) * margin
+        # v1.17.0 — publish the sized bridge for the overnight bridge buy. The
+        # need is BEFORE the planned-charge credit: the buy decision is what
+        # schedules that charge, so netting it off here would hide the shortfall
+        # the moment a charge appeared in the plan.
+        self._bridge_reserve_kwh = house_need_kwh * margin
+        self._bridge_end = bridge_end
         # The battery only delivers down to the hardware minimum SoC, so the
         # reserve must sit ON TOP of it: export floor = hardware_floor +
         # reserve%. Otherwise only (floor − hardware_floor) would actually be
@@ -5086,6 +5268,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             elif final_amps < self._ev_last_amps - step:
                 final_amps = self._ev_last_amps - step
 
+        # Net import limit — applied after the rate-of-change limit, which
+        # slows downward moves too, so a throttle-down takes effect at once.
+        final_amps, grid_limited = self._ev_grid_limit_amps(
+            final_amps, EV_PHASES, grid_import_kw, ev_current_kw,
+            EV_OCPP_MIN_AMPS, min(max(0.0, target_kw), max_kw), now_ts)
+        if grid_limited:
+            _grid_max = float(self._stored.get('grid_max_kw', GRID_MAX_KW))
+            reason = self._msg(
+                f"Throttled to the {_grid_max:.1f} kW net import limit",
+                f"Begrænset til net-importgrænsen på {_grid_max:.1f} kW",
+            )
+
         # ── Send OCPP write only when the change is meaningful ────────────
         send = False
         if final_amps == 0 and self._ev_last_amps > 0:
@@ -5094,6 +5288,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             send = True  # starting
         elif abs(final_amps - self._ev_last_amps) >= EV_MIN_AMP_CHANGE:
             send = True  # significant change
+        elif grid_limited and final_amps != self._ev_last_amps:
+            send = True  # net import limit — never deduplicate a throttle
 
         # v0.40.2 — periodic re-assert. A charger can silently drop its
         # charging profile (reconnect, reboot, new transaction) and revert
@@ -5198,10 +5394,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # charge 02:00–06:00): the lock now engages at 02:00 when current
         # actually flows, not at 22:00 the moment FULL was selected. Lock
         # releases automatically when draw drops back below the threshold.
-        want_lock = (
+        self._ev_lock_demand = (
             self._ev_effective_mode == EV_MODE_FULL
             and ev_current_kw > EV_BATTERY_LOCK_POWER_THRESHOLD_KW
         )
+        want_lock = self._ev_lock_demand and not self._force_charge_active
         if want_lock != self._ev_battery_locked:
             await self._set_battery_lock(want_lock)
 
@@ -6063,6 +6260,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # remain immediate, and the export-aware signal self-corrects any
         # momentary overshoot on the next tick.
 
+        # Net import limit — last word on the current, after every rule above
+        # that can raise it.
+        final_amps, grid_limited = self._ev_grid_limit_amps(
+            final_amps, PHASES, grid_import_kw, ev_current_kw, min_amps_sel,
+            min(max(0.0, target_kw), max_kw), now_ts)
+        if grid_limited:
+            _grid_max = float(self._stored.get('grid_max_kw', GRID_MAX_KW))
+            reason = self._msg(
+                f"Throttled to the {_grid_max:.1f} kW net import limit",
+                f"Begrænset til net-importgrænsen på {_grid_max:.1f} kW",
+            )
+
         # Heartbeat: ALWAYS apply (unlike OCPP's dedup) so the setpoint never
         # expires. amps<=0 stops; amps>0 holds the chosen phase + sets current.
         try:
@@ -6081,10 +6290,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # battery. Releases automatically when the draw stops or the mode leaves
         # FULL. (PV-mode never needs this — its target tracks solar surplus and
         # the battery-full override yields if the battery is discharging.)
-        want_lock = (
+        self._ev_lock_demand = (
             effective_mode == EV_MODE_FULL
             and ev_current_kw > EV_BATTERY_LOCK_POWER_THRESHOLD_KW
         )
+        want_lock = self._ev_lock_demand and not self._force_charge_active
         if want_lock != self._ev_battery_locked:
             await self._set_battery_lock(want_lock)
 
@@ -6428,6 +6638,62 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     def _amps_to_kw(amps: int, phases: int = EV_PHASES) -> float:
         """Convert per-phase line current (A) back to kW. Inverse of _kw_to_amps."""
         return amps * EV_VOLTAGE * phases / 1000.0
+
+    def _ev_grid_limit_amps(
+        self, amps: float, phases: int, grid_import_kw: float,
+        ev_current_kw: float, min_amps: float, requested_kw: float,
+        now_ts: datetime,
+    ) -> tuple[float, bool]:
+        """Cap the EV current so total grid import stays within the Net import limit.
+
+        Applied last, after every other rule that can raise the current (the
+        brief-dip hold, the time window, the override ramp), so nothing can
+        push the car back over the limit afterwards. The car may only use the
+        headroom that is genuinely free right now: the limit, minus the safety
+        margin, minus everything else currently drawing from the grid (house
+        and battery charging). If that is below the charger's minimum for the
+        active phase count the car pauses — it is never clamped back up to a
+        minimum that would break the limit.
+
+        Records what the car is asking for — its mode target, not the ramp
+        step or the capped value, since both of those undercount a car that is
+        still ramping or has just been throttled. The battery's grid-charge cap
+        sizes itself against that request, so the house battery yields to the
+        car first; the car is only throttled here when the battery has nothing
+        left to give, or transiently until the battery's next re-cap. Also
+        records when the car last drew, so a car this cap has just paused is
+        still yielded to while one that is merely plugged in and full is not.
+
+        Returns (amps, grid_limited).
+        """
+        nominal_kw_per_amp = EV_VOLTAGE * phases / 1000.0
+        self._ev_requested_kw = max(
+            0.0, requested_kw, amps * nominal_kw_per_amp if amps > 0 else 0.0)
+        self._ev_requested_ts = now_ts
+        if ev_current_kw > EV_BATTERY_LOCK_POWER_THRESHOLD_KW:
+            self._ev_last_draw_ts = now_ts
+        if amps <= 0:
+            return amps, False
+        grid_max_kw = float(self._stored.get("grid_max_kw", GRID_MAX_KW))
+        other_grid_kw = max(0.0, grid_import_kw - ev_current_kw)
+        free_kw = max(0.0, grid_max_kw - GRID_SAFETY_MARGIN_KW - other_grid_kw)
+        # v1.16.1 — size the car from its measured power per amp. 230 V
+        # nominal overstates it: live, 16 A drew 10.3–10.4 kW, not 11.04, and
+        # the difference throttled the car with ~1 kW of the limit unused. The
+        # measured rate is used only within 0.85–1.1× nominal; outside that the
+        # car is ramping, tapering or has just switched phases, and the reading
+        # does not describe the commanded current, so nominal is kept.
+        kw_per_amp = nominal_kw_per_amp
+        if self._ev_last_amps > 0 and ev_current_kw > EV_BATTERY_LOCK_POWER_THRESHOLD_KW:
+            measured = ev_current_kw / self._ev_last_amps
+            if 0.85 * nominal_kw_per_amp <= measured <= 1.1 * nominal_kw_per_amp:
+                kw_per_amp = measured
+        if amps * kw_per_amp <= free_kw:
+            return amps, False
+        cap_amps = int(free_kw / kw_per_amp * 10) / 10.0
+        if cap_amps < min_amps:
+            return 0, True
+        return min(amps, cap_amps), True
 
     def _reset_override_ramp(self) -> None:
         """Clear the active-ramp state (v0.39.21).
@@ -8520,6 +8786,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         max_soc: float,
         efficiency: float,
         charge_rate_kw: float,
+        grid_headroom_kw: float,
         house_load_profile: list[float],
         ev_charge_hourly: list[float],
         ev_max_kw: float,
@@ -8561,7 +8828,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return self._dp_solve(
                 now, grid_slot_data, solar_slot_data, solar_accuracy_factor, current_soc,
                 capacity_kwh, floor_soc, physical_floor_soc, ev_priority_soc, max_soc, efficiency,
-                charge_rate_kw, house_load_profile, ev_charge_hourly, ev_max_kw,
+                charge_rate_kw, grid_headroom_kw, house_load_profile, ev_charge_hourly, ev_max_kw,
                 vat_factor, tariff_sched, elafgift, spot_markup,
                 export_fee, feed_in_tariff, min_export_price, min_spread, max_export_kw,
                 ev_session_kw, ev_session_horizon_h,
@@ -8585,6 +8852,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         max_soc: float,
         efficiency: float,
         charge_rate_kw: float,
+        grid_headroom_kw: float,
         house_load_profile: list[float],
         ev_charge_hourly: list[float],
         ev_max_kw: float,
@@ -8883,7 +9151,17 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # by _maintain_charge_power, so an imprecise planning-time
             # estimate here can't cause a real overcurrent, only a
             # suboptimal plan that gets corrected when the slot arrives.
-            effective_charge_rate_kw = max(0.0, charge_rate_kw - ev_kw)
+            # v1.15.3 — the car and the battery are limited by different things.
+            # The battery is capped on the inverter side (charge_rate_kw); the
+            # car draws from the grid and shares the NET IMPORT LIMIT
+            # (grid_headroom_kw, which excludes the car's live draw). Subtracting
+            # the car from the battery's own rate was wrong whenever that rate
+            # was the smaller term: a 10.5 kW car against a 9.74 kW battery rate
+            # left zero, although the grid still had 6 kW spare. The car now
+            # comes off the grid headroom, and the battery gets whichever limit
+            # binds first.
+            effective_charge_rate_kw = max(
+                0.0, min(charge_rate_kw, grid_headroom_kw - ev_kw))
 
             # Per-slot SoC step sizes (% of capacity) — duration matters at 15-min granularity
             charge_delta_slot = effective_charge_rate_kw * charge_eff * dur_h / capacity_kwh * 100.0
