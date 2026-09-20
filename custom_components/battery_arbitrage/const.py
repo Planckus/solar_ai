@@ -428,7 +428,7 @@ EV_COOL_ENTRY_SECONDS = 10
 # ~5× smaller than 3φ's 4.14 kW floor, and the terminal action is stopping
 # rather than falling to 1φ. 30 s × ~0.7 kW ≈ 6 Wh per COOLING cycle — small
 # enough that multi-cycle compounding across a partly-cloudy afternoon stays
-# negligible (< 0.5 % of a typical home battery). Not user-tunable: derived from
+# negligible (well under 1 % of a typical home battery). Not user-tunable: derived from
 # the 3φ knob by the physics of the floor gap; SolarAI decides.
 EV_PV_DRAIN_BRIDGE_SECONDS = 30
 
@@ -776,11 +776,11 @@ MIN_GRID_CHARGE_KWH = 0.5           # Don't bother grid-charging less than this
 BRIDGE_PRICE_TOLERANCE = 1.05
 
 # Inverter overhead the house meter never sees: its own standby/conversion draw
-# while discharging. Measured on two consecutive nights here — the battery gave
-# up 2.5 kWh for 1.95 kWh of house load, and 2.9 kWh for 2.4 kWh — i.e. a steady
-# ~0.07 kW on top of the house load, not a proportional loss. Over a 13-hour
-# night that is ~0.9 kWh, which is why a reserve sized on house load alone ran
-# the battery flat about two hours before sunrise.
+# while discharging. Measured against the battery-discharge and house-load
+# counters over two consecutive nights: a steady draw on top of the house load,
+# not a proportional loss. Over a long night it adds up to several percent of a
+# typical battery, which is why a reserve sized on house load alone ran the
+# battery flat about two hours before sunrise.
 INVERTER_STANDBY_KW = 0.07
 # v1.10.7 — live "sell the solar, hold the battery" guard. When real solar
 # surplus (PV above house load) of at least this many kW is already flowing to
@@ -1016,7 +1016,7 @@ FOXESS_BATTERY_DISCHARGE_TOTAL = "sensor.foxessmodbus_battery_discharge_total"
 # pack capacity without waiting for a grid-charge cycle) but was retired in
 # v0.64.1 and removed entirely in v0.75.7 — the FoxESS kWh-remaining register
 # is sticky and lags SoC even near idle, which drifted the learned capacity
-# badly (to about twice the real capacity). Capacity is GUI-set
+# badly — eventually to roughly double the real capacity. Capacity is GUI-set
 # (authoritative); this learner is diagnostic-only.
 CAPACITY_MIN_SOC = 15               # % — don't sample below this (BMS edge effects near empty)
 CAPACITY_MAX_SOC = 85               # % — don't sample above this (BMS tapers near full)
@@ -1043,7 +1043,7 @@ CAPACITY_DIS_MIN_SAMPLES = 5        # runs needed before the learned value is tr
 CAPACITY_DIS_MAX_SAMPLES = 30       # rolling window of runs
 # The learned value may not stray further than this fraction from the value the
 # user set. A median over runs plus this clamp is what keeps this learner from
-# running away the way the BMS one did (it reached about twice the real capacity).
+# running away the way the BMS one did (it reached roughly double the real capacity).
 CAPACITY_DIS_CLAMP_FRAC = 0.5
 EFFICIENCY_MIN_TOTAL_KWH = 100      # kWh — minimum lifetime charge before trusting auto-efficiency
 

@@ -410,6 +410,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # it at the morning price after the battery runs out.
         self._bridge_reserve_kwh: float = 0.0
         self._bridge_end: datetime | None = None
+        # v1.17.1 — solar surplus expected before that bridge starts.
+        self._bridge_solar_surplus_kwh: float = 0.0
         self._cap_dis_last_applied: float | None = None
         # Net import limit enforcement: the power the EV controller last asked
         # for (before the grid cap), and when. The battery's grid-charge cap
@@ -466,6 +468,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # → pv while charging held the old rate for a full stop_window
         # (default 180s), covered by the battery in the meantime.
         self._ev_mode_change_pending: bool = False
+        # v1.17.2 — set while the battery-first gate is holding the car at 0 A,
+        # so the 3-phase dip hold can tell that zero apart from a cloud dip.
+        self._ev_battery_priority_hold: bool = False
         # Time-based hysteresis (v0.26.0): timestamps mark when surplus first
         # crossed above/below the min-charge threshold. Cleared on the opposite
         # crossing. The control loop only flips state once the elapsed time
@@ -1094,9 +1099,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("Could not restore cached prices from storage: %s", err)
         # v0.60.0 — the BMS capacity learner sampled during active discharge,
         # dividing a stale-high kWh-remaining register by a live (lower) SoC,
-        # which drifted the learned capacity high (by nearly
-        # half). The learner is now idle-gated and is diagnostic-only (the GUI
-        # Battery capacity number is authoritative). Clear the drifted samples
+        # which drifted the learned capacity high (it read nearly half above
+        # the real capacity). The learner is now idle-gated and is
+        # diagnostic-only (the GUI Battery capacity number is authoritative). Clear the drifted samples
         # once so the diagnostic re-learns cleanly from idle ticks.
         if not self._stored.get("capacity_samples_reset_v060"):
             self._stored["capacity_samples"] = []
@@ -1108,7 +1113,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._stored["overnight_dirty"] = True
         # v0.64.1 — BMS capacity learner retired (see _async_update_data). Clear
         # the sample window once to drop the BMS-polluted values (drifted to
-        # about twice the real capacity). get_learned_capacity() then returns None until the reliable
+        # roughly double the real capacity). get_learned_capacity() then
+        # returns None until the reliable
         # Force-Charge learner re-populates it, clearing the model-health flag.
         if not self._stored.get("capacity_bms_retired_v0641"):
             self._stored["capacity_samples"] = []
@@ -2377,19 +2383,27 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # solar refill, but it only gates SELLING. When the battery simply does
         # not hold that much, nothing buys the difference: it runs to the
         # hardware floor before sunrise and the house then imports the same
-        # energy at the morning price. Observed twice: the battery ran
-        # out before sunrise with the overnight trough unused, and the
-        # morning imported at a higher price.
-        # The optimiser's own plan does not close
-        # this: one CHARGE slot adds a full quarter-hour at the charge rate, far
-        # more than the gap, and the surplus is worthless on a day the sun refills the
-        # battery anyway — so the trade prices out even though the gap itself is
-        # worth covering.
+        # energy at the morning price. Observed twice: the battery reached the
+        # hardware floor about two hours before sunrise with the night's cheapest
+        # slot unused, and the morning then imported at the day's high prices.
+        # The optimiser's own plan does not close this: one CHARGE slot adds a
+        # full quarter-hour at the charge rate, far more than the gap, and the
+        # surplus is worthless on a day the sun refills the battery anyway — so
+        # the trade prices out even though the gap itself is worth covering.
         #
         # The rule buys that shortfall, and only it: the cheapest slot before
         # the bridge ends (within BRIDGE_PRICE_TOLERANCE of it, so a flat night
-        # does not wait for a minimum it never beats), and only while solar is
-        # not expected to fill the battery anyway.
+        # does not wait for a minimum it never beats), and only when the sun
+        # will not cover the gap first.
+        #
+        # v1.17.1 — the sun test runs over the window that decides it: from now
+        # until the bridge starts, which is the next chance to fill from sun
+        # rather than from the grid. It used to be `solar_will_fill`, a
+        # comparison of 24 h solar minus 24 h house load against the room in
+        # the battery. That double-counted the coming night — the load the
+        # battery is being filled FOR was subtracted from the sun that would
+        # fill it — so on a clear day it could come out false by a few percent
+        # and buy at midday with a full afternoon of sun still to come.
         bridge_buy_active = False
         bridge_buy_fill_up = False
         bridge_shortfall_kwh = 0.0
@@ -2405,7 +2419,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and bool(grid_slot_data)
             and price_data_sufficient
             and not should_export
-            and not solar_will_fill
+            and (self._bridge_solar_surplus_kwh * (efficiency ** 0.5)
+                 < bridge_shortfall_kwh)
             and importable_kwh >= MIN_GRID_CHARGE_KWH
             and battery_soc < max_soc
             and not evcc_managing_battery
@@ -3609,8 +3624,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         Uses the learned weekday/weekend **hourly profile** for the daily shape
         — so a short-term spike is not extrapolated across the whole day (the
-        old `load_2h × 1.1 × 24` blew a 2-hour evening peak up into about twice
-        the real day). A bounded recent-activity scaler keeps it responsive: if the last
+        old `load_2h × 1.1 × 24` blew a 2-hour evening peak up into roughly
+        twice the real daily consumption). A bounded recent-activity scaler keeps it responsive: if the last
         two hours ran hotter than the profile expects for the current hour, the
         whole-day estimate is nudged up, clamped to ±, so genuine busy days
         still register without a single spike dominating.
@@ -3668,6 +3683,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # cannot leave a stale one behind for the overnight bridge buy.
         self._bridge_reserve_kwh = 0.0
         self._bridge_end = None
+        self._bridge_solar_surplus_kwh = 0.0
 
         if capacity_kwh <= 0 or not solar_slot_data:
             return None
@@ -3750,6 +3766,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # get_solar_confidence_factor_for_hour above) — not the raw
         # forecast — so netting it stays exactly as conservative as the user
         # already set solar_confidence_pct to be.
+        # v1.17.1 — solar surplus expected BEFORE the bridge starts: the next
+        # chance to fill the battery from sun rather than from the grid. Net of
+        # the house, which the sun serves first. The overnight bridge buy uses
+        # it to decide whether buying now is needed at all.
+        self._bridge_solar_surplus_kwh = sum(
+            max(0.0, s[5] - s[1]) * s[2] for s in slots[:start_idx]
+        )
+
         bridge_house_kwh = 0.0
         bridge_charge_h = 0.0
         bridge_h = 0.0
@@ -6222,7 +6246,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # forcing the new mode's correctly-computed 0 target back up to the
         # 3-phase minimum and defeating the same-version mode-change bypass
         # in _apply_ev_time_window below.
-        if PHASES == 3 and target_amps == 0 and not self._ev_mode_change_pending:
+        # v1.17.2 — only bridge a zero that came from surplus falling below the
+        # 3-phase floor. A zero from the battery-first gate means the car is
+        # meant to be waiting for the house battery, and holding it at the
+        # 3-phase minimum both defeated that gate and relabelled it as a cloud
+        # dip. Observed live: on the first tick after a restart the controller
+        # upshifted to three phases, the gate zeroed the target because the
+        # battery was below the threshold, and the hold started the car anyway.
+        if (PHASES == 3 and target_amps == 0
+                and not self._ev_mode_change_pending
+                and not self._ev_battery_priority_hold):
             target_amps = min_amps_sel
             reason = self._msg(
                 f"PV: surplus {available_kw:.1f} kW < 3φ floor — "
@@ -6504,10 +6537,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         battery_draining = (
             battery_discharge_kw > EV_OVERRIDE_RAMP_BATTERY_DISCHARGE_THRESHOLD_KW
         )
+        self._ev_battery_priority_hold = False
         if (mode == EV_MODE_PV
                 and battery_soc < priority_soc
                 and (grid_export_kw <= min_kw or battery_draining)
                 and (ev_last_amps == 0 or mode_just_changed)):
+            # v1.17.2 — flag it, so the 3-phase dip hold below does not read
+            # this zero as a passing cloud and restart the car at the minimum.
+            self._ev_battery_priority_hold = True
             return 0.0, self._msg(
                 f"Battery prioritised: {battery_soc:.0f}% / {priority_soc:.0f}% "
                 f"— EV waits until the battery is full",
@@ -9522,18 +9559,37 @@ def _forecast_values(rates: list[dict], now: datetime, hours: float) -> list[flo
 
 
 def _sum_forecast(rates: list[dict], now: datetime, hours: float, watts: bool = False) -> float:
+    """Sum a forecast series over the next `hours`.
+
+    v1.17.1 — each slot is weighted by its own duration, derived from the gap
+    to the next slot the way `_forecast_slots` already does, with a 15-minute
+    fallback for the last one. The power branch previously assumed every slot
+    was 15 minutes, so a 30-minute source (Solcast) halved every solar total it
+    produced and an hourly source quartered it. `_dp_solve` reads the slot list
+    directly and was never affected, which is why the planner and the
+    "rest of today" sensor disagreed with the 24 h sensor.
+    """
     cutoff = now + timedelta(hours=hours)
-    total = 0.0
+    parsed: list[tuple] = []
     for rate in rates:
         start = datetime.fromisoformat(rate["start"])
         if start.tzinfo is None:
             start = start.replace(tzinfo=timezone.utc)
-        if now <= start < cutoff:
-            val = rate["value"]
-            if watts:
-                total += val * (15 / 60) / 1000  # W × 15min → kWh
+        parsed.append((start, rate["value"]))
+    parsed.sort(key=lambda x: x[0])
+
+    total = 0.0
+    for i, (start, val) in enumerate(parsed):
+        if not (now <= start < cutoff):
+            continue
+        if watts:
+            if i + 1 < len(parsed):
+                dur_h = (parsed[i + 1][0] - start).total_seconds() / 3600
             else:
-                total += val
+                dur_h = 0.25
+            total += val * dur_h / 1000  # W × slot hours → kWh
+        else:
+            total += val
     return round(total, 3)
 
 
