@@ -9,15 +9,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.17.2] — 2026-09-20
+
+### Fixed — the three-phase dip hold defeated the battery-first threshold
+
+In solar mode the EV waits at 0 A until the house battery reaches the Battery-first threshold. A separate rule, the three-phase dip hold, parks the car at the three-phase minimum whenever its target falls to zero, so a passing cloud does not stop and restart the session. The hold did not check why the target was zero, and a zero from the battery-first gate is indistinguishable from a zero caused by a cloud — so the hold restarted the car at the minimum current and relabelled it as a dip in the EV reason.
+
+Observed live: on the first tick after a restart the surplus was above the three-phase upshift threshold, so the controller moved to three phases; the gate zeroed the target because the battery was below the threshold; and the hold started the car anyway, at the three-phase minimum, while the reason read as a brief dip. Before the restart the charger had been on one phase, where the hold does not apply, and the gate had been holding the car correctly.
+
+The hold now bridges only a zero caused by surplus falling below the three-phase floor. A zero from the battery-first gate is left alone, and the gate's own reason survives to the dashboard. Cloud dips are unaffected, including for a session already running below the threshold, which the gate deliberately does not stop.
+
+---
+
+## [1.17.1] — 2026-09-20
+
+### Fixed — the solar forecast totals were half the real figure
+
+`_sum_forecast` weighted every forecast slot as 15 minutes. A source that publishes 30-minute slots (Solcast) therefore halved both solar totals it produced — the 24-hour and the 6-hour forecast — and an hourly source quartered them.
+
+The totals feed the "solar will fill the battery" check that vetoes grid charging, the overnight bridge rule's "little sun forecast" condition, the net house need behind export decisions, and the two forecast sensors. The optimiser was never affected: `_dp_solve` reads the slot list with each slot's own duration, which is why the "rest of today" figure and the 24-hour figure disagreed.
+
+Each slot is now weighted by its own duration, derived from the gap to the next slot exactly as `_forecast_slots` does, with a 15-minute fallback for the last one. Installs on 15-minute data are unchanged; hourly and 30-minute sources are corrected.
+
+### Fixed — the overnight bridge bought at midday with a day of sun ahead
+
+The bridge rule asked "will solar fill the battery anyway?" by subtracting 24 hours of house load from 24 hours of solar and comparing the remainder to the room in the battery. That double-counts the coming night: the load the battery is being filled for was subtracted from the sun that would fill it. On a clear day the comparison could fail by a few percent and buy at midday with a full afternoon of sun still to come.
+
+The test now runs over the window that decides it: the solar surplus expected between now and the moment the dark bridge starts, net of the house load the sun serves first. If that covers the shortfall, nothing is bought. Replayed against a clear autumn day it makes no purchase, and against the same forecast scaled down to a winter-grade day the bridge starts immediately and the buy still fires.
+
+The cheapest-slot test is unchanged and continues to cover the other half: a purchase only happens when the current slot is within 5% of the cheapest before the bridge ends, so a cheaper hour later in the night still wins.
+
+---
+
 ## [1.17.0] — 2026-09-16
 
 ### Fixed — the battery ran flat before sunrise two nights running
 
 Two things, both measured on two recorded nights.
 
-**The overnight reserve did not count the inverter's own consumption.** The house meter recorded 1.95 kWh and 2.4 kWh across the two core nights; the battery gave up 2.5 kWh and 2.9 kWh to deliver them. The difference is a steady ~0.07 kW of inverter overhead, not a proportional loss, and the reserve was sized on house load plus a one-way discharge efficiency only. Over a 13-hour night that is ~0.9 kWh, or about 9 points of SoC — which is why the battery reached the hardware floor around 07:00 instead of lasting to the solar refill. The learned hourly house-load profile was accurate (2.42 kWh predicted against 2.4 kWh measured) and is unchanged. The dark-bridge reserve now adds `INVERTER_STANDBY_KW × bridge hours`.
+**The overnight reserve did not count the inverter's own consumption.** Measured against the battery-discharge and house-load counters over two consecutive nights, the battery gave up meaningfully more than the house meter recorded. The difference is a steady inverter overhead in the tens of watts, not a proportional loss, and the reserve was sized on house load plus a one-way discharge efficiency only. Over a long night that adds up to several points of SoC — which is why the battery reached the hardware floor before the solar refill rather than lasting to it. The learned hourly house-load profile was accurate over the same window and is unchanged. The dark-bridge reserve now adds `INVERTER_STANDBY_KW × bridge hours`.
 
-**Nothing bought the shortfall.** The reserve only gates selling. When the battery does not hold enough to reach the next solar refill, the house imports the missing energy in the morning instead, at a higher price than the overnight trough. The optimiser does not close this gap on its own: a CHARGE slot adds a full quarter hour at the charge rate, far more than the gap, and the surplus is worth nothing on a day the sun refills the battery anyway, so the trade prices out.
+**Nothing bought the shortfall.** The reserve only gates selling. When the battery does not hold enough to reach the next solar refill, the house imports the missing energy in the morning instead, at the day's high prices rather than the night's cheapest. The optimiser does not close this gap on its own: a CHARGE slot adds a full quarter-hour at the charge rate, far more than the gap, and the surplus is worth nothing on a day the sun refills the battery anyway, so the trade prices out.
 
 Solar AI now buys that shortfall directly. While the battery holds less than the night needs, it grid-charges in the cheapest slot before the next solar refill (within 5% of it, so a flat night does not wait for a minimum it never meets), and only while solar is not expected to fill the battery anyway. If that price is also in the day's cheapest quarter and the 24-hour solar forecast is below the house's own 24-hour need, it fills the battery instead of buying only the gap.
 
@@ -113,7 +145,7 @@ The mode is now asserted once on the first decision after startup, whether or no
 
 `_compute_dynamic_floor_soc` adds the overnight reserve on top of the SoC the battery stops delivering at, and took that base from `DYNAMIC_FLOOR_MIN_SOC` — a hardcoded 20 %, described in the code as "the hardware minimum SoC". A real on-grid Min-SoC is typically 10–13 %, so the base was around 7 points too high and every computed export floor inherited the error, holding back battery that was in fact available. The base now comes from the inverter's own on-grid Min-SoC, read live by the same helper the optimiser uses. The constant is removed rather than left misleading.
 
-On a 13 % inverter setting this lowers the effective floor by about 7 points — roughly 0.75 kWh more battery released for arbitrage each cycle, with no change to how much is genuinely reserved for the night.
+On a 13 % inverter setting this lowers the effective floor by about 7 points, releasing that much more battery for arbitrage each cycle, with no change to how much is genuinely reserved for the night.
 
 ### Fixed — "Solar will fill battery" was reported when the battery was simply full
 
@@ -125,7 +157,7 @@ The v1.15.0 learner measured energy out by integrating the battery discharge-**p
 
 It now reads the inverter's cumulative discharge-energy **counter** — start of run subtracted from end. That value is accumulated in hardware, so there is no sampling gap, and it needs no integration at all. A counter that runs backwards (firmware reset) voids the run, as does a missing reading.
 
-Verified against the same fourteen days of recorded history: the counter-based sampler settles on 10.67 kWh where the power-integration version reported 9.60. Two independent checks agree with the higher figure — the inverter's own BMS kWh-remaining register (10.73 kWh at 96 % SoC, implying 11.18 kWh across the full span) and a direct comparison of counter delta against SoC drop over eight clean nights (10.53 kWh).
+Verified against the same fourteen days of recorded history: the counter-based sampler settles about 10 % above the power-integration version, and two independent checks agree with the higher figure — the inverter's own BMS kWh-remaining register, and a direct comparison of counter delta against SoC drop over eight clean nights.
 
 Samples collected by the old method are cleared once on upgrade, since all of them are biased. The learner re-populates within a few nights.
 
@@ -137,7 +169,7 @@ Samples collected by the old method are cleared once on upgrade, since all of th
 
 Capacity is the most load-bearing number in the model. Every SoC-to-energy conversion goes through it, so an overstated value makes each percent look bigger than it is: the planner under-predicts how fast the battery falls, never projects a shortfall, and so never pre-buys against one.
 
-Both existing samplers left a gap. The BMS-register learner was retired in v0.64.1 for drifting high (it reached about twice the real capacity). The Force-Charge learner that replaced it is reliable but only fires *during a grid charge* — so on an install that seldom runs one, it never accumulates samples and capacity stays at whatever was typed during setup, uncorrected.
+Both existing samplers left a gap. The BMS-register learner was retired in v0.64.1 for drifting high (it roughly doubled the real capacity). The Force-Charge learner that replaced it is reliable but only fires *during a grid charge* — so on an install that seldom runs one, it never accumulates samples and capacity stays at whatever was typed during setup, uncorrected.
 
 The new sampler measures the same quantity from ordinary discharge:
 
@@ -149,7 +181,7 @@ accumulated over a *run* rather than a tick — SoC is reported in whole percent
 
 Safeguards, given the history of this particular learner: the median of a rolling 30-run window (not an EMA — the retired one ratcheted and was poisoned by a single bad read), a plausible-size guard, a minimum of 5 runs before the value is used at all, run state held in memory so a restart mid-run discards it rather than banking an under-count, and a hard clamp to ±50 % of the capacity you set. It can refine your figure; it cannot redefine your battery.
 
-Replayed against two weeks of recorded history it warmed up in three days, produced 23 samples, and settled on a value 21 % below the configured one — matching an independent measurement of the same period to within 0.3 kWh. The `learned_capacity` sensor now reports it, with the value actually in use, both learners' estimates and their sample counts as attributes.
+Replayed against two weeks of recorded history it warmed up in three days, produced 23 samples, and settled on a value 21 % below the configured one, matching an independent measurement of the same period to within a few percent. The `learned_capacity` sensor now reports it, with the value actually in use, both learners' estimates and their sample counts as attributes.
 
 ### Fixed — the "Minimum arbitrage spread" setting silently disabled grid charging
 
@@ -329,7 +361,7 @@ Two follow-ups to v1.13.7, both dashboard/telemetry only.
 **Behaviour under the fix:**
 - 20-second cloud where the battery covers the deficit → session survives; when PV returns and battery stops discharging, timer resets. **~4 Wh loss** for the dip. Brief-dip tolerance intact.
 - Sustained cloud where the battery covers for 30+ s → hard stop at t=30 s. **~6 Wh loss** per cycle. No more silent drain.
-- Multiple cycles across a cloudy afternoon → each capped at ~6 Wh, 5 cycles = ~30 Wh (< 0.5 % of a typical home battery). Down from ~175 Wh (5 %) under v1.13.6.
+- Multiple cycles across a cloudy afternoon → each capped at ~6 Wh, 5 cycles = ~30 Wh (well under 1 % of a typical home battery). Down from ~175 Wh (5 %) under v1.13.6.
 
 **Why safe / not a regression:**
 - Only reachable in PV mode (existing early-out at the top of `_apply_ev_time_window`).
@@ -732,13 +764,13 @@ Built and shipped live-iteratively against a real installation (HA snapshot take
 
 ### Fixed
 
-- **Retired the unreliable BMS battery-capacity learner.** It derived capacity from the FoxESS kWh-remaining register, which is sticky and lags the state-of-charge even when the battery is near idle, so the estimate drifted badly (to about twice the real capacity) despite the v0.60.0 idle-gate — the new model-health monitor flagged it on its first run. Capacity is set in the GUI and is authoritative for the optimiser regardless, so this only affected the diagnostic value. The BMS sampler is no longer called and its drifted samples are cleared once on upgrade; the reliable Force-Charge capacity sampler (real energy-in vs SoC change) remains. This clears the model-health flag.
+- **Retired the unreliable BMS battery-capacity learner.** It derived capacity from the FoxESS kWh-remaining register, which is sticky and lags the state-of-charge even when the battery is near idle, so the estimate drifted badly — eventually to roughly double the real capacity — despite the v0.60.0 idle-gate — the new model-health monitor flagged it on its first run. Capacity is set in the GUI and is authoritative for the optimiser regardless, so this only affected the diagnostic value. The BMS sampler is no longer called and its drifted samples are cleared once on upgrade; the reliable Force-Charge capacity sampler (real energy-in vs SoC change) remains. This clears the model-health flag.
 
 ## [0.64.0] — 2026-06-26
 
 ### Added
 
-- **Model-health monitor.** A new *Model health* binary sensor (and edge-triggered notification) watches the learned models and raises a flag when one looks wrong, instead of letting it silently skew decisions. It checks: the BMS capacity learner drifting more than 25 % from the set capacity; the overnight reserve factor pinned at a safety clamp (e.g. its 1.60 cap, the signal to raise it for winter); auto round-trip efficiency at a clamp edge; the solar forecast factor persistently biased; and the 7-day predicted-vs-actual SoC error exceeding 12 %. The `issues` attribute lists what and why. It is detection-and-surface only — it never changes a model (that boundary is what keeps the self-correction stable). Both problems hit during the 0.60–0.63 work — the capacity learner drifting high, and the reserve margin pinning at its cap — would have been flagged automatically by this.
+- **Model-health monitor.** A new *Model health* binary sensor (and edge-triggered notification) watches the learned models and raises a flag when one looks wrong, instead of letting it silently skew decisions. It checks: the BMS capacity learner drifting more than 25 % from the set capacity; the overnight reserve factor pinned at a safety clamp (e.g. its 1.60 cap, the signal to raise it for winter); auto round-trip efficiency at a clamp edge; the solar forecast factor persistently biased; and the 7-day predicted-vs-actual SoC error exceeding 12 %. The `issues` attribute lists what and why. It is detection-and-surface only — it never changes a model (that boundary is what keeps the self-correction stable). Both problems hit during the 0.60–0.63 work — the capacity learner drifting far above the real capacity, and the reserve margin pinning at its cap — would have been flagged automatically by this.
 
 ## [0.63.0] — 2026-06-26
 
@@ -832,7 +864,7 @@ Built and shipped live-iteratively against a real installation (HA snapshot take
 
 ### Added
 
-- The solar-forecast card now shows a **"today total"** row — today's actual production so far plus the forecast for the rest of the day (production so far plus what is still forecast). A quick forecast-vs-actual check alongside the existing rest-of-today and tomorrow figures. Dashboard-only; uses the inverter's PV-generation total.
+- The solar-forecast card now shows a **"today total"** row — today's actual production so far plus the forecast for the rest of the day. A quick forecast-vs-actual check alongside the existing rest-of-today and tomorrow figures. Dashboard-only; uses the inverter's PV-generation total.
 
 ---
 
@@ -1083,7 +1115,7 @@ Net effect: solar-only mode no longer pulls from the house battery. On a weak or
 
 ### Fixed — discharge floor dissolved by token grid-charges, draining the battery overnight
 
-A week of live data showed the dynamic discharge floor still letting the battery drain to ~11 % overnight (in one case a full battery was exported 99 %→43 % in the evening, then Self-Use ran it down to 11 % before dawn). Root cause: the floor sized the overnight reserve as "house load until the next refill", but **treated *any* planned grid-charge as a full refill that ends the bridge — regardless of how much it actually charges.** A token charge (one case ran 10 minutes, ~0.2 kWh) collapsed the whole reserve, dropped the floor to the bare minimum, and let the evening export sell the SoC the house needed for the night.
+A week of live data showed the dynamic discharge floor still letting the battery drain to ~11 % overnight (in one case a full battery was exported 99 %→43 % in the evening, then Self-Use ran it down to 11 % before dawn). Root cause: the floor sized the overnight reserve as "house load until the next refill", but **treated *any* planned grid-charge as a full refill that ends the bridge — regardless of how much it actually charges.** A token charge (one case ran 10 minutes) collapsed the whole reserve, dropped the floor to the bare minimum, and let the evening export sell the SoC the house needed for the night.
 
 - **Only solar covering the house now ends the dark bridge.** A planned grid-charge no longer counts as a refill.
 - **A planned charge is credited for the energy it actually returns** (sustained charge rate × planned hours within the bridge), netted off the reserve. A short charge offsets almost nothing — so the floor stays high enough to protect the night — while a genuine multi-hour cheap charge offsets a lot, correctly allowing more to be exported. This matches the intended rule: never sell below what the house needs overnight, unless a cheap top-up will genuinely carry it through.
@@ -1231,7 +1263,7 @@ A week of live data showed the dynamic discharge floor still letting the battery
 
 ### Fixed — house-load 24 h projection over-extrapolated short-term spikes
 
-- `predicted_house_load_24h` was `max(load_2h × 1.1, load_28d × 0.5) × 24` — it multiplied the trailing **2-hour** average across the whole day, so a brief evening peak projected to about twice the real day. It now projects from the learned **weekday/weekend hourly profile** (correct daily shape) with a bounded recent-activity scaler (0.8–1.4×), so genuine busy days still register but a transient spike can't run away. This value feeds the reactive `truly_exportable` and `solar_will_fill` guards; the old over-projection made them needlessly conservative (reserving phantom house load against exportable energy and mis-judging whether solar would refill).
+- `predicted_house_load_24h` was `max(load_2h × 1.1, load_28d × 0.5) × 24` — it multiplied the trailing **2-hour** average across the whole day, so a brief evening peak projected to roughly twice the real daily consumption. It now projects from the learned **weekday/weekend hourly profile** (correct daily shape) with a bounded recent-activity scaler (0.8–1.4×), so genuine busy days still register but a transient spike can't run away. This value feeds the reactive `truly_exportable` and `solar_will_fill` guards; the old over-projection made them needlessly conservative (reserving phantom house load against exportable energy and mis-judging whether solar would refill).
 
 ---
 
@@ -1625,7 +1657,7 @@ The fix is **additive only when EV is charging** — IDLE behaviour is identical
 
 ### Changed — battery-priority gate now releases when grid is actively exporting
 
-Adds the export-active edge case to PV-mode behaviour. Before this fix, the EV would stay IDLE while `battery_soc < priority_soc` (default 80 %), **even when the inverter was actively exporting surplus to the grid**. With a typical 12 kWh battery filling from 30 % at ~3 kW, the priority hold lasted ~2 hours of cloudless morning. During that window, PV peaks above battery max-charge + house load got exported at sell price while the EV sat idle — a net loss of the gap between buy and sell price per diverted kWh.
+Adds the export-active edge case to PV-mode behaviour. Before this fix, the EV would stay IDLE while `battery_soc < priority_soc` (default 80 %), **even when the inverter was actively exporting surplus to the grid**. Filling a home battery from a low state of charge, the priority hold can last a couple of hours of cloudless morning. During that window, PV peaks above battery max-charge + house load got exported at sell price while the EV sat idle — a net loss of the gap between buy and sell price per diverted kWh.
 
 ### Fix
 

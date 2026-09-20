@@ -250,11 +250,24 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.17.2 — the dip hold no longer overrides the battery-first threshold
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The car could charge below the Battery-first threshold.** The three-phase dip hold, which keeps a session alive through a passing cloud, treated the battery-first gate's zero as if it were a cloud dip and restarted the car at the three-phase minimum — reporting it as a dip. It now bridges only a zero caused by surplus falling below the three-phase floor.
+
+### v1.17.1 — solar forecast totals were half the real figure
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Both solar forecast totals read low.** Slot energy assumed 15-minute slots, so a 30-minute forecast source halved them and an hourly source quartered them. This affected the grid-charge veto, the export net-need figure and the forecast sensors; the optimiser itself was never affected, which is why "rest of today" disagreed with the 24-hour figure. Slots are now weighted by their own duration.
+- **The overnight bridge bought at midday with a day of sun ahead.** Its solar test compared 24-hour totals and subtracted the coming night's load from the sun meant to cover it. It now measures the solar surplus expected between now and the start of the dark bridge.
+
 ### v1.17.0 — the battery reaches sunrise
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
 
-- **The overnight reserve ignored the inverter's own consumption.** Delivering house load costs the battery a steady ~0.07 kW more than the house meter shows. Over a long night that is ~0.9 kWh, so the reserve was about 9 points of SoC short and the battery hit the hardware floor before the sun returned. The dark-bridge reserve now includes it. The learned house-load profile was accurate and is unchanged.
+- **The overnight reserve ignored the inverter's own consumption.** Delivering house load costs the battery a steady overhead in the tens of watts more than the house meter shows. Over a long night that leaves the reserve several points of SoC short, and the battery hits the hardware floor before the sun returns. The dark-bridge reserve now includes it. The learned house-load profile was accurate and is unchanged.
 - **Nothing bought the difference when the battery was short for the night.** The reserve only gates selling, and the optimiser's smallest charge is far larger than the gap, so the house imported the missing energy at the morning price instead. Solar AI now buys the shortfall in the cheapest slot before the next solar refill — and fills the battery instead when that price is in the day's cheapest quarter and the solar forecast is below the house's own 24-hour need.
 
 ### v1.16.1 — the car keeps its current when the limit has room
@@ -1071,7 +1084,7 @@ All settings are in *Settings → Devices & Services → Solar AI → Configure*
 
 | Parameter | Default | Live | Description |
 |---|---|---|---|
-| Battery capacity | 11.52 kWh | No (config flow) | Anchor value. Refined by the discharge-run learner after 5 runs, clamped to ±50 % of what you set. |
+| Battery capacity | from setup | No (config flow) | Anchor value. Refined by the discharge-run learner after 5 runs, clamped to ±50 % of what you set. |
 | Round-trip efficiency | 92% | No (config flow) | Fallback. Replaced by FoxESS lifetime totals after 100+ kWh cycled. |
 | Forecast horizon | 24 h | No (config flow) | Hours of price data to analyse |
 | Min SoC during export | 50% | Yes | Battery will not export below this SoC |
