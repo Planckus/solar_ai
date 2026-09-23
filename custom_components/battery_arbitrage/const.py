@@ -775,6 +775,13 @@ MIN_GRID_CHARGE_KWH = 0.5           # Don't bother grid-charging less than this
 # wait for, and waiting for one costs the whole bridge.
 BRIDGE_PRICE_TOLERANCE = 1.05
 
+# When Solcast's 10th percentile for a slot falls below this share of its
+# median, the cloud outcome for that slot is genuinely open and the dark-bridge
+# reserve plans on the pessimistic figure instead. Above it the two agree
+# closely enough that the median is the better planning number. Observed: a
+# settled day sits near 0.9, an undecided one near 0.4.
+SOLAR_P10_TRUST_RATIO = 0.6
+
 # Inverter overhead the house meter never sees: its own standby/conversion draw
 # while discharging. Measured against the battery-discharge and house-load
 # counters over two consecutive nights: a steady draw on top of the house load,

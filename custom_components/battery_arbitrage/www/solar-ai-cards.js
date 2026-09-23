@@ -167,6 +167,9 @@
       ev_stops_in: (s) => `EV stops in ${s}s — low sun`, charge_mode: 'Charge mode',
       battery_charging: 'Charging', battery_discharging: 'Discharging',
       ev_connected_label: 'Connected', ev_disconnected_label: 'Not connected',
+      charge_start: 'Start charging the battery', charge_stop: 'Stop charging',
+      charge_running: 'Charging from the grid', charge_idle: 'Force Charge, whatever the price',
+      charge_busy: 'Exporting — stop that first',
     },
     da: {
       house_load: 'Husforbrug', solar: 'Sol', battery: 'Batteri', grid: 'Elnet', ev: 'EV',
@@ -176,6 +179,9 @@
       ev_stops_in: (s) => `EV stopper om ${s}s — lav sol`, charge_mode: 'Opladningstilstand',
       battery_charging: 'Oplader', battery_discharging: 'Aflader',
       ev_connected_label: 'Tilsluttet', ev_disconnected_label: 'Ikke tilsluttet',
+      charge_start: 'Start opladning af batteriet', charge_stop: 'Stop opladning',
+      charge_running: 'Oplader fra elnettet', charge_idle: 'Tvungen opladning uanset pris',
+      charge_busy: 'Sælger — stop det først',
     },
   };
 
@@ -296,7 +302,7 @@
         c.mode_entity, c.mode_reason_entity, c.enabled_entity,
         c.house_load_entity, c.solar_entity,
         c.battery_charge_entity, c.battery_discharge_entity,
-        c.battery_soc_entity, c.battery_floor_entity,
+        c.battery_soc_entity, c.battery_floor_entity, c.battery_temp_entity,
         c.grid_import_entity, c.grid_export_entity,
         c.ev_power_entity, c.ev_status_entity, c.ev_connected_entity,
         c.buy_price_entity, c.sell_price_entity, c.savings_today_entity,
@@ -348,6 +354,9 @@
       const batD = num(hass, c.battery_discharge_entity);
       const soc = num(hass, c.battery_soc_entity);
       const floor = num(hass, c.battery_floor_entity);
+      // v1.19.0 — optional: cell temperature on the battery tile. Absent
+      // config or an unavailable sensor simply leaves the line as it was.
+      const batTemp = c.battery_temp_entity ? num(hass, c.battery_temp_entity) : null;
       const gridImp = num(hass, c.grid_import_entity);
       const gridExp = num(hass, c.grid_export_entity);
 
@@ -458,7 +467,8 @@
                 <div style="position:absolute;left:0;top:0;height:100%;width:${Math.min(100, Math.max(0, soc))}%;background:var(--primary-color);border-radius:3px;"></div>
                 <div style="position:absolute;left:${Math.min(100, Math.max(0, floor))}%;top:-2px;width:1.5px;height:9px;background:var(--secondary-text-color);"></div>
               </div>
-              <div class="tile-label" style="font-size:13px;margin-top:3px;">${Math.round(soc)}% &middot; ${t(hass, 'floor')} ${Math.round(floor)}%</div>
+              <div class="tile-label" style="font-size:13px;margin-top:3px;">${Math.round(soc)}% &middot; ${t(hass, 'floor')} ${Math.round(floor)}%${
+                Number.isFinite(batTemp) ? ` &middot; ${fmt(batTemp, 1)}&deg;C` : ''}</div>
             </div>
             <div class="tile" data-action="more-info" data-entity="${c.grid_import_entity || ''}">
               <ha-icon icon="mdi:transmission-tower" style="color:var(--info-color, #039be5);"></ha-icon>
@@ -596,6 +606,75 @@
     console.info('Solar AI: registered <solar-ai-mode-picker-card>');
   } catch (err) {
     console.error('Solar AI: failed to register <solar-ai-mode-picker-card>', err);
+  }
+
+  // ------------------------------------------------------- charge button
+
+  // v1.19.1 — one button for both halves of a manual grid charge. A core
+  // `button` card can only fire one fixed action, so start and stop needed two
+  // of them; this reads the operating-mode sensor and calls whichever service
+  // applies. `restore_normal` is not charge-specific — it ends an export
+  // session too — so while the battery is exporting the button says so and
+  // does nothing rather than quietly cancelling the sale.
+  class SolarAiChargeButtonCard extends SolarAiBaseCard {
+    _watchedEntities() { return [this._config.mode_entity]; }
+    getCardSize() { return 2; }
+
+    _render() {
+      const c = this._config;
+      const hass = this._hass;
+      if (!hass || !c.mode_entity) return;
+      const st = hass.states[c.mode_entity];
+      const mode = st ? st.state : null;
+      const charging = mode === 'grid_charging';
+      const exporting = mode === 'exporting';
+
+      const label = charging ? t(hass, 'charge_stop') : t(hass, 'charge_start');
+      const sub = exporting
+        ? t(hass, 'charge_busy')
+        : (charging ? t(hass, 'charge_running') : t(hass, 'charge_idle'));
+      const icon = charging ? 'mdi:stop-circle-outline' : 'mdi:battery-charging-high';
+      const color = charging
+        ? 'var(--error-color, #db4437)'
+        : 'var(--primary-color)';
+
+      this._root.innerHTML = `
+        <style>${BASE_CSS}
+          .chg { display:flex; align-items:center; gap:14px; width:100%;
+                 background:none; border:none; cursor:pointer; padding:4px 2px;
+                 font-family:inherit; text-align:left; color:var(--primary-text-color); }
+          .chg[disabled] { cursor:default; opacity:.55; }
+          .chg ha-icon { --mdc-icon-size:34px; flex:0 0 auto; }
+          .chg .lbl { font-size:17px; font-weight:500; }
+          .chg .sub { font-size:14px; color:var(--secondary-text-color); margin-top:2px; }
+        </style>
+        <ha-card>
+        <div class="sa-inner">
+          <button class="chg" ${exporting ? 'disabled' : ''}>
+            <ha-icon icon="${icon}" style="color:${color};"></ha-icon>
+            <span>
+              <div class="lbl">${escapeHtml(label)}</div>
+              <div class="sub">${escapeHtml(sub)}</div>
+            </span>
+          </button>
+        </div>
+        </ha-card>
+      `;
+
+      const btn = this._root.querySelector('button.chg');
+      if (btn && !exporting) {
+        btn.addEventListener('click', () => {
+          callService(hass, 'battery_arbitrage',
+            charging ? 'restore_normal' : 'force_grid_charge', {});
+        });
+      }
+    }
+  }
+  try {
+    customElements.define('solar-ai-charge-button-card', SolarAiChargeButtonCard);
+    console.info('Solar AI: registered <solar-ai-charge-button-card>');
+  } catch (err) {
+    console.error('Solar AI: failed to register <solar-ai-charge-button-card>', err);
   }
 
   // -------------------------------------------------------------- nav card
@@ -1389,5 +1468,6 @@
     { type: 'solar-ai-view-card', name: 'Solar AI View Stack', description: 'Width-capped, centered stack of any cards.' },
     { type: 'solar-ai-nav-card', name: 'Solar AI Nav', description: 'Button row that navigates between views.' },
     { type: 'solar-ai-entities-card', name: 'Solar AI Entities', description: 'Entity list with colored icon badges.' },
+    { type: 'solar-ai-charge-button-card', name: 'Solar AI Charge Button', description: 'Start or stop a manual grid charge.' },
   );
 })();

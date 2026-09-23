@@ -475,19 +475,26 @@ def _register_services(hass: HomeAssistant) -> None:
         coordinators = list(hass.data.get(DOMAIN, {}).values())
         return coordinators[0] if coordinators else None
 
+    # v1.19.2 — both services now set a hold the decision loop honours. Setting
+    # the inverter mode alone lasted until the next tick, which recomputed the
+    # mode from price and put it straight back — measured at about five seconds.
     async def handle_force_export(call: ServiceCall) -> None:
         coordinator = _get_coordinator(call)
         if coordinator:
+            coordinator._manual_mode = "exporting"
             await coordinator._transition_to("exporting")
             coordinator._current_mode = "exporting"
             coordinator._mode_reason = "Manually forced via service"
+            await coordinator.async_request_refresh()
 
     async def handle_force_grid_charge(call: ServiceCall) -> None:
         coordinator = _get_coordinator(call)
         if coordinator:
+            coordinator._manual_mode = "grid_charging"
             await coordinator._transition_to("grid_charging")
             coordinator._current_mode = "grid_charging"
             coordinator._mode_reason = "Manually forced via service"
+            await coordinator.async_request_refresh()
 
     async def handle_restore_normal(call: ServiceCall) -> None:
         coordinator = _get_coordinator(call)

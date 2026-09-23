@@ -83,6 +83,7 @@ from .const import (
     SOLAR_SURPLUS_HOLD_KW,
     SAVINGS_LOG_MAX_DAYS,
     BRIDGE_PRICE_TOLERANCE,
+    SOLAR_P10_TRUST_RATIO,
     INVERTER_STANDBY_KW,
     MIN_GRID_CHARGE_KWH,
     MIN_PRICE_SLOTS_FOR_GRID_CHARGE,
@@ -412,6 +413,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._bridge_end: datetime | None = None
         # v1.17.1 — solar surplus expected before that bridge starts.
         self._bridge_solar_surplus_kwh: float = 0.0
+        # v1.19.2 — a manual force_grid_charge / force_export holds until it
+        # is cancelled or has nothing left to do. Without it the services set
+        # the inverter mode once and the next decision tick, seconds later,
+        # put it straight back — the manual charge lasted about five seconds.
+        # In memory on purpose: a restart releases the hold and returns to
+        # automatic, which is the safe direction.
+        self._manual_mode: str | None = None
+        # v1.18.0 — Solcast's 10th-percentile watts per slot start, when the
+        # source provides them. Read by the dark-bridge reserve only.
+        self._solar_p10_w_by_start: dict[str, float] = {}
         self._cap_dis_last_applied: float | None = None
         # Net import limit enforcement: the power the EV controller last asked
         # for (before the grid cap), and when. The battery's grid-charge cap
@@ -1220,6 +1231,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 solar_data = await self._fetch_solar_forecast(session, evcc_url)
                 if solar_data and solar_data.get("rates"):
                     self._cached_solar_rates = solar_data
+                    self._solar_p10_w_by_start = solar_data.get("p10", {}) or {}
                 elif solar_data is not None:
                     _LOGGER.warning("Solar forecast returned no rates — keeping cached data")
                     # A source is configured but returned nothing usable — only a
@@ -3030,6 +3042,28 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         target_mode = MODE_NORMAL
         reason = "Conditions not met for export or grid charging"
 
+        # v1.19.2 — a manual hold overrides the price logic, and releases itself
+        # once the job is done: a charge when the battery has no room left, an
+        # export when there is nothing above the floor to sell. The live
+        # overcurrent cap and the inverter's own limits still apply underneath —
+        # the hold decides WHAT to do, never how hard.
+        if self._manual_mode == MODE_GRID_CHARGING:
+            if importable_kwh >= MIN_GRID_CHARGE_KWH:
+                await self._transition_or_hold(
+                    MODE_GRID_CHARGING, capped_charge_rate_kw,
+                    self._msg("Manual charge — running until you stop it",
+                              "Manuel opladning — kører til du stopper den"))
+                return MODE_GRID_CHARGING, self._mode_reason
+            self._manual_mode = None
+        elif self._manual_mode == MODE_EXPORTING:
+            if exportable_kwh >= MIN_EXPORTABLE_KWH:
+                await self._transition_or_hold(
+                    MODE_EXPORTING, capped_charge_rate_kw,
+                    self._msg("Manual export — running until you stop it",
+                              "Manuelt salg — kører til du stopper det"))
+                return MODE_EXPORTING, self._mode_reason
+            self._manual_mode = None
+
         if should_export:
             target_mode = MODE_EXPORTING
             reason = (
@@ -3092,6 +3126,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._current_mode = target_mode
         self._mode_reason = reason
         return target_mode, reason
+
+    async def _transition_or_hold(
+        self, mode: str, capped_charge_rate_kw: float, reason: str,
+    ) -> None:
+        """Apply `mode` if the inverter is not already in it, and record it.
+
+        v1.19.2 — the manual-hold path runs every tick, so it must not re-issue
+        the mode write each time; `_transition_to` is called only on the edge,
+        exactly as the automatic path does.
+        """
+        if mode != self._current_mode or not self._startup_mode_asserted:
+            await self._transition_to(mode, capped_charge_rate_kw, reason=reason)
+        self._startup_mode_asserted = True
+        self._current_mode = mode
+        self._mode_reason = reason
 
     async def _transition_to(
         self,
@@ -3650,6 +3699,30 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         return round(total, 3)
 
     # ── Dynamic self-learning discharge floor (v0.47.0 — C) ───────────────
+    def _bridge_solar_kw(self, slot_start: datetime, median_kw: float) -> float:
+        """Solar to plan the dark bridge on: the pessimistic figure when Solcast
+        is unsure about this slot, else the median it already uses.
+
+        v1.18.0 — Solcast publishes a 10th and 90th percentile beside every
+        median. On a settled day the 10th sits close to the median; on a day
+        whose cloud outcome is open it can be a third of it, and the day's own
+        confidence figure drops with it. Planning the night reserve on the
+        median of a day like that is what empties the battery by morning, so
+        for the bridge — and only the bridge — the low estimate is used once
+        the gap is wide enough to mean something (SOLAR_P10_TRUST_RATIO). The
+        DP's trade economics stay on the median: it is the better expectation,
+        and buying decisions there are re-solved every 15 minutes anyway.
+        """
+        if median_kw <= 0:
+            return median_kw
+        p10_w = self._solar_p10_w_by_start.get(slot_start.isoformat())
+        if p10_w is None:
+            return median_kw
+        p10_kw = max(0.0, float(p10_w) / 1000.0)
+        if p10_kw >= SOLAR_P10_TRUST_RATIO * median_kw:
+            return median_kw
+        return p10_kw
+
     def _compute_dynamic_floor_soc(
         self, *, now: datetime, capacity_kwh: float, efficiency: float,
         solar_slot_data: list, grid_charge_kw: float,
@@ -3724,6 +3797,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # solar_confidence_pct now makes the floor more conservative too,
             # not just the DP's own price plan.
             solar_kw = (s[4] / 1000.0) * self.get_solar_confidence_factor_for_hour(loc.hour)
+            solar_kw = self._bridge_solar_kw(slot_start, solar_kw)
             solar_covers = house_kw > 0 and solar_kw >= onset * house_kw
             slot_end = slot_start + timedelta(hours=float(dur_h))
             charge_here = any(slot_start <= pc < slot_end for pc in planned_charge_dts)
@@ -8514,7 +8588,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     "solcast: merged today (%d slots) + tomorrow (%d new slots) = %d total",
                     len(today_rates), len(merged) - len(today_rates), len(merged),
                 )
-                return {"rates": merged} if merged else {}
+                merged_p10 = dict(tom_data.get("p10", {}))
+                merged_p10.update(today_data.get("p10", {}))
+                return {"rates": merged, "p10": merged_p10} if merged else {}
             return today_data
 
         if source == SOLAR_SOURCE_EVCC:
@@ -8614,7 +8690,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return {}
 
         # Pre-compute per-entry start times so we can derive slot duration from gaps
+        # v1.18.0 — `pv_estimate10` (Solcast's 10th percentile) is read from the
+        # same entries as the median. It says how much Solcast is willing to
+        # promise for that slot: close to the median on a settled day, far
+        # below it when the cloud outcome is open. The dark-bridge reserve
+        # plans on it when the gap is wide; nothing else uses it.
         parsed: list[tuple[datetime, float]] = []
+        p10_by_start: dict[str, float] = {}
         for item in forecast:
             ts = item.get("period_start") or item.get("periodStart")
             value = item.get("pv_estimate")
@@ -8624,7 +8706,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=timezone.utc)
-                parsed.append((dt.astimezone(timezone.utc), float(value)))
+                dt = dt.astimezone(timezone.utc)
+                parsed.append((dt, float(value)))
+                p10 = item.get("pv_estimate10")
+                if p10 is not None:
+                    p10_by_start[dt.isoformat()] = float(p10)
             except (ValueError, TypeError) as err:
                 _LOGGER.debug("solcast: skipping bad entry %s: %s", item, err)
 
@@ -8675,13 +8761,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 # value is kWh per period (legacy Solcast v3.x semantic)
                 watts = round(value / dur_h * 1000, 1)
             rates.append({"start": start.isoformat(), "value": watts})
+            iso = start.isoformat()
+            if iso in p10_by_start:
+                p10_val = p10_by_start[iso]
+                p10_by_start[iso] = round(
+                    p10_val * 1000 if is_power else p10_val / dur_h * 1000, 1)
 
         if rates:
             _LOGGER.debug(
                 "solcast: read %d slots from %s (first=%s, last=%s, is_power=%s)",
                 len(rates), entity_id, rates[0]["start"], rates[-1]["start"], is_power,
             )
-        return {"rates": rates} if rates else {}
+        return {"rates": rates, "p10": p10_by_start} if rates else {}
 
     # ------------------------------------------------------------------ #
     # Price source: Energi Data Service Elspotprices                      #
@@ -9441,6 +9532,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
     async def async_restore_normal(self) -> None:
         """Force-restore normal operation (called on unload or disable)."""
+        # v1.19.2 — release any manual hold first, or the next tick would
+        # re-apply the very mode this call is cancelling.
+        self._manual_mode = None
         if self._current_mode != MODE_NORMAL:
             # v0.75.8 — close any open export/charge action-log session before
             # the mode is overwritten below. This is the only other place
