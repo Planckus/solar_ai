@@ -9,6 +9,58 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.19.2] — 2026-09-23
+
+### Fixed — a manually forced charge or export lasted seconds
+
+`force_grid_charge` and `force_export` switched the inverter mode and set the coordinator's current mode, and nothing else. The next decision tick recomputed the mode from price and the plan, found the manual mode did not match, and switched the inverter straight back. Measured on the live system: Force Charge at 13:40:12, Self Use at 13:40:17. Both services were effectively no-ops, and the new front-page button inherited that.
+
+Both services now set a hold that the decision loop honours. It overrides the price logic and releases itself when the job is done — a charge when the battery has no room left, an export when there is nothing above the floor to sell — or when `restore_normal` cancels it, which the front-page button calls to stop. The hold lives in memory, so a restart returns to automatic.
+
+The mode is written only on the edge, not re-issued every tick, and the live overcurrent cap still governs charge power throughout. The hold decides what to do, never how hard.
+
+---
+
+## [1.19.1] — 2026-09-23
+
+### Changed — the charge button is one control for both halves, and asks nothing
+
+v1.19.0 put a core `button` card on the front page. It fired one fixed action, so stopping a manual charge still meant calling `restore_normal` by hand, and it did not appear for at least one user.
+
+It is replaced by `solar-ai-charge-button-card`, which reads the operating-mode sensor and calls whichever service applies: `force_grid_charge` while idle, `restore_normal` while a grid charge is running. The label and icon follow the state, so the button says what the next tap will do. The confirmation dialog is gone — a tap acts immediately.
+
+While the battery is exporting, the button is disabled and says so, because `restore_normal` is not charge-specific and would end the export session too.
+
+---
+
+## [1.19.0] — 2026-09-23
+
+### Added — a manual charge button and cell temperature on the front page
+
+Two dashboard additions.
+
+**Start charging the battery.** A button on the front page calls the existing `force_grid_charge` service, which switches the inverter to Force Charge at the learned rate regardless of price. It asks for confirmation first, since the button sits next to everyday controls and the action costs money. `restore_normal` cancels it, as before.
+
+**Cell temperature on the battery tile.** The status card takes an optional `battery_temp_entity` and shows it beside the state of charge and the floor. Charge rate falls off sharply at low cell temperature, so it belongs next to the figure it explains. A card without the option configured, or with an unavailable sensor, renders exactly as before.
+
+The frontend resource is version-tagged, so the new card reaches the browser without a manual refresh.
+
+---
+
+## [1.18.0] — 2026-09-22
+
+### Added — the overnight reserve plans on Solcast's low estimate when the day is undecided
+
+Solcast publishes a 10th and a 90th percentile beside every median in `detailedForecast`, and Solar AI read only the median. A day the model is confident about and a day whose cloud outcome is wide open were therefore planned identically, even though the low estimate on an undecided day can be little more than a third of the median.
+
+The dark-bridge reserve now reads `pv_estimate10` from the same entries it already parses — no extra API calls — and plans a slot on it whenever it falls below `SOLAR_P10_TRUST_RATIO` (0.6) of the median. Above that the two agree closely enough that the median remains the better planning figure.
+
+This changes two decisions, both on the conservative side: how much the reserve holds back for the night, and whether the overnight bridge buys at the cheapest slot rather than trusting tomorrow's sun to cover the shortfall. Everything else is untouched — the optimiser's own trade economics still run on the median, which is the better expectation and is re-solved every 15 minutes.
+
+Installs on EVCC or Forecast.Solar, or on a Solcast version that does not publish the percentile, see no change: with no low estimate for a slot the median is used exactly as before.
+
+---
+
 ## [1.17.2] — 2026-09-20
 
 ### Fixed — the three-phase dip hold defeated the battery-first threshold

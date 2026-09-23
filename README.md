@@ -250,6 +250,31 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.19.2 — a forced charge or export now holds
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **`force_grid_charge` and `force_export` lasted about five seconds.** They set the inverter mode, and the next decision tick recomputed it from price and reverted. Both now set a hold the decision loop honours, released by `restore_normal` or when the job is done — the battery full, or nothing left above the floor to sell.
+
+### v1.19.1 — the charge button starts and stops, and no longer asks
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **One button for both halves of a manual grid charge.** The front-page button is now a Solar AI card that follows the operating mode: it starts a charge when idle and stops one that is running, with the label and icon changing to match. No confirmation dialog. It is disabled while the battery is exporting, since the cancel service would end that session too.
+
+### v1.19.0 — manual charge button, cell temperature on the battery tile
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Start charging the battery** from a button on the front page — it calls `force_grid_charge`. (Replaced in v1.19.1 by a start/stop card.)
+- **Cell temperature on the battery tile**, beside the state of charge and the floor, via the status card's new optional `battery_temp_entity`.
+
+### v1.18.0 — the night reserve plans on Solcast's low estimate when the day is undecided
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **A confident forecast and an open one were treated the same.** Solcast publishes a 10th percentile beside every median; on a day whose cloud outcome is undecided it can be around a third of the median, while a settled day sits close to it. The dark-bridge reserve now plans a slot on the low estimate when it falls below 60% of the median, which affects how much is held back for the night and whether the overnight bridge buys rather than trusting tomorrow's sun. The optimiser's trade economics still use the median. No extra API calls; sources without a published percentile are unchanged.
+
 ### v1.17.2 — the dip hold no longer overrides the battery-first threshold
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).

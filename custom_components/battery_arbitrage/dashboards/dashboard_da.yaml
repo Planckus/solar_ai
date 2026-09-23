@@ -17,6 +17,7 @@ views:
       battery_discharge_entity: sensor.foxessmodbus_battery_discharge
       battery_soc_entity: sensor.foxessmodbus_battery_soc_1
       battery_floor_entity: sensor.solar_ai_effektivt_afladningsgulv
+      battery_temp_entity: sensor.battery_arbitrage_batteritemperatur_laveste_celle
       grid_import_entity: sensor.foxessmodbus_grid_consumption
       grid_export_entity: sensor.foxessmodbus_feed_in
       ev_power_entity: sensor.solar_ai_lader_effekt
@@ -31,6 +32,8 @@ views:
     - type: custom:solar-ai-mode-picker-card
       title: Opladningstilstand
       entity: select.solar_ai_ev_opladningstilstand
+    - type: custom:solar-ai-charge-button-card
+      mode_entity: sensor.battery_arbitrage_driftstilstand
     - type: custom:solar-ai-entities-card
       title: Solcelleprognose nøjagtighed
       icon_color: amber
@@ -146,6 +149,7 @@ views:
       battery_discharge_entity: sensor.foxessmodbus_battery_discharge
       battery_soc_entity: sensor.foxessmodbus_battery_soc_1
       battery_floor_entity: sensor.solar_ai_effektivt_afladningsgulv
+      battery_temp_entity: sensor.battery_arbitrage_batteritemperatur_laveste_celle
       grid_import_entity: sensor.foxessmodbus_grid_consumption
       grid_export_entity: sensor.foxessmodbus_feed_in
       ev_power_entity: sensor.solar_ai_lader_effekt
