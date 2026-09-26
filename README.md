@@ -134,7 +134,7 @@ HACS (the Home Assistant Community Store) is the easiest way to install and upda
    | **Electricity price source** *(optional)* | **Leave the spot-price entity blank** to use the automatic Energi Data Service prices from the choices above. Only fill it in if you'd rather read an existing price sensor instead (Strømligning, Tibber, etc.). |
    | **Solar forecast source** | EVCC, Solcast, Forecast.Solar, or Auto — plus the entity overrides. For Solcast see [the two-entity wiring note](#solcast-ha-integration--two-entity-wiring-v0280). |
    | **Battery & trading parameters** | Battery capacity (kWh), round-trip efficiency, starting thresholds and currency. |
-   | **Dashboard** | Leave **"Create the Solar AI dashboard for me"** ticked (recommended) and the integration builds the dashboard for you at the URL `/solar-ai` — you skip the manual import in step 6. Untick it if you'd rather import the YAML by hand or link an existing dashboard. |
+   | **Dashboard** | Leave **"Create the Solar AI dashboard for me"** ticked (recommended) and the integration builds the dashboard for you at the URL `/solar-ai`, with the entity ids resolved to your system — you skip the manual import in step 6. Untick it if you'd rather import the YAML by hand or link an existing dashboard; a hand-imported copy keeps the bundled ids and may need editing. |
 
 Everything here can be changed later from *Settings → Devices & Services → Solar AI → **Configure*** without re-running the wizard. When the wizard finishes, Solar AI creates its sensors and switches and starts in monitoring mode (control off).
 
@@ -191,7 +191,7 @@ The embedded OCPP server stays available regardless of this setting — it is th
 
 ### 6. Import the dashboard
 
-**If you left "Create the Solar AI dashboard for me" ticked in step 4, the dashboard already exists** — a **Solar AI** entry in the sidebar (URL `/solar-ai`), in your Home Assistant language. No card installs or hard-refresh needed: the dashboard's cards are bundled with the integration and register themselves automatically. Skip to step 7. **Restart Home Assistant once** when convenient to finalise it (you'll get a notification reminding you): the dashboard works right away, but until that restart it isn't yet listed under *Settings → Dashboards*, so it can't be edited or removed there. After the restart it behaves like any normal dashboard. (To recreate or refresh it later, call the service **Developer Tools → Actions → `battery_arbitrage.create_dashboard`** — use `force: true` to overwrite an existing one with the latest bundled layout.)
+**If you left "Create the Solar AI dashboard for me" ticked in step 4, the dashboard already exists** — a **Solar AI** entry in the sidebar (URL `/solar-ai`), in your Home Assistant language, with every entity id resolved to the ones on your own system (see [Dashboard entity ids](#dashboard-entity-ids)). No card installs or hard-refresh needed: the dashboard's cards are bundled with the integration and register themselves automatically. Skip to step 7. **Restart Home Assistant once** when convenient to finalise it (you'll get a notification reminding you): the dashboard works right away, but until that restart it isn't yet listed under *Settings → Dashboards*, so it can't be edited or removed there. After the restart it behaves like any normal dashboard. (To recreate or refresh it later, call the service **Developer Tools → Actions → `battery_arbitrage.create_dashboard`** — use `force: true` to overwrite an existing one with the latest bundled layout.)
 
 To import it **manually** instead, two ready-made dashboard files are included — pick one by language:
 
@@ -211,6 +211,8 @@ To import it:
 5. Select all the existing text in the editor and delete it, then paste the YAML you copied in step 1. Click **Save**, then close the editor.
 
 The dashboard now renders — no HACS card installs needed, since every custom card it uses (`solar-ai-status-card`, `solar-ai-chart-card`, etc.) ships with the integration itself and registers automatically. If you see "Custom element doesn't exist" messages, restart Home Assistant once (this re-runs the card registration) and hard-refresh the browser.
+
+**Cards that stay empty after a manual import are an entity-id mismatch, not a broken card.** The YAML files contain fixed entity ids, and ids differ between installs — see [Dashboard entity ids](#dashboard-entity-ids) for why. The automatic path above rewrites them for you; a hand-pasted copy is used exactly as written. Either let the integration create the dashboard instead (`battery_arbitrage.create_dashboard` with `force: true`), or edit the affected cards to point at your own entities. A Repairs issue lists which ids did not match.
 
 ### 7. Set your retailer price components
 
@@ -249,6 +251,13 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.20.0 — the bundled dashboard adapts to your entity ids
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The dashboard assumed one particular set of entity ids.** Ids differ between installs for three reasons: the device rename from Battery Arbitrage to Solar AI (Home Assistant never rewrites an existing id), the language the install was first set up in, and the device name on third-party entities such as the FoxESS inverter. The integration now resolves every id against your own entity registry when it writes the dashboard, using each entity's translation key, and takes FoxESS entities from your configuration. See [Dashboard entity ids](#dashboard-entity-ids).
+- **A Repairs issue lists any dashboard entity that does not exist**, instead of leaving empty cards.
 
 ### v1.19.2 — a forced charge or export now holds
 
@@ -1150,6 +1159,30 @@ All settings are in *Settings → Devices & Services → Solar AI → Configure*
 | `battery_arbitrage.reset_learning` | Clear all learned rates, load history, and solar samples |
 
 ---
+
+## Dashboard entity ids
+
+Entity ids are not the same on every install, so the bundled dashboard is rewritten to match yours when the integration creates it.
+
+Three things move an id:
+
+| Cause | Effect |
+|---|---|
+| The device was renamed from Battery Arbitrage to Solar AI | Home Assistant never rewrites an existing entity id, so installs created before the rename keep `sensor.battery_arbitrage_*` and newer ones get `sensor.solar_ai_*` |
+| The language the install was first set up in | The id is slugged from the entity's translated name at registration, so Danish and English installs differ in the suffix |
+| Third-party device names | The FoxESS entities use whatever you named that device |
+
+The integration ships `dashboards/entity_map.json`, which maps each id the dashboard uses to that entity's translation key — stable across all three cases. On creation, each key is looked up in your entity registry and the id is substituted. FoxESS entities come from what you selected in the config flow.
+
+Anything that cannot be matched is listed in a Repairs issue rather than left as an empty card. That normally means a feature you have not configured. To re-run the resolution after changing your configuration:
+
+```yaml
+action: battery_arbitrage.create_dashboard
+data:
+  force: true
+```
+
+Note that `force: true` overwrites the dashboard, discarding edits you have made to it by hand.
 
 ## Known limitations
 
