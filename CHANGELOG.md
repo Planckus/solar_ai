@@ -9,6 +9,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.20.0] — 2026-09-25
+
+### Fixed — the bundled dashboard only worked on an install whose entity ids matched the author's
+
+Every card in the bundled dashboard referred to a fixed entity id, and those ids are not portable. Three things move them:
+
+- **The device rename.** The device is named Solar AI while the integration domain is still `battery_arbitrage`. Home Assistant never rewrites an existing entity id, so an install created before the rename keeps `sensor.battery_arbitrage_*` while a fresh one gets `sensor.solar_ai_*`. The bundled YAML carried a mix of both.
+- **The setup language.** An entity id is slugged from the entity's translated name when it is first registered, so a Danish install and an English one disagree on the suffix — `solcelle_prognose` against `solcelleprognose`, `live_data_source` against `live_datakilde`.
+- **Third-party device names.** The FoxESS entities carry whatever the user named that device.
+
+A user reported having to hand-substitute twelve patterns before the dashboard rendered.
+
+The integration now ships `dashboards/entity_map.json`, mapping every entity id the YAML uses to its translation key, which is stable across all three. When the dashboard is written the ids are resolved against this install's entity registry, and FoxESS entities are taken from what was chosen in the config flow. Simulated against a fresh Danish install with a differently-named inverter, the number of broken references drops from 133 to 3.
+
+Nothing changes on an install whose ids already match, except that the English dashboard now resolves correctly on a Danish install and vice versa.
+
+### Added — a Repairs issue listing dashboard entities that do not exist
+
+Anything the resolver cannot match would otherwise render as an empty card with no explanation. `async_check_dashboard_entities` runs at setup and after `create_dashboard`, and raises a warning listing what is missing. Usually these are features that are simply not configured — no EV charger, no price provider — which is why it is a warning, not an error. It clears itself once the entities appear.
+
+---
+
 ## [1.19.2] — 2026-09-23
 
 ### Fixed — a manually forced charge or export lasted seconds

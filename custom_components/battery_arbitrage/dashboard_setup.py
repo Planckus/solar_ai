@@ -12,15 +12,27 @@ README.
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 
-from .const import DOMAIN
+from .const import (
+    CONF_BATTERY_CHARGE_ENTITY,
+    CONF_BATTERY_DISCHARGE_ENTITY,
+    CONF_BATTERY_SOC_ENTITY,
+    CONF_FOXESS_GRID_EXPORT_ENTITY,
+    CONF_FOXESS_GRID_IMPORT_ENTITY,
+    CONF_FOXESS_LOAD_POWER_ENTITY,
+    CONF_FOXESS_PV_POWER_ENTITY,
+    CONF_FOXESS_WORK_MODE_ENTITY,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,6 +42,37 @@ DASHBOARD_ICON = "mdi:solar-power"
 _DASHBOARDS_DIR = Path(__file__).parent / "dashboards"
 
 _MISSING_CARDS_ISSUE = "missing_dashboard_cards"
+_MISSING_ENTITIES_ISSUE = "missing_dashboard_entities"
+
+# v1.20.0 — the bundled YAML is written against one install's entity ids, and
+# those ids are not portable. Three things move them: the device was renamed
+# from "Battery Arbitrage" to "Solar AI", and Home Assistant never rewrites an
+# existing entity id, so an install created before the rename keeps the old
+# prefix while a fresh one gets `solar_ai_`; the id is slugged from the
+# entity's translated name at creation time, so a Danish and an English
+# install disagree on the suffix; and the FoxESS entities carry whatever
+# device name that user chose. `entity_map.json` maps every id the YAML uses
+# to its translation key, which is stable across all three, and the ids are
+# resolved against this install's registry when the dashboard is written.
+_ENTITY_MAP_FILE = _DASHBOARDS_DIR / "entity_map.json"
+
+_ENTITY_ID_RE = re.compile(
+    r"\b(?:sensor|binary_sensor|switch|select|number|time|date|text|button)"
+    r"\.[a-z0-9_]+\b"
+)
+
+# FoxESS entities the YAML references, and the config key holding the user's
+# real entity for each. Anything not configured is left untouched and reported.
+_FOREIGN_ENTITY_KEYS: dict[str, str] = {
+    "sensor.foxessmodbus_battery_soc_1": CONF_BATTERY_SOC_ENTITY,
+    "sensor.foxessmodbus_battery_charge": CONF_BATTERY_CHARGE_ENTITY,
+    "sensor.foxessmodbus_battery_discharge": CONF_BATTERY_DISCHARGE_ENTITY,
+    "sensor.foxessmodbus_grid_consumption": CONF_FOXESS_GRID_IMPORT_ENTITY,
+    "sensor.foxessmodbus_feed_in": CONF_FOXESS_GRID_EXPORT_ENTITY,
+    "sensor.foxessmodbus_load_power": CONF_FOXESS_LOAD_POWER_ENTITY,
+    "sensor.pv_power_foxessmodbus": CONF_FOXESS_PV_POWER_ENTITY,
+    "select.foxessmodbus_work_mode": CONF_FOXESS_WORK_MODE_ENTITY,
+}
 
 # v0.74.0 — the bundled dashboard now ships its own cards (registered
 # automatically by frontend.py, no HACS install needed), so this list is
@@ -49,6 +92,88 @@ def _load_dashboard_yaml(language: str) -> dict[str, Any] | None:
     except (OSError, yaml.YAMLError) as err:
         _LOGGER.error("Could not read bundled dashboard %s: %s", path, err)
         return None
+
+
+def _load_entity_map() -> dict[str, str]:
+    """Bundled map of YAML entity id → translation key (blocking — executor)."""
+    try:
+        with open(_ENTITY_MAP_FILE, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except (OSError, ValueError) as err:
+        _LOGGER.warning("Could not read the dashboard entity map: %s", err)
+        return {}
+
+
+def _build_substitutions(
+    hass: HomeAssistant, entity_map: dict[str, str],
+) -> tuple[dict[str, str], list[str]]:
+    """Return (yaml id → this install's id, ids that could not be resolved).
+
+    Our own entities are matched on translation key, which survives the device
+    rename and the language the install was first set up in. FoxESS entities
+    are taken from what the user picked in the config flow. An id that resolves
+    to itself is dropped — nothing to rewrite.
+    """
+    registry = er.async_get(hass)
+    by_key: dict[tuple[str, str], str] = {}
+    for entry in registry.entities.values():
+        if entry.platform != DOMAIN or not entry.translation_key:
+            continue
+        by_key[(entry.domain, entry.translation_key)] = entry.entity_id
+
+    subs: dict[str, str] = {}
+    unresolved: list[str] = []
+    for yaml_id, translation_key in entity_map.items():
+        domain = yaml_id.split(".", 1)[0]
+        live = by_key.get((domain, translation_key))
+        if live is None:
+            unresolved.append(yaml_id)
+        elif live != yaml_id:
+            subs[yaml_id] = live
+
+    # FoxESS and other third-party entities: whatever the config flow stored.
+    for cfg_entry in hass.config_entries.async_entries(DOMAIN):
+        data = {**cfg_entry.data, **cfg_entry.options}
+        for yaml_id, conf_key in _FOREIGN_ENTITY_KEYS.items():
+            live = data.get(conf_key)
+            if isinstance(live, str) and live and live != yaml_id:
+                subs[yaml_id] = live
+        break
+
+    return subs, unresolved
+
+
+def _apply_substitutions(node: Any, subs: dict[str, str]) -> Any:
+    """Rewrite every entity id in a loaded dashboard, in place where possible."""
+    if isinstance(node, dict):
+        return {k: _apply_substitutions(v, subs) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_apply_substitutions(v, subs) for v in node]
+    if isinstance(node, str):
+        if node in subs:
+            return subs[node]
+        # Templates and markdown embed ids inside longer strings.
+        out = node
+        for old, new in subs.items():
+            if old in out:
+                out = out.replace(old, new)
+        return out
+    return node
+
+
+def _referenced_entities(node: Any, found: set[str] | None = None) -> set[str]:
+    """Every entity id a dashboard config refers to, for the existence check."""
+    found = set() if found is None else found
+    if isinstance(node, dict):
+        for value in node.values():
+            _referenced_entities(value, found)
+    elif isinstance(node, list):
+        for value in node:
+            _referenced_entities(value, found)
+    elif isinstance(node, str):
+        found.update(_ENTITY_ID_RE.findall(node))
+    return found
 
 
 async def async_create_dashboard(hass: HomeAssistant, *, force: bool = False) -> str | None:
@@ -93,6 +218,22 @@ async def async_create_dashboard(hass: HomeAssistant, *, force: bool = False) ->
         config = await hass.async_add_executor_job(_load_dashboard_yaml, hass.config.language)
         if not config:
             return None
+
+        # v1.20.0 — rewrite the bundled ids to this install's before writing.
+        entity_map = await hass.async_add_executor_job(_load_entity_map)
+        if entity_map:
+            subs, unresolved = _build_substitutions(hass, entity_map)
+            if subs:
+                config = _apply_substitutions(config, subs)
+                _LOGGER.info(
+                    "Solar AI dashboard: resolved %d entity id(s) to this install",
+                    len(subs),
+                )
+            if unresolved:
+                _LOGGER.debug(
+                    "Solar AI dashboard: %d id(s) had no match in the registry: %s",
+                    len(unresolved), ", ".join(sorted(unresolved)[:10]),
+                )
 
         # Persist (or fetch) the dashboard metadata via the storage collection.
         collection = DashboardsCollection(hass)
@@ -170,6 +311,43 @@ def _registered_resource_urls(hass: HomeAssistant) -> list[str] | None:
         return None
     urls = [str(it.get("url", "")) for it in items if isinstance(it, dict)]
     return urls or None
+
+
+async def async_check_dashboard_entities(hass: HomeAssistant) -> None:
+    """Raise/clear a Repairs issue listing dashboard entities that do not exist.
+
+    v1.20.0 — the resolver rewrites what it can match; anything left over would
+    otherwise render as an empty card with no explanation. Entities the user
+    has simply not configured (no EV charger, no Strømligning) show up here
+    too, which is why this is a warning rather than an error.
+    """
+    try:
+        data = hass.data.get("lovelace")
+        dashboards_map = getattr(data, "dashboards", None) if data is not None else None
+        store = (dashboards_map or {}).get(DASHBOARD_URL_PATH)
+        if store is None:
+            return
+        config = await store.async_load(False)
+        if not config:
+            return
+        missing = sorted(
+            eid for eid in _referenced_entities(config)
+            if hass.states.get(eid) is None
+        )
+        if missing:
+            shown = ", ".join(missing[:12]) + (f" (+{len(missing) - 12} more)" if len(missing) > 12 else "")
+            ir.async_create_issue(
+                hass, DOMAIN, _MISSING_ENTITIES_ISSUE,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=_MISSING_ENTITIES_ISSUE,
+                translation_placeholders={"count": str(len(missing)), "entities": shown},
+                learn_more_url="https://github.com/Planckus/solar_ai#dashboard-entity-ids",
+            )
+        else:
+            ir.async_delete_issue(hass, DOMAIN, _MISSING_ENTITIES_ISSUE)
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("Dashboard entity check skipped (error)", exc_info=True)
 
 
 async def async_check_dashboard_cards(hass: HomeAssistant) -> None:

@@ -561,6 +561,10 @@
     "missing_dashboard_cards": {
       "title": "Solar AI-dashboardkort ikke installeret",
       "description": "Solar AI-dashboardet bruger tilpassede Lovelace-kort, der endnu ikke er installeret: {cards}. Installer dem via HACS → Frontend, og genindlæs derefter browseren (dokumentationslinket nedenfor har hvert kort)."
+    },
+    "missing_dashboard_entities": {
+      "title": "Solar AI-dashboard: {count} entiteter blev ikke fundet",
+      "description": "Solar AI-dashboardet henviser til {count} entiteter, som ikke findes her: {entities}\n\nDet medfølgende dashboard omskrives til dine entitets-id'er, når det oprettes, ud fra hver entitets oversættelsesnøgle. Det, der bliver tilbage, er som regel en funktion, du ikke har konfigureret (ingen EV-lader, ingen prisudbyder), eller en tredjeparts-entitet som FoxESS-inverteren under et andet enhedsnavn. Vælg den rigtige entitet i Solar AI's indstillinger og kør handlingen `battery_arbitrage.create_dashboard` med `force: true`, eller ret kortene manuelt."
     }
   }
 }

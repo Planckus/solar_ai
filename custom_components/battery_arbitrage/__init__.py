@@ -399,8 +399,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # each setup, so it clears once the user installs them). Only for users who
     # are on the bundled dashboard, to avoid noise for custom-dashboard setups.
     if uses_our_dashboard:
-        from .dashboard_setup import async_check_dashboard_cards
+        from .dashboard_setup import (
+            async_check_dashboard_cards,
+            async_check_dashboard_entities,
+        )
         await async_check_dashboard_cards(hass)
+        await async_check_dashboard_entities(hass)
 
     # Start the decoupled EV control loop (v0.26.0). It runs at its own
     # configurable cadence regardless of the main fast-poll. Inert when the
@@ -587,9 +591,14 @@ def _register_services(hass: HomeAssistant) -> None:
         bundled version (e.g. to pull in dashboard improvements after an
         update); otherwise an existing one is left untouched.
         """
-        from .dashboard_setup import async_create_dashboard, async_check_dashboard_cards
+        from .dashboard_setup import (
+            async_create_dashboard,
+            async_check_dashboard_cards,
+            async_check_dashboard_entities,
+        )
         await async_create_dashboard(hass, force=bool(call.data.get("force", False)))
         await async_check_dashboard_cards(hass)
+        await async_check_dashboard_entities(hass)
 
     hass.services.async_register(DOMAIN, "create_dashboard", handle_create_dashboard)
 
