@@ -45,6 +45,21 @@ create_dashboard:
       default: false
       selector:
         boolean:
+    url_path:
+      name: Write into an existing dashboard
+      description: >
+        Leave empty to use the integration's own dashboard at /solar-ai. Set it
+        to the url_path of a dashboard you already have (the part of its
+        address after the host, e.g. battery-arbitrage) to write the bundled
+        layout there instead, resolved to your entity ids and with its
+        navigation pointing at itself. Intended for a dashboard imported by
+        hand before auto-creation existed, so it keeps its address and its
+        place in the sidebar. The dashboard must already exist, and this
+        replaces its contents, so Overwrite existing must be on as well.
+      required: false
+      example: battery-arbitrage
+      selector:
+        text:
 
 toggle_blocked_sell_hour:
   name: Toggle blocked sell hour

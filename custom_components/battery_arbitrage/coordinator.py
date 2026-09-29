@@ -530,6 +530,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # isn't supplemented by raiding the house battery. Battery can still
         # charge from solar — only the discharge path is blocked.
         self._ev_battery_locked: bool = False
+        # v1.20.1 — when the charger first read ~zero while we were still
+        # commanding current. Cleared as soon as it draws again.
+        self._ev_zero_draw_since_ts: datetime | None = None
         self._ev_battery_lock_prev_a: float | None = None
         # v1.16.0 — max_discharge_current = 0 also stops Force Charge on the H3
         # (observed: 0 kW into the battery for 15 min at a 4.5–9.8 kW setpoint).
@@ -5542,7 +5545,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # absorption), not the raw PV-minus-house-load number. Below the
         # priority threshold this will show 0 because the battery is
         # consuming everything.
-        return self._ev_telemetry(reported_target_kw, final_amps, net_surplus_for_ev_kw, reason)
+        return self._ev_telemetry(
+            reported_target_kw, final_amps, net_surplus_for_ev_kw, reason,
+            live_kw=ev_current_kw, charger_status=ocpp_status)
 
     async def _get_modbus_backend(self):
         """Lazily build (and cache) the FoxESS Modbus charger backend.
@@ -6420,7 +6425,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         self._ev_last_reason = reason
         return {
-            **self._ev_telemetry(reported_target_kw, final_amps, available_kw, reason),
+            **self._ev_telemetry(
+                reported_target_kw, final_amps, available_kw, reason,
+                live_kw=ev_current_kw, charger_status=state["status"]),
             "ev_backend": "foxess_modbus",
             "ev_charger_online": True,
             "ev_status_label": state["status_label"],
@@ -7634,8 +7641,27 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         )
         return self._get_float_state(eid, 0.0) / 1000.0
 
+    # v1.20.1 — statuses that mean the charger is NOT delivering, across both
+    # backends: OCPP 1.6 names and the FoxESS Modbus charger's own words.
+    # Matched case-insensitively.
+    _EV_STOPPED_STATUSES = frozenset({
+        "paused", "suspended", "suspendedev", "suspendedevse",
+        "finished", "finishing", "idle", "available", "disconnected",
+        "faulted", "unavailable", "stopped",
+    })
+
+    def _ev_control_interval_seconds(self) -> float:
+        """How often the EV controller re-evaluates, used as the zero-draw grace."""
+        try:
+            return float(self.config.get(
+                CONF_EV_CONTROL_INTERVAL_SECONDS, DEFAULT_EV_CONTROL_INTERVAL_SECONDS,
+            ))
+        except (TypeError, ValueError):
+            return float(DEFAULT_EV_CONTROL_INTERVAL_SECONDS)
+
     def _ev_telemetry(
         self, target_kw: float, target_amps: int, surplus_kw: float, reason: str,
+        *, live_kw: float | None = None, charger_status: str | None = None,
     ) -> dict:
         """Build the telemetry dict consumed by the visibility sensors.
 
@@ -7664,7 +7690,29 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # ARMING/COOLING only meaningful in PV mode where the time-windows apply (v0.27.4)
         # v0.36.0: uses effective mode so scheduled-PV also gets the countdown
         in_pv = (self._ev_effective_mode == EV_MODE_PV)
-        if self._ev_last_amps > 0:
+        # v1.20.1 — a session counts as live only when the charger confirms it.
+        # `_ev_last_amps` is what we last COMMANDED; on its own it kept the
+        # state machine in CHARGING/COOLING while the charger sat paused at
+        # 0 kW, so the dashboard counted down a stop for a session that had
+        # already ended (observed: charger paused from 13:38, a
+        # 179 s cooling countdown published at 13:44:56, IDLE only at 13:48).
+        # An explicit stopped status is believed at once; a zero reading has
+        # to persist past one control interval, since a car that is ramping
+        # up legitimately reads zero for a tick.
+        status_stopped = str(charger_status or "").strip().lower() in self._EV_STOPPED_STATUSES
+        if live_kw is not None and live_kw <= EV_STUCK_DELIVERING_KW:
+            if self._ev_zero_draw_since_ts is None:
+                self._ev_zero_draw_since_ts = now
+        else:
+            self._ev_zero_draw_since_ts = None
+        zero_draw_settled = (
+            self._ev_zero_draw_since_ts is not None
+            and (now - self._ev_zero_draw_since_ts).total_seconds()
+            >= self._ev_control_interval_seconds()
+        )
+        charger_idle = status_stopped or zero_draw_settled
+
+        if self._ev_last_amps > 0 and not charger_idle:
             state = "CHARGING"
             # v1.13.8 — cooling countdown reflects the EFFECTIVE terminal time,
             # not just stop_window. When v1.13.7's dip-bridge dwell is armed
