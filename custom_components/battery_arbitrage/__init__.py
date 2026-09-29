@@ -596,7 +596,12 @@ def _register_services(hass: HomeAssistant) -> None:
             async_check_dashboard_cards,
             async_check_dashboard_entities,
         )
-        await async_create_dashboard(hass, force=bool(call.data.get("force", False)))
+        await async_create_dashboard(
+            hass,
+            force=bool(call.data.get("force", False)),
+            url_path=(str(call.data["url_path"]).strip().lstrip("/")
+                      if call.data.get("url_path") else None),
+        )
         await async_check_dashboard_cards(hass)
         await async_check_dashboard_entities(hass)
 

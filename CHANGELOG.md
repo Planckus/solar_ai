@@ -9,6 +9,61 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.21.0] — 2026-09-29
+
+### Added — `create_dashboard` can write into a dashboard you already have
+
+The resolution added in v1.20.0 and v1.20.2 only ran when the integration created its own dashboard at `/solar-ai`. A dashboard imported by hand — the documented route before auto-creation existed — never benefited, and adopting a resolved copy meant abandoning the old one at a new address.
+
+The action now takes an optional `url_path`. Point it at a dashboard you already have and the bundled layout is written there instead, resolved to your entity ids, with the navigation targets pointing at that dashboard rather than at `/solar-ai`, and with the mobile notification rows rebuilt from your own devices. It keeps its address, its sidebar entry and its position in the sidebar.
+
+```yaml
+action: battery_arbitrage.create_dashboard
+data:
+  url_path: battery-arbitrage
+  force: true
+```
+
+The target must already exist; the action refuses rather than creating a dashboard at an arbitrary address, and names the place to check the exact url_path. Because writing replaces the dashboard's contents, `force` is required as well — with `url_path` set and `force` off the action refuses and says so.
+
+Leaving `url_path` empty behaves exactly as before.
+
+---
+
+## [1.20.2] — 2026-09-29
+
+### Fixed — dashboard navigation went to the wrong dashboard, and the notification rows named the author's devices
+
+Reported in [#4](https://github.com/Planckus/solar_ai/issues/4). Two more places where the bundled YAML carried values that only made sense on one install.
+
+**Navigation.** Every nav-card target and the price tile pointed at `/battery-arbitrage/…`, while the integration creates the dashboard at `/solar-ai`. Clicking any of them landed on the default dashboard. All eight targets in each language file are now rewritten to the url_path the dashboard is actually written to. The link to the integration's own settings page is spelled with an underscore and is left alone.
+
+**Mobile notification rows.** The YAML carried two rows named after the author's phone and tablet. One switch exists per discovered companion app, named after that device, so those ids exist nowhere else. The rows are now rebuilt from the switches this install actually has — one per device, in order, labelled with the device's own name. With no companion app the rows and the divider above them are dropped rather than left pointing at nothing. Entries left behind by a removed or reinstalled app are skipped, so the integration cannot write a row that its own missing-entity check would then flag.
+
+Both resolutions run whether or not `entity_map.json` loads. They do not depend on it, and an earlier draft gated them behind it — which would have reinstated exactly these two bugs if that file were ever missing.
+
+### Known limitation — a hand-imported dashboard is not resolved
+
+Resolution happens when the integration writes the dashboard. A dashboard imported by hand keeps whatever the YAML says, including the `/battery-arbitrage/` navigation targets, which will be wrong unless it happens to sit at that url_path. Running `battery_arbitrage.create_dashboard` creates a resolved copy at `/solar-ai` and leaves the hand-imported one untouched.
+
+---
+
+## [1.20.1] — 2026-09-29
+
+### Fixed — the EV state machine reported a session the charger had already ended
+
+The dashboard showed "EV stops in 146s" while the charger read 0.0 kW. Both statements came from the integration, and the countdown was the wrong one.
+
+`_ev_telemetry` decided IDLE, ARMING, CHARGING or COOLING from `_ev_last_amps` alone — a record of the current Solar AI last *commanded*. It never received the charger's reported power or status, so it could not tell a live session from one the charger had ended on its own. In one recorded case the charger sat paused at 0.0 kW from 13:38; Solar AI reported CHARGING at 7 A, then published a 179-second stop countdown at 13:44:56, and only reached IDLE at 13:48. Ten minutes of a session that was not running, three of them counting down a stop with nothing to stop.
+
+The state machine now takes what the charger reports. A session counts as live only when Solar AI is commanding current **and** the charger confirms it. An explicit stopped status — `paused`, `suspended`, `SuspendedEV`, `finished` and the rest, across both backends — is believed immediately. A zero-power reading has to persist past one control interval first, because a car that is ramping up legitimately reads zero for a tick.
+
+The reason text was accurate throughout: the target really was zero. It was the countdown that lied.
+
+Callers that pass neither reading keep the previous behaviour, so no code path changes silently.
+
+---
+
 ## [1.20.0] — 2026-09-25
 
 ### Fixed — the bundled dashboard only worked on an install whose entity ids matched the author's

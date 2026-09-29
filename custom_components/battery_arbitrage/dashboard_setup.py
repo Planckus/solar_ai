@@ -61,6 +61,27 @@ _ENTITY_ID_RE = re.compile(
     r"\.[a-z0-9_]+\b"
 )
 
+# v1.20.2 — the bundled YAML also hardcodes the dashboard's OWN url_path in
+# every navigation target (`/battery-arbitrage/priser` and the nav card). The
+# integration creates the dashboard at DASHBOARD_URL_PATH, so on any install
+# but the author's those links pointed at a dashboard that does not exist and
+# Home Assistant fell back to the default one. Reported as issue #4. Only the
+# leading dashboard path is rewritten; `/config/integrations/integration/
+# battery_arbitrage` is the integration's own settings page, spelled with an
+# underscore, and is left alone.
+_YAML_DASHBOARD_PATH = "/battery-arbitrage/"
+
+# v1.20.2 — one notification switch exists per discovered mobile app, named
+# after that device, so its entity id differs on every install. The YAML can
+# only carry placeholders; these rows are rebuilt from the install's own
+# switches. Matched on unique_id, which the per-device switch builds as
+# `{entry_id}_target_notify_mobile_app_<device>`.
+_NOTIFY_TARGET_UNIQUE_ID_MARK = "_target_notify_mobile_app_"
+_NOTIFY_PLACEHOLDER_ENTITIES = (
+    "switch.solar_ai_notifikation_iphone",
+    "switch.solar_ai_notifikation_ipad_air",
+)
+
 # FoxESS entities the YAML references, and the config key holding the user's
 # real entity for each. Anything not configured is left untouched and reported.
 _FOREIGN_ENTITY_KEYS: dict[str, str] = {
@@ -106,7 +127,7 @@ def _load_entity_map() -> dict[str, str]:
 
 
 def _build_substitutions(
-    hass: HomeAssistant, entity_map: dict[str, str],
+    hass: HomeAssistant, entity_map: dict[str, str], url_path: str,
 ) -> tuple[dict[str, str], list[str]]:
     """Return (yaml id → this install's id, ids that could not be resolved).
 
@@ -131,6 +152,11 @@ def _build_substitutions(
             unresolved.append(yaml_id)
         elif live != yaml_id:
             subs[yaml_id] = live
+
+    # The dashboard's own navigation targets, pointed at wherever this copy is
+    # being written — which is not always this integration's own dashboard.
+    if _YAML_DASHBOARD_PATH != f"/{url_path}/":
+        subs[_YAML_DASHBOARD_PATH] = f"/{url_path}/"
 
     # FoxESS and other third-party entities: whatever the config flow stored.
     for cfg_entry in hass.config_entries.async_entries(DOMAIN):
@@ -162,6 +188,69 @@ def _apply_substitutions(node: Any, subs: dict[str, str]) -> Any:
     return node
 
 
+def _notify_target_rows(hass: HomeAssistant) -> list[dict[str, str]]:
+    """One dashboard row per mobile app this install can notify.
+
+    v1.20.2 — the bundled YAML carries two placeholder rows named after the
+    author's phone and tablet. Each install has its own devices, so the rows
+    are rebuilt here from the switches that actually exist.
+    """
+    registry = er.async_get(hass)
+    rows: list[dict[str, str]] = []
+    for entry in registry.entities.values():
+        if entry.platform != DOMAIN or entry.domain != "switch":
+            continue
+        if _NOTIFY_TARGET_UNIQUE_ID_MARK not in (entry.unique_id or ""):
+            continue
+        # v1.20.2 — only devices that are actually there. A companion app that
+        # was removed, or reinstalled under a new service name, leaves its
+        # registry entry behind; switch.py recreates switches only for notify
+        # services that exist now. Writing the leftovers onto the dashboard
+        # would make the integration's own missing-entity check complain about
+        # rows the integration had just added.
+        if entry.disabled_by is not None or hass.states.get(entry.entity_id) is None:
+            continue
+        label = (entry.name or entry.original_name or "").strip()
+        # The entity is named "Notifikation: <device>"; the card has its own
+        # heading, so show the device alone.
+        if ":" in label:
+            label = label.split(":", 1)[1].strip()
+        rows.append({"entity": entry.entity_id, "name": f"📱 {label}" if label else entry.entity_id})
+    rows.sort(key=lambda r: r["entity"])
+    return rows
+
+
+def _apply_notify_rows(node: Any, rows: list[dict[str, str]]) -> Any:
+    """Swap the placeholder notification rows for this install's own.
+
+    With no mobile app configured the rows disappear, and the divider that
+    introduces them goes with them rather than trailing the card.
+    """
+    if isinstance(node, dict):
+        return {k: _apply_notify_rows(v, rows) for k, v in node.items()}
+    if not isinstance(node, list):
+        return node
+
+    out: list[Any] = []
+    replaced = False
+    for item in node:
+        is_placeholder = (
+            isinstance(item, dict)
+            and item.get("entity") in _NOTIFY_PLACEHOLDER_ENTITIES
+        )
+        if not is_placeholder:
+            out.append(_apply_notify_rows(item, rows))
+            continue
+        if replaced:
+            continue                      # further placeholders collapse into the first
+        replaced = True
+        if rows:
+            out.extend(dict(r) for r in rows)
+        elif out and out[-1] == {"type": "divider"}:
+            out.pop()                     # nothing to introduce
+    return out
+
+
 def _referenced_entities(node: Any, found: set[str] | None = None) -> set[str]:
     """Every entity id a dashboard config refers to, for the existence check."""
     found = set() if found is None else found
@@ -176,8 +265,19 @@ def _referenced_entities(node: Any, found: set[str] | None = None) -> set[str]:
     return found
 
 
-async def async_create_dashboard(hass: HomeAssistant, *, force: bool = False) -> str | None:
+async def async_create_dashboard(
+    hass: HomeAssistant, *, force: bool = False, url_path: str | None = None,
+) -> str | None:
     """Create (or, with force, overwrite) the Solar AI storage dashboard.
+
+    v1.21.0 — `url_path` writes the resolved dashboard into an EXISTING
+    dashboard instead of creating this integration's own. It is for the user
+    who imported the YAML by hand before auto-creation existed: their
+    dashboard keeps its URL, its sidebar entry and its place in the sidebar,
+    and gains the entity ids, navigation targets and notification rows of this
+    install. The target must already exist — this never creates a dashboard at
+    an arbitrary path — and because writing to it replaces whatever is there,
+    `force` must be set as well.
 
     HA's LovelaceData does not expose the *live* dashboards collection (it is a
     local in async_setup; only its change-listener writes back to
@@ -212,38 +312,62 @@ async def async_create_dashboard(hass: HomeAssistant, *, force: bool = False) ->
             )
             return None
 
-        if DASHBOARD_URL_PATH in dashboards_map and not force:
-            return DASHBOARD_URL_PATH  # leave the existing one alone
+        target_path = url_path or DASHBOARD_URL_PATH
+        writing_to_existing = url_path is not None and url_path != DASHBOARD_URL_PATH
+        if writing_to_existing:
+            if target_path not in dashboards_map:
+                _LOGGER.warning(
+                    "Solar AI dashboard: no dashboard at '%s' — refusing to create "
+                    "one there. Check Settings → Dashboards for the exact url_path.",
+                    target_path,
+                )
+                return None
+            if not force:
+                _LOGGER.warning(
+                    "Solar AI dashboard: writing to '%s' replaces its current "
+                    "contents, so it needs force: true.", target_path,
+                )
+                return None
+        elif target_path in dashboards_map and not force:
+            return target_path  # leave the existing one alone
 
         config = await hass.async_add_executor_job(_load_dashboard_yaml, hass.config.language)
         if not config:
             return None
 
         # v1.20.0 — rewrite the bundled ids to this install's before writing.
+        # v1.20.2 — the navigation paths and the notification rows are resolved
+        # whether or not the entity map loads. They do not depend on it, and
+        # gating them behind it meant a missing or malformed map silently
+        # reinstated both bugs from issue #4.
         entity_map = await hass.async_add_executor_job(_load_entity_map)
-        if entity_map:
-            subs, unresolved = _build_substitutions(hass, entity_map)
-            if subs:
-                config = _apply_substitutions(config, subs)
-                _LOGGER.info(
-                    "Solar AI dashboard: resolved %d entity id(s) to this install",
-                    len(subs),
-                )
-            if unresolved:
-                _LOGGER.debug(
-                    "Solar AI dashboard: %d id(s) had no match in the registry: %s",
-                    len(unresolved), ", ".join(sorted(unresolved)[:10]),
-                )
+        subs, unresolved = _build_substitutions(hass, entity_map, target_path)
+        if subs:
+            config = _apply_substitutions(config, subs)
+            _LOGGER.info(
+                "Solar AI dashboard: resolved %d id(s)/path(s) to this install",
+                len(subs),
+            )
+        notify_rows = _notify_target_rows(hass)
+        config = _apply_notify_rows(config, notify_rows)
+        _LOGGER.info(
+            "Solar AI dashboard: %d mobile notification row(s)", len(notify_rows),
+        )
+        if unresolved:
+            _LOGGER.debug(
+                "Solar AI dashboard: %d id(s) had no match in the registry: %s",
+                len(unresolved), ", ".join(sorted(unresolved)[:10]),
+            )
 
         # Persist (or fetch) the dashboard metadata via the storage collection.
         collection = DashboardsCollection(hass)
         await collection.async_load()
         items = {it["url_path"]: it for it in collection.async_items()}
-        item = items.get(DASHBOARD_URL_PATH)
-        newly_created = item is None
+        item = items.get(target_path)
+        newly_created = item is None and not writing_to_existing
         if newly_created:
             item = await collection.async_create_item({
-                "url_path": DASHBOARD_URL_PATH,
+                "url_path": target_path,
                 "title": DASHBOARD_TITLE,
                 "icon": DASHBOARD_ICON,
                 "show_in_sidebar": True,
@@ -251,12 +375,12 @@ async def async_create_dashboard(hass: HomeAssistant, *, force: bool = False) ->
             })
 
         # Live config store + sidebar panel, so it shows without a restart.
-        store = dashboards_map.get(DASHBOARD_URL_PATH)
+        store = dashboards_map.get(target_path)
         if store is None:
             store = LovelaceStorage(hass, item)
-            dashboards_map[DASHBOARD_URL_PATH] = store
+            dashboards_map[target_path] = store
             try:
-                _register_panel(hass, DASHBOARD_URL_PATH, MODE_STORAGE, item, False)
+                _register_panel(hass, target_path, MODE_STORAGE, item, False)
             except Exception:  # noqa: BLE001
                 _LOGGER.debug(
                     "Live panel registration failed; dashboard will appear after a restart",
@@ -265,7 +389,7 @@ async def async_create_dashboard(hass: HomeAssistant, *, force: bool = False) ->
 
         await store.async_save(config)
         _LOGGER.info("Solar AI dashboard %s at /%s",
-                     "created" if newly_created else "updated", DASHBOARD_URL_PATH)
+                     "created" if newly_created else "updated", target_path)
 
         if newly_created:
             # The live dashboards collection won't track it until the next
@@ -288,7 +412,7 @@ async def async_create_dashboard(hass: HomeAssistant, *, force: bool = False) ->
             except Exception:  # noqa: BLE001
                 _LOGGER.debug("Could not raise dashboard-created notification", exc_info=True)
 
-        return DASHBOARD_URL_PATH
+        return target_path
     except Exception:  # noqa: BLE001 — must never break config-entry setup
         _LOGGER.exception("Auto-create of the Solar AI dashboard failed")
         return None

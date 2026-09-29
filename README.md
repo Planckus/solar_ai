@@ -75,6 +75,20 @@ This is a step-by-step walkthrough written for someone who has used Home Assista
 
 **Electricity prices are handled for you.** You do **not** need a separate price integration (Tibber, Nord Pool, etc.). During setup you just pick your **country**, **price area** (DK1/DK2 in Denmark) and your **electricity grid company (DSO)** from dropdowns, and Solar AI fetches the day-ahead spot price and the network tariffs automatically from Energi Data Service. Pointing it at an existing price sensor is optional (step 4).
 
+### Before you start
+
+| Needed | What for | Detail |
+|---|---|---|
+| Home Assistant **2024.7.0** or newer | Minimum supported version | — |
+| **HACS** | Installing and updating Solar AI | [Step 1](#1-install-hacs) |
+| **FoxESS Modbus integration**, with **write access** to the inverter | Reading the battery and grid, and controlling work mode and charge power | [Prerequisites](#prerequisites) |
+| **A solar forecast source** — Solcast (free account and API key), Forecast.Solar, or EVCC | Planning around tomorrow's sun | [Prerequisites](#prerequisites) |
+| An **EV charger** — EVCC, OCPP, or FoxESS Modbus | Optional; only for the EV features | [Step 5](#5-connect-an-ev-charger-optional) |
+
+Electricity prices need nothing installed: Solar AI fetches the day-ahead spot price and your network tariffs itself.
+
+A read-only Modbus setup is the one that catches people out — Solar AI will show data and never control anything. [Prerequisites](#prerequisites) lists the exact entities and services it needs.
+
 The steps, in order:
 
 1. Install HACS (skip if you already have it).
@@ -212,7 +226,7 @@ To import it:
 
 The dashboard now renders — no HACS card installs needed, since every custom card it uses (`solar-ai-status-card`, `solar-ai-chart-card`, etc.) ships with the integration itself and registers automatically. If you see "Custom element doesn't exist" messages, restart Home Assistant once (this re-runs the card registration) and hard-refresh the browser.
 
-**Cards that stay empty after a manual import are an entity-id mismatch, not a broken card.** The YAML files contain fixed entity ids, and ids differ between installs — see [Dashboard entity ids](#dashboard-entity-ids) for why. The automatic path above rewrites them for you; a hand-pasted copy is used exactly as written. Either let the integration create the dashboard instead (`battery_arbitrage.create_dashboard` with `force: true`), or edit the affected cards to point at your own entities. A Repairs issue lists which ids did not match.
+**A hand-imported copy is used exactly as written — two things in it are install-specific.** The YAML contains fixed entity ids, and fixed navigation targets (`/battery-arbitrage/…`) pointing at the dashboard's own url_path. Cards that stay empty are the first; nav buttons that land on the wrong dashboard are the second, and they will be wrong unless your dashboard happens to sit at that exact url_path. See [Dashboard entity ids](#dashboard-entity-ids) for why. The automatic path above rewrites them for you; a hand-pasted copy is used exactly as written. Either let the integration create the dashboard instead (`battery_arbitrage.create_dashboard` with `force: true`), or edit the affected cards to point at your own entities. A Repairs issue lists which ids did not match.
 
 ### 7. Set your retailer price components
 
@@ -251,6 +265,26 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.21.0 — resolve a dashboard you already have
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **`create_dashboard` takes an optional `url_path`.** Point it at an existing dashboard and the bundled layout is written there — resolved to your entity ids, navigation pointing at that dashboard, notification rows rebuilt from your own devices — so a hand-imported dashboard keeps its address and its place in the sidebar instead of being replaced by a second one at `/solar-ai`. The target must exist, and `force` is required since its contents are replaced.
+
+### v1.20.2 — dashboard navigation and the mobile notification rows
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Nav buttons went to the wrong dashboard.** Every navigation target in the bundled YAML pointed at `/battery-arbitrage/…` while the integration creates the dashboard at `/solar-ai`, so they landed on the default dashboard. They are now rewritten to the url_path actually used.
+- **The notification rows named the author's phone and tablet.** They are rebuilt from the companion apps this install has — one row per device, none if there are none.
+- A hand-imported dashboard is still used exactly as written; see the CHANGELOG for the limitation.
+
+### v1.20.1 — the EV countdown follows the charger, not our own command
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **"EV stops in 146s" while the charger read 0.0 kW.** The EV state machine decided whether a session was live from the current Solar AI last commanded, never from what the charger reported back, so a charger that paused on its own left the integration counting down a stop for a session that had already ended. It now requires the charger to confirm the session: an explicit stopped status counts at once, a zero-power reading after one control interval.
 
 ### v1.20.0 — the bundled dashboard adapts to your entity ids
 
@@ -860,6 +894,26 @@ The integration supports three live-data modes. Pick one during setup:
 
 Note on FoxESS-only mode: if there is an OCPP-connected EV charger, the embedded OCPP server (v0.27.0+) still detects EV charging directly via the charger. Grid-headroom protection caps battery charging based on live grid-import readings in all modes. EV-aware scheduling (skip grid charge during typical EV hours, hourly probability learning) requires EVCC live-data mode and is inactive in FoxESS-only mode.
 
+### What the FoxESS Modbus integration must provide
+
+Solar AI reads the inverter and also writes to it. A Modbus connection set up read-only will populate every sensor and never change the inverter.
+
+| Kind | What Solar AI uses |
+|---|---|
+| Sensors it reads | battery state of charge, lowest cell temperature, battery charge and discharge power, battery charge and discharge lifetime totals, load power, feed-in, grid consumption, PV power |
+| Entities it writes | `select.*_work_mode`, `number.*_force_charge_power`, `number.*_force_discharge_power`, `number.*_max_discharge_current`, `number.*_min_soc_on_grid` |
+| Services it calls | `foxess_modbus.read_registers` and `foxess_modbus.write_registers`, for the export limit (register 46616) and the PV-curtailment flag (register 49251) |
+
+The entity names above are the defaults; each one is selectable in Solar AI's options if your inverter device carries a different name.
+
+### Solar forecast source
+
+| Source | Account needed | Notes |
+|---|---|---|
+| Solcast HA integration | Yes — free tier | The free tier allows a limited number of API polls per day (10 at the time of writing). Wire **both** the today and tomorrow entities, or the optimiser plans 24 hours instead of 48. |
+| Forecast.Solar | No | Built into Home Assistant. |
+| EVCC | No extra | Only in EVCC or Hybrid live-data mode. |
+
 ### Component checklist
 
 | Component | EVCC | Hybrid | FoxESS only | Link |
@@ -1183,6 +1237,17 @@ data:
 ```
 
 Note that `force: true` overwrites the dashboard, discarding edits you have made to it by hand.
+
+**Already have a dashboard you imported by hand?** Add `url_path` and the resolved layout is written into that dashboard instead of a second one appearing at `/solar-ai`. It keeps its address, its sidebar entry and its position in the sidebar, and its navigation targets are pointed at itself:
+
+```yaml
+action: battery_arbitrage.create_dashboard
+data:
+  url_path: battery-arbitrage
+  force: true
+```
+
+Use the url_path exactly as it appears in *Settings → Dashboards* — the part of the address after the host. The dashboard must already exist; the action will not create one at an arbitrary address.
 
 ## Known limitations
 
