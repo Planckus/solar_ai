@@ -20,6 +20,7 @@ from .const import (
     CONF_BUY_PRICE_MODE,
     CONF_STROMLIGNING_USE_MANUAL_OVERRIDES,
     DEFAULT_BATTERY_CAPACITY,
+    DEFAULT_PLANNER_HOUSE_LOAD_FACTOR,
     DYNAMIC_FLOOR_RESERVE_FACTOR,
     DEFAULT_BATTERY_DEGRADATION_COST,
     DEFAULT_BATTERY_FLOOR_SOC,
@@ -192,6 +193,22 @@ async def async_setup_entry(
             step=0.05,
             mode=NumberMode.BOX,
             display_precision=2,
+        ),
+        # v1.22.0 — planned house use factor: the optimiser plans as if the
+        # house uses this multiple of its learned profile. Above 1.0 it sees a
+        # shortfall sooner and buys more before expensive hours.
+        BatteryArbitrageConfigNumber(
+            coordinator, entry,
+            storage_key="planner_house_load_factor",
+            translation_key="planner_house_load_factor",
+            default=DEFAULT_PLANNER_HOUSE_LOAD_FACTOR,
+            icon="mdi:home-lightning-bolt",
+            unit="×",
+            min_val=1.0,
+            max_val=2.0,
+            step=0.1,
+            mode=NumberMode.SLIDER,
+            display_precision=1,
         ),
         BatteryArbitrageConfigNumber(
             coordinator, entry,

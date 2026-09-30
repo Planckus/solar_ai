@@ -503,6 +503,7 @@
       "reserve_factor_manual": { "name": "Reserve safety factor" },
       "reserve_percentile_pct": { "name": "Reserve percentile (%) — forecast-error coverage once the overnight learner is warm (80 = prior fixed behaviour)" },
       "reserve_factor_min": { "name": "Minimum reserve factor (×) — lower clamp on the learned overnight reserve; 1.0 = never reserve below predicted need, lower = free more battery for peaks" },
+      "planner_house_load_factor": { "name": "Planned house use factor (×) — the optimiser plans as if the house uses this much more than learned; above 1.0 buys earlier and more before expensive hours" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage spread" },
       "grid_max_kw": { "name": "Grid import limit" },
       "vat_pct": { "name": "Buy-side VAT (%)" },
@@ -575,6 +576,10 @@
     "missing_dashboard_cards": {
       "title": "Solar AI dashboard cards not installed",
       "description": "The Solar AI dashboard uses custom Lovelace cards that aren't installed yet: {cards}. Install them from HACS → Frontend, then reload your browser (the documentation link below has each card)."
+    },
+    "missing_dashboard_entities": {
+      "title": "Solar AI dashboard: {count} entities not found",
+      "description": "The Solar AI dashboard refers to {count} entities that do not exist here: {entities}\n\nThe bundled dashboard is rewritten to your entity ids when it is created, matching each entity on its translation key. What is left over is usually a feature you have not configured (no EV charger, no price provider), or a third-party entity such as the FoxESS inverter under a different device name. Set the matching entity in Solar AI's options and run the `battery_arbitrage.create_dashboard` action with `force: true`, or edit those cards by hand."
     }
   }
 }

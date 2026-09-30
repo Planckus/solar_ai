@@ -503,6 +503,7 @@
       "reserve_factor_manual": { "name": "Reserve safety factor" },
       "reserve_percentile_pct": { "name": "Reserve percentile (%) — forecast-error coverage once the overnight learner is warm (80 = prior fixed behaviour)" },
       "reserve_factor_min": { "name": "Minimum reserve factor (×) — lower clamp on the learned overnight reserve; 1.0 = never reserve below predicted need, lower = free more battery for peaks" },
+      "planner_house_load_factor": { "name": "Planned house use factor (×) — the optimiser plans as if the house uses this much more than learned; above 1.0 buys earlier and more before expensive hours" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage spread" },
       "grid_max_kw": { "name": "Grid import limit" },
       "vat_pct": { "name": "Buy-side VAT (%)" },
