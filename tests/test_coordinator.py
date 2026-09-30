@@ -293,13 +293,16 @@ class TestSolarPercentile:
         assert self._call(samples, 50) is None
 
     def test_p50_equals_median_neutral_default(self):
-        # S1 neutrality guarantee: confidence=50 must equal the median, so the
-        # default knob value is a no-op vs the prior median behaviour.
-        import statistics
+        # S1 neutrality guarantee: confidence=50 must equal the per-hour factor
+        # (the forecast-weighted median since v1.21.1), so the default knob
+        # value is a no-op.
+        from custom_components.battery_arbitrage.coordinator import (
+            BatteryArbitrageCoordinator,
+        )
         for n in (9, 10, 13, 20):
-            samples = [{"f": 1000, "a": 400 + i * 60} for i in range(n)]
-            ratios = [s["a"] / s["f"] for s in samples]
-            expected = round(max(0.3, min(1.5, statistics.median(ratios))), 3)
+            samples = [{"f": 1000 + i * 250, "a": 400 + i * 60} for i in range(n)]
+            expected = BatteryArbitrageCoordinator.get_solar_accuracy_factor_for_hour(
+                self._stub(samples), 12)
             assert self._call(samples, 50) == expected
 
 
@@ -482,3 +485,119 @@ class TestPredictionScorecard:
         assert out["prediction_soc_mae_7d"] == 3.0
         assert out["prediction_samples"] == 2
         assert out["prediction_action_mix"]["CHARGE"] == 1
+
+
+class TestPlannerSunFill:
+    """v1.21.1 — the planner does not buy grid power the sun will supply."""
+
+    TZ = timezone(timedelta(hours=2))
+
+    def _plan(self, *, solar_kw, ev_session_kw=0.0, ev_session_h=2.0, ev_priority_soc=80.0,
+              soc=66.0, ev_hours=range(11, 17), ev_pv_stop_kw=1.38, tail_kw=None):
+        # A clear afternoon: cheap at 13:30-14:15, expensive from 17:00. A PV
+        # car is learned to charge 11-16 h, which the planner used to read as
+        # the sun being gone and buy the battery's top-up from the grid.
+        now = datetime(2026, 9, 30, 13, 30, tzinfo=self.TZ)
+        grid, solar = [], []
+        for i in range(42):  # 13:30 .. 23:45
+            start = now + timedelta(minutes=15 * i)
+            spot = 0.05 if start.hour < 15 else 1.5
+            grid.append((start, 0.25, start.hour, start.minute, spot))
+            hours_to_sunset = max(0.0, 19.5 - (start.hour + start.minute / 60))
+            kw = min(solar_kw, solar_kw * hours_to_sunset / 3)
+            if tail_kw is not None and start.hour >= 16:
+                kw = tail_kw if hours_to_sunset > 0 else 0.0
+            solar.append((start, 0.25, start.hour, start.minute, 1000.0 * kw))
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {"battery_degradation_cost": 0.05}
+        c.get_solar_hour_percentile = lambda h, p: None
+        c.get_short_term_solar_factor = lambda h: 1.0
+        c._compute_buy_price = lambda **k: k["spot"] * 1.25 + 0.3
+        ev_hourly = [0.0] * 24
+        for h in ev_hours:
+            ev_hourly[h] = 0.5
+        plan = c._dp_solve(
+            now, grid, solar, 1.0, soc, 10.67, 85, 13, ev_priority_soc, 100, 0.926,
+            9.81, 17.0, [0.7] * 24, ev_hourly, 10.4, 1.25, [0.0] * 24, 0.0, 0.0,
+            0.0, 0.0, 0.03, 2.15, 10.0, ev_session_kw, ev_session_h,
+            ev_pv_stop_kw=ev_pv_stop_kw,
+        )
+        return [p for p in plan if p["action"] == "CHARGE"]
+
+    def test_sunny_afternoon_pv_car_no_grid_buy(self):
+        assert self._plan(solar_kw=5.0) == []
+
+    def test_cloudy_afternoon_still_buys_cheap(self):
+        assert self._plan(solar_kw=0.5) != []
+
+    def test_forced_car_session_counts_against_the_sun(self):
+        # Full mode through sunset: the car's 11 kW draw is real, so the sun
+        # cannot fill the battery and the cheap buy stays available.
+        assert self._plan(
+            solar_kw=5.0, ev_session_kw=11.0, ev_session_h=8.0, ev_priority_soc=0.0,
+        ) != []
+
+    def test_pv_car_stop_leaves_the_tail_to_the_battery(self):
+        # Car learned to charge until sunset. Above 80 % it takes the surplus,
+        # but from 16:00 the sun gives 1.2 kW, below the car's 1.38 kW minimum:
+        # the car stops and the weak afternoon tops up the battery, so there
+        # is nothing to buy. Without the stop the car would keep that sun and
+        # the planner would buy.
+        kw = dict(solar_kw=5.0, soc=88.0, ev_hours=range(11, 21), tail_kw=1.2)
+        assert self._plan(**kw) == []
+        assert self._plan(**kw, ev_pv_stop_kw=0.0) != []
+
+
+class TestPlannerSolarAndDrain:
+    """v1.21.1 — 30-min solar under 15-min prices, fractional SoC, weighted factors."""
+
+    TZ = timezone(timedelta(hours=2))
+
+    def _coord(self):
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {"battery_degradation_cost": 0.05}
+        c.get_solar_hour_percentile = lambda h, p: None
+        c.get_short_term_solar_factor = lambda h: 1.0
+        c._compute_buy_price = lambda **k: 1.0
+        return c
+
+    def _solve(self, c, now, solar, house_kw, soc):
+        grid = [(now + timedelta(minutes=15 * i), 0.25,
+                 (now + timedelta(minutes=15 * i)).hour,
+                 (now + timedelta(minutes=15 * i)).minute, 0.5) for i in range(32)]
+        return c._dp_solve(
+            now, grid, solar, 1.0, soc, 10.0, 90, 10, 0, 100, 1.0, 5.0, 17.0,
+            [house_kw] * 24, [0.0] * 24, 0.0, 1.25, [0.0] * 24, 0.0, 0.0,
+            0.0, 0.0, 0.03, 2.15, 10.0,
+        )
+
+    def test_half_hour_solar_covers_quarter_hour_slots(self):
+        # 2 kW sun in 30-min periods, 0.5 kW house: the battery gains
+        # 1.5 kW for all 8 quarter hours, not only the :00 and :30 ones.
+        now = datetime(2026, 10, 1, 11, 0, tzinfo=self.TZ)
+        solar = [(now + timedelta(minutes=30 * i), 0.5, 0, 0, 2000.0) for i in range(4)]
+        plan = self._solve(self._coord(), now, solar, 0.5, 50.0)
+        assert plan[8]["soc"] == pytest.approx(80, abs=1)  # 65 when only half counted
+
+    def test_evening_drain_is_not_rounded_to_one_percent(self):
+        # 0.6 kW house on a 10 kWh battery is 6 %/h. Rounding each quarter
+        # hour to a whole percent used to report 4 %/h.
+        now = datetime(2026, 9, 30, 20, 0, tzinfo=self.TZ)
+        plan = self._solve(self._coord(), now, [], 0.6, 80.0)
+        assert plan[16]["soc"] == pytest.approx(56, abs=1)
+
+    def test_solar_factor_weighted_by_forecast(self):
+        from custom_components.battery_arbitrage.coordinator import (
+            _weighted_ratio_percentile,
+        )
+        # Eight clear-day samples at 0.9 and eight tiny-forecast samples at 3x.
+        bucket = [{"f": 3000.0, "a": 2700.0}] * 8 + [{"f": 120.0, "a": 360.0}] * 8
+        assert _weighted_ratio_percentile(bucket, 50.0) == pytest.approx(0.9)
+
+    def test_house_use_factor_scales_planned_drain(self):
+        # Factor 1.5 plans 0.6 kW as 0.9 kW: 9 %/h on a 10 kWh battery.
+        now = datetime(2026, 9, 30, 20, 0, tzinfo=self.TZ)
+        c = self._coord()
+        c._stored["planner_house_load_factor"] = 1.5
+        plan = self._solve(c, now, [], 0.6, 80.0)
+        assert plan[8]["soc"] == pytest.approx(62, abs=1)

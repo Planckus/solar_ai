@@ -489,6 +489,7 @@
       "reserve_factor_manual": { "name": "Reserve-sikkerhedsfaktor" },
       "reserve_percentile_pct": { "name": "Reserve-percentil (%) — prognosefejl-dækning når nataflæringen er varm (80 = tidligere fast adfærd)" },
       "reserve_factor_min": { "name": "Minimum reserve-faktor (×) — nedre grænse for den lærte nat-reserve; 1,0 = reserver aldrig under forudsagt behov, lavere = frigør mere batteri til spidsbelastning" },
+      "planner_house_load_factor": { "name": "Planlagt husforbrug-faktor (×) — optimeringen planlægger som om huset bruger så meget mere end lært; over 1,0 købes tidligere og mere før dyre timer" },
       "min_spread_arbitrage": { "name": "Minimum arbitrage-spread" },
       "grid_max_kw": { "name": "Net-importgrænse" },
       "vat_pct": { "name": "Moms på køb (%)" },
