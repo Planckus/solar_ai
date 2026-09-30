@@ -266,6 +266,21 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.22.0 — the optimiser sees the whole solar forecast and the real evening drain
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Half the solar forecast was missing from the plan.** 30-minute Solcast periods were matched to 15-minute price slots by exact start time, so every :15 and :45 slot had no sun. Grid buys followed on days the sun would have filled the battery.
+- **The plan drained the battery too slowly in the evening.** SoC was rounded to whole percent every 15 minutes, which turned most house loads into a flat 4 %/h. The optimiser now interpolates between SoC states.
+- **Late-afternoon solar corrections were inflated by cloudy days.** Per-hour factors are now weighted by the forecast, so near-zero forecasts no longer dominate.
+- **New Planned house use factor.** Plans as if the house uses more than learned (1.0-2.0x), so the optimiser buys more before expensive hours.
+
+### v1.21.1 — no midday grid charge when the sun will fill the battery
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The planner bought grid power on sunny afternoons with a PV-mode car plugged in.** It counted the car's learned afternoon draw as a fixed load that took the solar surplus, concluded the sun could not fill the battery above the battery-first threshold, and planned a Force Charge at the cheapest midday price. The Force Charge then took the surplus from the car, and the EV controller stopped it. The planner now models the car stopping below its minimum power (1.38 kW on the Modbus backend), which leaves the weak afternoon sun to the battery, and refuses a daylight grid charge while the sun alone fills the battery before sunset.
+
 ### v1.21.0 — resolve a dashboard you already have
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
@@ -671,9 +686,10 @@ All components are live-configurable number entities:
 | Item | Detail |
 |---|---|
 | Sources | EVCC (Solcast under the hood), Solcast HA integration (today + tomorrow entities), Forecast.Solar HA integration, Auto (fallback chain) |
-| Per-hour accuracy correction | 4-day rolling per-hour-of-day factor in [0.3, 1.5]. Applied inside the optimiser. |
+| Per-hour accuracy correction | Rolling per-hour-of-day factor in [0.3, 1.5]: the forecast-weighted median of actual/forecast (v1.22.0). Applied inside the optimiser. |
 | Intra-hour correction (v0.28.6) | Per-tick residual tracking; `_st_solar_factor = mean(actual / forecast over last 4 closed 15-min slots)`. Applied with linear decay over 2 h on top of the per-hour factor. |
 | Net surplus | Predicted house load subtracted from forecast PV to compute available kWh for the battery. Grid charge skipped when solar will fill the battery. |
+| Planner sun-fill rule (v1.21.1) | During daylight the optimiser does not plan a grid charge when the sun alone fills the battery before sunset. It follows the EV controller's split: battery first below the battery-first threshold, the car first above it, and the battery again once the surplus drops below the car's minimum power (a PV-mode car stops there). Buys at a negative price, overnight buys and the night bridge are unaffected. |
 
 ### House load model
 
@@ -789,6 +805,7 @@ Every setting below is editable from the dashboard (**Indstillinger / Settings**
 | **Minimum SoC (export)**<br>_Minimum SoC (eksport)_ | 10–100 % | 50 % | The static export floor — the battery is never *exported* below this SoC, reserving the rest for the house. With *Dynamic discharge floor* on this is a hard minimum the dynamic reserve can only raise, never go below. |
 | **Maximum SoC (grid charge)**<br>_Maksimum SoC (netopladning)_ | 10–100 % | 100 % | Ceiling that grid-charging will fill the battery to. |
 | **Battery capacity**<br>_Batterikapacitet (kWh)_ | 3–30 kWh | from setup | Usable capacity used for all the energy maths (reserve sizing, exportable energy, cycle planning). Your value is the anchor: once the discharge-run learner has measured the real capacity it refines this, but only within ±50 % of what you set. |
+| **Planned house use factor**<br>_Planlagt husforbrug-faktor_ | 1.0–2.0× | 1.0× | The optimiser plans as if the house uses this multiple of its learned load. Higher = buys more, and earlier, before expensive hours, and sells less. Buys stay whole quarter hours at the charge rate. |
 | **Reserve safety factor**<br>_Reserve-sikkerhedsfaktor_ | 1.0–2.0× | 1.3× | Multiplier on the predicted overnight need that the *Dynamic discharge floor* reserves. Lower = sell more into peaks; higher = hold more for the night. Used until the adaptive learner has ≈7 clean nights of data, after which the measured value takes over. |
 | **Blocked sell hours**<br>_Blokerede salgstimer_ | hours of day | none | Hours in which the battery is never sold — set with the clickable hour grid on the Settings page (or as a comma list, e.g. `20,21`). Solar export and house self-consumption are unaffected; only the battery *sell* is held. |
 | **Export power cap**<br>_Eksporteffekt-grænse (0 = ingen)_ | 0–10 kW | 0 (no cap) | Limits how fast the battery discharges to the grid. 0 = use the full available rate. |

@@ -5,6 +5,7 @@ import asyncio
 import logging
 import shutil
 import statistics
+from bisect import bisect_right
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -106,6 +107,7 @@ from .const import (
     PREDICTION_WARMUP_SECONDS,
     DEFAULT_SOLAR_CONFIDENCE_PCT,
     EV_SESSION_DP_HORIZON_H,
+    DEFAULT_PLANNER_HOUSE_LOAD_FACTOR,
     PLAN_REFRESH_SECONDS,
     DYNAMIC_FLOOR_MAX_SOC,
     DEFAULT_PHYSICAL_FLOOR_SOC,
@@ -1680,8 +1682,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # once tomorrow's day-ahead prices are published at 13:00 CET).
         grid_slot_data_opt = _forecast_slots(grid_rates.get("rates", []), now, 48)
         solar_slot_data_opt = _forecast_slots(solar_rates.get("rates", []), now, 48)
-        # Solar lookup: slot_start → kW (value is average Watts during the slot)
-        solar_kw_by_start: dict = {s[0]: s[4] / 1000.0 for s in solar_slot_data}
         if grid_slot_data:
             # v0.29.0: buy price computation routes through _compute_buy_price
             # which handles Strømligning mode (with optional overrides) and
@@ -2109,7 +2109,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                             vat_factor=vat_factor,
                         )
                         # Per-slot solar: use actual forecast kW, fall back to 24h average
-                        solar_kw = solar_kw_by_start.get(slot_start, solar_kwh / 24.0)
+                        solar_kw = _covering_value(
+                            solar_slot_data, slot_start, solar_kwh / 24.0)
                         net_house_kw = max(0.0, load_2h_avg - solar_kw)
                         # Multiply by slot duration (0.25 h for 15-min, 1.0 h for hourly)
                         house_drag_cost += net_house_kw * buy_h * dur_h
@@ -2188,6 +2189,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 house_load_weekend=self.get_house_load_profile(weekend=True),
                 ev_charge_hourly=list(self._stored.get("ev_charge_hourly", [0.0] * 24)),
                 ev_max_kw=float(self._stored.get("ev_max_kw", 0.0)),
+                ev_pv_stop_kw=self._ev_pv_stop_kw(),
                 vat_factor=vat_factor,
                 tariff_sched=tariff_sched,
                 elafgift=elafgift,
@@ -4518,15 +4520,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         optimizer into pathological behaviour.
         """
         by_hour: dict = self._stored.get("solar_accuracy_by_hour", {})
-        bucket: list[dict] = by_hour.get(str(hour), [])
-        ratios: list[float] = []
-        for s in bucket:
-            f = s.get("f", 0)
-            a = s.get("a", 0)
-            if f >= SOLAR_ACCURACY_COMPARISON_W:
-                ratios.append(a / f)
-        if len(ratios) >= SOLAR_ACCURACY_HOUR_MIN_SAMPLES:
-            return round(max(0.3, min(1.5, statistics.median(ratios))), 3)
+        val = _weighted_ratio_percentile(by_hour.get(str(hour), []), 50.0)
+        if val is not None:
+            return round(max(0.3, min(1.5, val)), 3)
         return self.get_solar_accuracy_factor()
 
     def get_solar_hourly_accuracy_profile(self) -> list[float]:
@@ -4583,21 +4579,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         bucket, clamped to [0.3, 1.5] like the median factor. Returns None when
         the bucket hasn't reached the minimum sample count."""
         by_hour: dict = self._stored.get("solar_accuracy_by_hour", {})
-        bucket: list[dict] = by_hour.get(str(hour), [])
-        ratios: list[float] = []
-        for s in bucket:
-            f = s.get("f", 0)
-            a = s.get("a", 0)
-            if f >= SOLAR_ACCURACY_COMPARISON_W:
-                ratios.append(a / f)
-        if len(ratios) < SOLAR_ACCURACY_HOUR_MIN_SAMPLES:
+        val = _weighted_ratio_percentile(by_hour.get(str(hour), []), p)
+        if val is None:
             return None
-        ratios.sort()
-        # Linear-interpolation percentile (no numpy dependency).
-        k = (len(ratios) - 1) * (max(0.0, min(100.0, p)) / 100.0)
-        lo = int(k)
-        hi = min(lo + 1, len(ratios) - 1)
-        val = ratios[lo] + (ratios[hi] - ratios[lo]) * (k - lo)
         return round(max(0.3, min(1.5, val)), 3)
 
     def get_solar_hourly_percentile_profile(self, p: float) -> list[float | None]:
@@ -6475,6 +6459,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if not forced:
             return 0.0
         return live_kw if live_kw > 0.0 else max(0.0, float(max_kw))
+
+    def _ev_pv_stop_kw(self) -> float:
+        """v1.21.1 — the surplus below which a PV-mode car stops charging.
+
+        The Modbus backend follows the sun on one phase, so its floor is the
+        minimum current at one phase (6 A = 1.38 kW). The OCPP path runs at
+        the stored minimum, which is on a three-phase basis.
+        """
+        from .const import (  # noqa: PLC0415
+            CONF_EV_CHARGER_BACKEND, DEFAULT_EV_CHARGER_BACKEND, EV_BACKEND_FOXESS_MODBUS,
+            EV_MODBUS_MIN_AMPS,
+        )
+        min_kw = float(self._stored.get("ev_min_charge_kw", DEFAULT_EV_MIN_CHARGE_KW))
+        if (self._setting(CONF_EV_CHARGER_BACKEND, DEFAULT_EV_CHARGER_BACKEND)
+                == EV_BACKEND_FOXESS_MODBUS):
+            amps = max(EV_MODBUS_MIN_AMPS, self._kw_to_amps(min_kw))
+            return self._amps_to_kw(amps, 1)
+        return min_kw
 
     def _physical_floor_soc(self) -> float:
         """v1.15.0 — the SoC the battery actually stops discharging at.
@@ -8978,6 +8980,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ev_session_kw: float = 0.0,
         ev_session_horizon_h: float = 0.0,
         house_load_weekend: list[float] | None = None,
+        ev_pv_stop_kw: float = 0.0,
     ) -> list[dict]:
         """Backward-induction dynamic programming optimizer.
 
@@ -9009,6 +9012,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 export_fee, feed_in_tariff, min_export_price, min_spread, max_export_kw,
                 ev_session_kw, ev_session_horizon_h,
                 house_load_weekend=house_load_weekend,
+                ev_pv_stop_kw=ev_pv_stop_kw,
             )
         except Exception as err:
             _LOGGER.warning("Optimizer failed — returning empty plan: %s", err)
@@ -9044,6 +9048,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ev_session_kw: float = 0.0,
         ev_session_horizon_h: float = 0.0,
         house_load_weekend: list[float] | None = None,
+        ev_pv_stop_kw: float = 0.0,
     ) -> list[dict]:
         """Core DP computation at native 15-min resolution.
 
@@ -9103,9 +9108,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             except Exception:  # noqa: BLE001
                 return base
 
-        solar_kw_by_start: dict = {
-            s[0]: (s[4] / 1000.0) * _slot_factor(s[0]) for s in solar_slot_data
-        }
 
         while len(ev_charge_hourly) < 24:
             ev_charge_hourly.append(0.0)
@@ -9124,6 +9126,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         charge_eff = efficiency ** 0.5
         discharge_eff = efficiency ** 0.5
 
+        # v1.22.0 — user margin on the learned house load (1.0 = as learned).
+        house_factor = max(1.0, float(self._stored.get(
+            "planner_house_load_factor", DEFAULT_PLANNER_HOUSE_LOAD_FACTOR)))
+
         slot_data: list[dict] = []
         for slot_start, dur_h, h, m, spot in grid_slot_data:
             # v0.29.0: buy price routes through _compute_buy_price so the DP
@@ -9139,7 +9145,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 vat_factor=vat_factor,
             )
             sell_h = max(0.0, spot - export_fee - feed_in_tariff)
-            solar_kw = solar_kw_by_start.get(slot_start, 0.0)
+            solar_kw = _covering_value(solar_slot_data, slot_start, 0.0) * _slot_factor(slot_start)
             # v0.46.0 — L1: pick the weekday or weekend load curve by the slot's
             # own date, so a 48 h horizon that spans into the weekend uses the
             # right shape per slot.
@@ -9147,7 +9153,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 slot_is_weekend = slot_start.astimezone().weekday() >= 5
             except Exception:  # noqa: BLE001
                 slot_is_weekend = False
-            house_kw = (house_load_weekend if slot_is_weekend else house_load_profile)[h]
+            house_kw = (house_load_weekend if slot_is_weekend else house_load_profile)[h] * house_factor
             ev_prob = ev_charge_hourly[h]
             ev_kw = ev_prob * ev_max_kw
             # v0.45.0 — E1: within the live-session horizon, use the certain
@@ -9170,7 +9176,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # car takes the surplus first. Which applies depends on the SoC
             # state, which is not known here — so both are computed and the
             # backward induction picks per state below.
-            solar_to_ev = min(solar_remaining, ev_kw)
+            # v1.21.1 — a PV-mode car stops when the surplus falls below its
+            # minimum charging power, and the rest of the sun reaches the
+            # battery. A forced session draws regardless of the surplus.
+            if ev_session_active or solar_remaining >= ev_pv_stop_kw:
+                solar_to_ev = min(solar_remaining, ev_kw)
+            else:
+                solar_to_ev = 0.0
             solar_to_battery = max(0.0, solar_remaining - solar_to_ev)
             # SoC drift over the slot duration (% of capacity)
             # v1.15.0 — neither leg is lossless, and the idle drift used to treat
@@ -9206,6 +9218,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 # kept instead of collapsing straight to a binary "blocked"
                 # flag; see the CHARGE branch below for how it's used.
                 "ev_kw": ev_kw,
+                "solar_kw": solar_kw,
             })
 
         N = len(slot_data)
@@ -9244,6 +9257,35 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 if next_idle_pct > 0:
                     running_solar_kwh += next_idle_pct / 100.0 * capacity_kwh
             solar_kwh_after[t] = running_solar_kwh
+
+        # ── Does the sun fill the battery before sunset? ───────────────────
+        # v1.21.1 — `sun_fills_from[t][s]` is True when, starting at SoC s in
+        # daylight slot t, the idle dynamics alone reach max SoC before the
+        # sun sets. It follows the same split the EV controller applies:
+        # battery first below the battery-first threshold, the car first above
+        # it until the surplus drops below the car's minimum power, then the
+        # battery again. The CHARGE branch uses it to refuse a grid buy the
+        # sun makes redundant. Without it the planner bought grid power at
+        # midday with several kWh of surplus still forecast, and the Force
+        # Charge then took that surplus from the car. Night slots are False,
+        # so overnight and evening buys are decided on price as before.
+        soc_max_i = int(min(100, round(max_soc)))
+        prio_i = int(max(0, min(100, round(ev_priority_soc))))
+        sun_fills_from: list[list[bool]] = [[False] * 101 for _ in range(N)]
+        for t in range(N):
+            if slot_data[t]["solar_kw"] <= 0.0:
+                continue
+            for s0 in range(101):
+                x = float(s0)
+                u = t
+                while u < N and slot_data[u]["solar_kw"] > 0.0:
+                    x += (slot_data[u]["idle_delta_batt_first_pct"] if x < prio_i
+                          else slot_data[u]["idle_delta_pct"])
+                    if x >= soc_max_i:
+                        sun_fills_from[t][s0] = True
+                        break
+                    x = max(0.0, x)
+                    u += 1
 
         # ── Terminal value: worth of SoC remaining at the horizon end ──
         # v0.63.0 — value retained SoC at the AVOIDED-BUY price, not the sell
@@ -9301,6 +9343,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             V.append(remaining_kwh * discharge_eff * expected_terminal_value)
 
         policy: list[list[str]] = [["I"] * SOC_STATES for _ in range(N)]
+
+        # v1.22.0 — value at a fractional SoC, interpolated between the two
+        # whole-percent states. Rounding the landing SoC to the nearest state
+        # turned any drift between 0.5 % and 1.5 % per slot into exactly 1 %:
+        # on a 10.7 kWh battery every house load from ~0.2 to ~0.6 kW became
+        # 4 %/h, so the plan understated the evening drain by about a third.
+        def _v_at(values: list[float], x: float) -> float:
+            x = max(0.0, min(100.0, x))
+            lo = int(x)
+            if lo >= 100:
+                return values[100]
+            w = x - lo
+            return values[lo] * (1.0 - w) + values[lo + 1] * w
 
         for t in range(N - 1, -1, -1):
             sd = slot_data[t]
@@ -9420,9 +9475,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     s_idle = soc_max
                     val_idle = V[s_idle] + solar_export_revenue
                 else:
-                    s_idle = int(unclamped + 0.5)
-                    s_idle = max(0, min(100, s_idle))
-                    val_idle = V[s_idle]
+                    val_idle = _v_at(V, unclamped)
                 best_val = val_idle
                 best_act = "I"
 
@@ -9433,7 +9486,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 # reduced by the EV's expected draw above) clearing the same
                 # "not worth a token charge" minimum used elsewhere, instead
                 # of the old hard ev_blocked cliff.
-                if s < soc_max and effective_charge_rate_kw >= GRID_MIN_CHARGE_KW:
+                # v1.21.1 — no grid buy while the sun left before sunset will fill
+                # the room anyway, unless the grid pays to import.
+                sun_fills = sun_fills_from[t][s] and buy_h >= 0.0
+                if (s < soc_max and effective_charge_rate_kw >= GRID_MIN_CHARGE_KW
+                        and not sun_fills):
                     unclamped_ch = s + charge_delta_slot + idle_delta
                     val_ch = -charge_kwh_slot * (buy_h + degradation_cost)
                     if unclamped_ch < phys_floor:
@@ -9447,9 +9504,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                         val_ch += overflow_kwh * sell_h
                         s_ch = soc_max
                     else:
-                        s_ch = int(unclamped_ch + 0.5)
-                        s_ch = max(0, min(100, s_ch))
-                    val_ch += V[s_ch]
+                        s_ch = None
+                    val_ch += V[s_ch] if s_ch is not None else _v_at(V, unclamped_ch)
                     if val_ch > best_val:
                         best_val = val_ch
                         best_act = "C"
@@ -9474,9 +9530,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                         val_ex += overflow_kwh * sell_h
                         s_ex = soc_max
                     else:
-                        s_ex = int(unclamped_ex + 0.5)
-                        s_ex = max(0, min(100, s_ex))
-                    val_ex += V[s_ex]
+                        s_ex = None
+                    val_ex += V[s_ex] if s_ex is not None else _v_at(V, unclamped_ex)
                     if val_ex > best_val:
                         best_val = val_ex
                         best_act = "E"
@@ -9488,12 +9543,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # ── Forward pass: generate the plan from current SoC ─────────────
         _ACTION_NAMES = {"I": "IDLE", "C": "CHARGE", "E": "EXPORT"}
-        soc_s = max(0, min(100, int(current_soc + 0.5)))
+        soc_f = max(0.0, min(100.0, float(current_soc)))
         plan: list[dict] = []
 
         for t in range(N):
             sd = slot_data[t]
             dur_h = sd["dur_h"]
+            soc_s = max(0, min(100, int(soc_f + 0.5)))
             act_code = policy[t][soc_s]
             action = _ACTION_NAMES[act_code]
 
@@ -9511,21 +9567,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             export_delta_slot = export_rate_kw * dur_h / capacity_kwh * 100.0
             # Same SoC-dependent solar split as the backward induction above.
             idle_delta = (
-                sd["idle_delta_batt_first_pct"] if soc_s < ev_priority_soc
+                sd["idle_delta_batt_first_pct"] if soc_f < ev_priority_soc
                 else sd["idle_delta_pct"]
             )
 
             # The SoC path is physics, so it clamps at phys_floor; only the
             # exportable AMOUNT is measured against the export reserve.
             if act_code == "C":
-                soc_s = int(max(float(phys_floor), min(float(soc_max), soc_s + charge_delta_slot + idle_delta)) + 0.5)
+                soc_f = soc_f + charge_delta_slot + idle_delta
             elif act_code == "E":
-                avail_pct = soc_s - soc_floor
-                actual_exp_pct = min(export_delta_slot, float(avail_pct))
-                soc_s = int(max(float(phys_floor), min(float(soc_max), soc_s - actual_exp_pct + idle_delta)) + 0.5)
+                avail_pct = max(0.0, soc_f - soc_floor)
+                actual_exp_pct = min(export_delta_slot, avail_pct)
+                soc_f = soc_f - actual_exp_pct + idle_delta
             else:
-                soc_s = int(max(float(phys_floor), min(float(soc_max), soc_s + idle_delta)) + 0.5)
-            soc_s = max(0, min(100, soc_s))
+                soc_f = soc_f + idle_delta
+            soc_f = max(float(phys_floor), min(float(soc_max), soc_f))
 
         n_charge = sum(1 for s in plan if s["action"] == "CHARGE")
         n_export = sum(1 for s in plan if s["action"] == "EXPORT")
@@ -9638,6 +9694,47 @@ def _current_slot_forecast(rates: list[dict], now: datetime) -> float | None:
         if start <= now < end:
             return float(rate["value"])
     return None
+
+
+def _covering_value(
+    slots: list[tuple], t: datetime, default: float,
+) -> float:
+    """v1.22.0 — kW of the forecast slot that covers `t`.
+
+    `slots` is `_forecast_slots` output, value in W. Solcast delivers 30-min
+    periods while prices run at 15 min, so looking a price slot up by exact
+    start time found nothing for the :15 and :45 slots and the optimiser
+    planned on half the forecast solar.
+    """
+    starts = [s[0] for s in slots]
+    i = bisect_right(starts, t) - 1
+    if i >= 0 and t < slots[i][0] + timedelta(hours=slots[i][1]):
+        return slots[i][4] / 1000.0
+    return default
+
+
+def _weighted_ratio_percentile(bucket: list[dict], p: float) -> float | None:
+    """v1.22.0 — percentile `p` of actual/forecast, weighted by the forecast.
+
+    Unweighted, a sample where the forecast was 30 W and the sun gave 200 W
+    counted as much as a 3 kW sample, so cloudy evenings pushed the late-hour
+    factors to 1.1-1.3 and the optimiser expected the sun to carry the house
+    into the evening. Weighting by the forecast lets each sample count by the
+    energy it describes. Returns None below the minimum sample count.
+    """
+    pairs = sorted(
+        (s.get("a", 0) / s["f"], s["f"]) for s in bucket
+        if s.get("f", 0) >= SOLAR_ACCURACY_COMPARISON_W
+    )
+    if len(pairs) < SOLAR_ACCURACY_HOUR_MIN_SAMPLES:
+        return None
+    target = sum(w for _, w in pairs) * max(0.0, min(100.0, p)) / 100.0
+    acc = 0.0
+    for ratio, w in pairs:
+        acc += w
+        if acc >= target:
+            return ratio
+    return pairs[-1][0]
 
 
 def _forecast_slots(

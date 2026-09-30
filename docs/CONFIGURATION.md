@@ -219,6 +219,13 @@ These feed into the buy-price and sell-price formulas the optimiser uses.
 - Effect: per-kWh cost added to both CHARGE and EXPORT decisions inside the optimiser. Models battery wear.
 - Estimation: `(battery_cost_per_kWh) / (cycle_life × depth_of_discharge)`. For typical residential LFP at ~2000 DKK/kWh, 0.10–0.30 is reasonable. 0 = maximum activity, faster wear.
 
+#### Planned house use factor — `planner_house_load_factor`
+
+- Range: 1.0–2.0× (0.1 steps)
+- Default: 1.0× (plans on the learned house load)
+- Effect: the optimiser plans as if the house uses this multiple of its learned hourly load. A shortfall before the next refill shows up earlier, so the plan buys more, and earlier, before expensive hours. It can also move a buy to a cheaper earlier slot: when the higher load means the next day's sun no longer fills the battery, energy for the next evening may be bought the night before. Selling is affected the same way, since less battery looks spare. Grid buys are still whole quarter hours at the charge rate.
+- Raise it: nights where the battery ran lower than planned, or a house whose use varies more than the learned profile shows.
+
 ### Learned charge rates
 
 These auto-calibrate from Force Charge sessions. Visible under *Indstillinger → Lærte opladningshastigheder*.

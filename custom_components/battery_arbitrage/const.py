@@ -734,6 +734,11 @@ MODEL_HEALTH_AUTORESET_STREAK = 288
 # the certain window is capped; beyond it the learned hourly model resumes.
 EV_SESSION_DP_HORIZON_H = 2.0
 
+# v1.22.0 — multiplier on the learned house load the optimiser plans with.
+# 1.0 plans on the learned profile; above 1.0 plans as if the house uses that
+# much more, so a shortfall shows up earlier and the plan buys more before it.
+DEFAULT_PLANNER_HOUSE_LOAD_FACTOR = 1.0
+
 # Coordinator update intervals
 DEFAULT_FAST_POLL_SECONDS = 15       # v0.36.0: dropped from 30 → 15 so Lovelace cards driven by integration sensors refresh every 15 s (configurable 10–300)
 CONF_FAST_POLL_INTERVAL = "fast_poll_interval"

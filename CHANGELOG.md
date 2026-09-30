@@ -9,6 +9,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.22.0] — 2026-09-30
+
+### Added — Planned house use factor
+
+A slider (1.0-2.0x, default 1.0) that makes the optimiser plan as if the house uses that multiple of its learned hourly load. Above 1.0 a shortfall before the next refill shows up earlier, so the plan buys more and earlier before expensive hours, and sells less. On 2026-10-01 from 25 % at midnight, 1.0 planned one quarter-hour buy at night and one the next afternoon; 1.2 planned three at night and none the next afternoon, since with the higher load the next day's weak sun no longer filled the battery before the evening peak and the night price was lower. Buys remain whole quarter hours at the charge rate. Entity: `number.*_planner_house_load_factor` (*Planned house use factor* / *Planlagt husforbrug-faktor*).
+
+### Fixed — `strings.json` was missing the dashboard missing-entities repair text
+
+It had fallen out of step with `translations/en.json`; it is an exact copy again.
+
+### Fixed — the optimiser planned on half the solar forecast
+
+Solcast delivers the forecast in 30-minute periods and prices come in 15-minute slots. The optimiser looked up each price slot's solar by exact start time, so the :15 and :45 slots found no entry and were planned with no sun. Every plan saw half the forecast solar. On a clear day this showed the battery unable to refill from the sun and produced grid buys the sun would have covered: on 2026-09-30 the plan bought at 00h and 13h for the next day, which reproduces exactly with half the solar and disappears with all of it. The same lookup fed the house-drag estimate in the export decision. Both now use the forecast period that covers the slot. The v1.17.1 note that the optimiser was unaffected by the 30-minute slot length was wrong.
+
+### Fixed — the plan understated how fast the battery drains in the evening
+
+The optimiser tracked SoC in whole percent and rounded after each 15-minute slot. On a 10.7 kWh battery any house load between about 0.2 and 0.6 kW rounded to exactly 1 % per slot, so the plan drained the battery at a flat 4 %/h all evening and night. With evening loads of 0.6-0.7 kW the real rate is about 6 %/h: from 100 % at 17:00 the plan showed 78 % at midnight where recorded evenings reached 60-67 %. The optimiser now interpolates between SoC states instead of rounding, and the plan's SoC path is carried as a fraction.
+
+### Fixed — late-afternoon solar correction inflated by cloudy days
+
+The per-hour solar correction was the median of actual/forecast ratios, with every sample counted equally. In the late afternoon, cloudy days produce samples with a forecast of 100-200 W and an actual output two to four times that, which pushed the 16-19 h factors to 1.05-1.28 and made the optimiser expect the sun to carry the house into the evening. Samples are now weighted by their forecast, so each counts by the energy it describes; the same data gives 0.97-1.02 for those hours. Midday factors change by less than 0.02. The *Solar confidence* percentile uses the same weighting, and 50 still equals the per-hour factor.
+
+---
+
+## [1.21.1] — 2026-09-30
+
+### Fixed — grid charging at midday while the sun would fill the battery
+
+On a clear afternoon with the car plugged in on PV mode, the planner scheduled a grid charge at the cheapest midday price although the forecast still held several kWh of surplus and the battery was 66–95 % full.
+
+The optimiser models the car from its learned hour-of-day charging probability. Above the battery-first threshold that load takes the solar surplus ahead of the battery, so the model showed the battery unable to fill from the sun and bought the top-up from the grid. In practice a Force Charge takes the surplus first: the EV controller sees no surplus and stops the car, and the battery charges from both sun and grid. The grid buy replaced solar that would have reached the battery anyway.
+
+Two changes to the optimiser:
+
+- **A PV-mode car stops below its minimum power.** The model gave the car a share of the surplus however small it was. The EV controller stops the car when the surplus falls below its minimum charging power (1.38 kW, one phase at 6 A, on the FoxESS Modbus backend), and the rest of the sun reaches the battery. The model now does the same. A forced session (fast, PV+battery, EVCC now/minpv) draws regardless of the surplus, as before.
+- **No grid charge the sun makes redundant.** For each daylight slot and SoC the optimiser checks whether the sun alone fills the battery before sunset, using the controller's own split: battery first below the battery-first threshold, the car first above it until the surplus drops below the car's minimum, then the battery again. A grid charge is not planned while that holds. Buys at a negative price, overnight buys and the night bridge are unchanged. On a cloudy day, where the sun does not fill the battery, cheap daylight buys are planned as before.
+
+---
+
 ## [1.21.0] — 2026-09-29
 
 ### Added — `create_dashboard` can write into a dashboard you already have
