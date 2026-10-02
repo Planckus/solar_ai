@@ -59,7 +59,7 @@ If you have solar panels, a FoxESS hybrid inverter with a battery, and variable 
 - Cycling the battery costs something in degradation that has to be weighed against the price spread it captures.
 - An EV that wants to charge now might be better off charging tomorrow if a sunny day is coming.
 
-Solar AI handles all of this in one decision loop. Every hour it runs a backward-induction **dynamic programming optimiser** over a 48-hour horizon at 15-minute resolution. The model includes battery state of charge (1% steps), terminal value of energy left in the battery at the horizon, degradation cost, the full DK or UK price stack (spot + retailer markup + DSO tariff + Energinet + elafgift + VAT on the buy side; spot − indfødningstarif − seller fees on the sell side), and a per-hour learned solar accuracy factor with a short-term residual correction on top. The output is an ordered plan of CHARGE / EXPORT / IDLE actions per slot.
+Solar AI handles all of this in one decision loop. Every hour it runs a backward-induction **dynamic programming optimiser** over a 48-hour horizon at 15-minute resolution. The model includes battery state of charge (1% steps, interpolated between them), terminal value of energy left in the battery at the horizon, degradation cost, the full DK or UK price stack (spot + retailer markup + DSO tariff + Energinet + elafgift + VAT on the buy side; spot − indfødningstarif − seller fees on the sell side), and a per-hour learned solar accuracy factor with a short-term residual correction on top. The output is an ordered plan of CHARGE / EXPORT / IDLE actions per slot.
 
 Between plan refreshes a **15-second execution tick** reads live FoxESS Modbus state, decides what the plan implies for *right now*, and writes the inverter's work mode, force-charge / force-discharge power, and export-limit register. An **embedded OCPP 1.6 server** (no separate integration required — the charger connects directly to `ws://<ha-ip>:9000/<cpid>/`) drives a connected EV charger from the same loop; a **FoxESS Modbus TCP** charger backend is also supported, adding single-phase solar-following (~1.4 kW) and a curtailment-harvest mode that pushes otherwise-throttled solar into the car at three-phase when the battery is full and export is blocked. Five EV modes are available: locked, solar-only, solar + battery-to-minimum, full power, and schedule-driven.
 
@@ -265,6 +265,15 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.22.1 — the grid tariff includes Energinet's system tariff, and all buy prices match Strømligning
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Energinet's system tariff (0.072 DKK/kWh in 2026) was missing** from Solar AI's own grid tariff, so *Nettarif denne time*, the price card, the price matrix and the savings tracking showed buy prices about 0.09 DKK/kWh low including VAT. The DataHub query now asks for the Energinet tariff codes directly and reads newest first.
+- **A DSO tariff change was only found on the day it took effect.** The same query now finds the current tariff on any day.
+- **Buy prices outside the optimiser left out the retailer's surcharge in Strømligning mode.** The price card, price matrix, logged charge price and savings now use the same per-slot price as the optimiser.
+- **Elafgift default is 0.008 DKK/kWh**, the 2026 rate.
 
 ### v1.22.0 — the optimiser sees the whole solar forecast and the real evening drain
 
@@ -671,7 +680,7 @@ All components are live-configurable number entities:
 | Buy-side VAT | 25% | 0–50% |
 | Seller-side fee | 0.00 DKK/kWh | 0.00–0.50 |
 | Spot price markup (retailer add-on) | 0.00 DKK/kWh | 0.00–0.50 |
-| Elafgift | 0.01 DKK/kWh | 0.00–3.00 |
+| Elafgift | 0.008 DKK/kWh | 0.00–3.00 |
 | Min. export price floor | 0.00 DKK/kWh | 0.00–2.00 |
 
 ### Network tariff integration
@@ -820,7 +829,7 @@ These build the buy- and sell-side prices the optimiser uses. (The DSO + Energin
 | Setting | Range | Default | What it does |
 |---|---|---|---|
 | **Buy-side VAT**<br>_Moms på køb_ | 0–50 % | 25 % | VAT applied to the buy price. |
-| **Electricity duty (elafgift)**<br>_Elafgift_ | 0.00–3.00 DKK/kWh | 0.01 | Danish electricity tax added to the buy price. |
+| **Electricity duty (elafgift)**<br>_Elafgift_ | 0.00–3.00 DKK/kWh | 0.008 | Danish electricity tax added to the buy price. |
 | **Spot price markup**<br>_Spotpris-tillæg (elhandlertillæg)_ | 0.00–0.50 DKK/kWh | 0.00 | Your retailer's per-kWh add-on on top of spot (buy side). |
 | **Sell-side fee**<br>_Salgsgebyr_ | 0.00–0.50 DKK/kWh | 0.00 | Per-kWh cut your provider takes from export revenue (subtracted from the sell price). |
 | **Minimum export price**<br>_Minimum eksportpris (0 = tillad negativ)_ | 0.00–2.00 DKK/kWh | 0.00 | Blocks exporting when the net sell price is below this. 0 = allow any price, including negative. |
@@ -1094,7 +1103,7 @@ On spot price refresh (typically once per hour):
 | `sensor.*_24h_prisminimum/maksimum/gennemsnit` | 24-h price statistics |
 | `sensor.*_24h_pris_25/75_percentil` | Quartile thresholds used for fallback decisions |
 | `sensor.*_naeste_slots_pris` | Price for the next 30-minute slot |
-| `sensor.*_nettarif_denne_time` | DSO + Energinet + elafgift for the current hour (DKK/kWh) |
+| `sensor.*_nettarif_denne_time` | DSO + Energinet + elafgift for the current hour, excl. VAT (DKK/kWh) |
 | `sensor.*_indfodningstarif_dso_energinet` | Auto-fetched feed-in production tariff (DKK/kWh) |
 | `sensor.*_minimum_eksportpris` | Configured export price floor |
 | `sensor.*_24h_priskort` | 24-h price chart sensor; `slots` attribute = list of `{h, buy, sell}` |

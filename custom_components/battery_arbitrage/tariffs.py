@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 from datetime import datetime, timedelta, timezone
@@ -45,8 +46,12 @@ async def _fetch_raw_records(
     limit: int,
     end: str | None = None,
     sort: str | None = None,
+    codes: frozenset[str] | None = None,
 ) -> list[dict]:
     """Fetch raw D03 records from DatahubPricelist for *gln* starting at *start*.
+
+    *codes* (optional) restricts the query to those ``ChargeTypeCode`` values
+    on the server side, so records of other codes cannot use up *limit*.
 
     *end* (optional) adds ``&end=<date>`` to the query.  Setting ``end=tomorrow``
     excludes future pre-published records from the result set, which is critical
@@ -59,9 +64,12 @@ async def _fetch_raw_records(
     where the target record may be beyond the limit in ascending order due to
     the large number of daily DSO records.
     """
+    flt: dict[str, Any] = {"GLN_Number": gln, "ChargeType": "D03"}
+    if codes:
+        flt["ChargeTypeCode"] = sorted(codes)
     url = (
         f"{_DATAHUB_URL}"
-        f'?filter={{"GLN_Number":"{gln}","ChargeType":"D03"}}'
+        f"?filter={json.dumps(flt, separators=(',', ':'))}"
         f"&start={start}"
         f"&limit={limit}"
     )
@@ -173,9 +181,18 @@ async def fetch_tariff_schedule(
     #   Energinet annual records (ValidFrom = Jan 1) and seasonal DSO records
     #   are found here.  Daily DSO records are also present but today's record
     #   is already captured by query 1.
+    # v1.22.1 — the historical query reads newest first, and with an
+    # allow-list the codes are filtered on the server. Read oldest first, the
+    # 500-record limit ended years before today: Energinet's daily
+    # network-loss tariff (40021/40023) crowded out the 2026 Systemtarif
+    # (41000), and Dinel's 2026-10-01 tariff was only found on its first day,
+    # by the start=today query. The same newest-first order is what
+    # `fetch_feed_in_tariff` already uses.
     records_today, records_past = await asyncio.gather(
-        _fetch_raw_records(session, gln, today_str, _DAILY_LIMIT, end=tomorrow_str),
-        _fetch_raw_records(session, gln, _TARIFF_LOOKBACK_START, _LOOKBACK_LIMIT, end=tomorrow_str),
+        _fetch_raw_records(session, gln, today_str, _DAILY_LIMIT, end=tomorrow_str,
+                           codes=allowed_codes),
+        _fetch_raw_records(session, gln, _TARIFF_LOOKBACK_START, _LOOKBACK_LIMIT,
+                           end=tomorrow_str, sort="ValidFrom desc", codes=allowed_codes),
     )
 
     # Merge and deduplicate by (ChargeTypeCode, ValidFrom).
@@ -281,9 +298,13 @@ async def fetch_tariff_schedule(
                 round(float(all_prices[i]), 6) if all_prices[i] is not None else 0.0
                 for i in range(24)
             )
-        if profile_key in seen_profiles:
-            continue
-        seen_profiles.add(profile_key)
+        # Not for an explicit code allow-list: those are distinct charges
+        # (Energinet's transmission and system tariffs) that must both count
+        # even when their rates happen to be equal.
+        if allowed_codes is None:
+            if profile_key in seen_profiles:
+                continue
+            seen_profiles.add(profile_key)
 
         if len(prices_set) == 1:
             # Flat-rate tariff (e.g. Energinet transmissions nettarif):

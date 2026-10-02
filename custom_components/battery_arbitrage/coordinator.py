@@ -107,6 +107,7 @@ from .const import (
     PREDICTION_WARMUP_SECONDS,
     DEFAULT_SOLAR_CONFIDENCE_PCT,
     EV_SESSION_DP_HORIZON_H,
+    ELAFGIFT_OLD_DEFAULT_DKK_KWH,
     DEFAULT_PLANNER_HOUSE_LOAD_FACTOR,
     PLAN_REFRESH_SECONDS,
     DYNAMIC_FLOOR_MAX_SOC,
@@ -970,6 +971,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             if not self._stored.get("prediction_log_reset_v0461"):
                 self._stored["prediction_log"] = []
                 self._stored["prediction_log_reset_v0461"] = True
+            # v1.22.1 — move an elafgift still at the old 0.01 default to the
+            # 2026 rate, once. Any other value was set by the user and stays.
+            if not self._stored.get("elafgift_default_v1221"):
+                if self._stored.get("elafgift") == ELAFGIFT_OLD_DEFAULT_DKK_KWH:
+                    self._stored["elafgift"] = DEFAULT_ELAFGIFT_DKK_KWH
+                self._stored["elafgift_default_v1221"] = True
             self._stored.setdefault("solar_daily_kwh", [])
             self._stored.setdefault("solar_today_kwh", 0.0)
             self._stored.setdefault("solar_today_date", "")
@@ -1675,6 +1682,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         current_local_hour = now.astimezone().hour
         tariff_this_hour = round(tariff_sched[current_local_hour] + elafgift, 4)
 
+        # v1.22.1 — the buy price for one slot, for everything outside the
+        # optimiser: price card, price matrix, logged charge price, savings
+        # and the export decision's cheapest-slot search. These used the
+        # manual stack directly, which in Strømligning mode left out the
+        # retailer's surcharge (spot markup is 0 there); `_compute_buy_price`
+        # returns Strømligning's all-in price for the slot, the same number
+        # the optimiser plans with, and the manual stack in the other modes.
+        def _buy_at(spot_value: float, slot_start_dt: datetime, hour: int) -> float:
+            return self._compute_buy_price(
+                spot=spot_value,
+                hour=hour,
+                slot_start_dt=slot_start_dt,
+                spot_markup=spot_markup,
+                tariff_this_hour_dso=tariff_sched[hour],
+                elafgift=elafgift,
+                vat_factor=vat_factor,
+            )
+
         # Native-resolution slot data (handles 15-min or hourly depending on DSO/EVCC config)
         grid_slot_data = _forecast_slots(grid_rates.get("rates", []), now, forecast_hours)
         solar_slot_data = _forecast_slots(solar_rates.get("rates", []), now, forecast_hours)
@@ -2092,7 +2117,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # Find the slot with the cheapest full buy price (native resolution)
             cheapest_slot = min(
                 grid_slot_data,
-                key=lambda s: (s[4] + spot_markup + tariff_sched[s[2]] + elafgift) * vat_factor,
+                key=lambda s: _buy_at(s[4], s[0], s[2]),
             )
             cheapest_start = cheapest_slot[0]
             # Only count drag if the cheapest slot is in the future
@@ -2473,7 +2498,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         price_chart_slots: list[dict] = []
         if price_resolution_15min:
             for slot_start, dur_h, h, m, spot in grid_slot_data:
-                buy_slot = round((spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor, 3)
+                buy_slot = round(_buy_at(spot, slot_start, h), 3)
                 # v0.59.11 — do NOT clamp at 0: show the true (possibly negative)
                 # sell price so the matrix/chart reflect pay-to-export hours.
                 sell_slot = round(spot - export_fee - feed_in_tariff, 3)
@@ -2483,7 +2508,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             for slot_start, dur_h, h, m, spot in grid_slot_data:
                 if h not in seen_ch:
                     seen_ch.add(h)
-                    buy_slot = round((spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor, 3)
+                    buy_slot = round(_buy_at(spot, slot_start, h), 3)
                     # v0.59.11 — do NOT clamp at 0: show the true (possibly negative)
                     # sell price so the matrix/chart reflect pay-to-export hours.
                     sell_slot = round(spot - export_fee - feed_in_tariff, 3)
@@ -2494,7 +2519,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # "price matrix" card. 15-min slots are averaged into their hour.
         hourly_acc: dict = {}
         for slot_start, dur_h, h, m, spot in grid_slot_data_opt:
-            buy = (spot + spot_markup + tariff_sched[h] + elafgift) * vat_factor
+            buy = _buy_at(spot, slot_start, h)
             # v0.59.11 — unclamped so the price matrix shows negative sell prices.
             sell = spot - export_fee - feed_in_tariff
             key = slot_start.replace(minute=0, second=0, microsecond=0).isoformat()
@@ -2729,10 +2754,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     await self._open_action_session(now, "export", battery_soc, export_price)
                 elif new_mode == MODE_GRID_CHARGING:
                     current_buy_price = round(
-                        (spot_ex_vat + spot_markup + tariff_sched[current_local_hour] + elafgift)
-                        * vat_factor,
-                        4,
-                    )
+                        _buy_at(spot_ex_vat, now, current_local_hour), 4)
                     await self._open_action_session(now, "charge", battery_soc, current_buy_price)
         else:
             new_mode = MODE_DISABLED
@@ -2806,10 +2828,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 battery_discharge_kw, battery_charge_kw,
                 learned_charge_rate, truly_exportable_kwh, importable_kwh,
                 grid_import_kw=grid_import_kw,
-                buy_price_now=round(
-                    (spot_ex_vat + spot_markup + tariff_sched[current_local_hour] + elafgift)
-                    * vat_factor, 4,
-                ),
+                buy_price_now=round(_buy_at(spot_ex_vat, now, current_local_hour), 4),
                 home_power_kw=max(0.0, home_power_w / 1000.0),
             )
         savings = self.get_savings_summary()

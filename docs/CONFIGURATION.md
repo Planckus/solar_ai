@@ -186,7 +186,7 @@ These feed into the buy-price and sell-price formulas the optimiser uses.
 #### Elafgift — `elafgift`
 
 - Range: 0.00–3.00 DKK/kWh
-- Default: 0.01 DKK/kWh
+- Default: 0.008 DKK/kWh (the 2026 rate; 0.01 before v1.22.1)
 - Effect: Danish electricity duty added to the buy-side cost. Change when the duty is updated (typically January).
 
 #### Seller-side fee — `export_fee`

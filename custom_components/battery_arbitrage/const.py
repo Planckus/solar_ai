@@ -998,7 +998,10 @@ ENERGINET_TARIFF_CODES = frozenset({"40000", "41000"})
 # 40021/40023 (DK1/DK2 Nettabstarif — TSO-connected industrial), 40022 (Effekt-
 # abonnement capacity charges), 40024 (begrænset netadgang), 41003 (storforbruger),
 # 41004 (TSO system abonnement), 45012 (Balancetarif production).
-DEFAULT_ELAFGIFT_DKK_KWH = 0.01         # Danish electricity duty (elafgift) — user-adjustable
+# Danish electricity duty (elafgift), user-adjustable. 0.008 DKK/kWh is the
+# 2026 rate (cut to the EU minimum); it was 0.01 before v1.22.1.
+DEFAULT_ELAFGIFT_DKK_KWH = 0.008
+ELAFGIFT_OLD_DEFAULT_DKK_KWH = 0.01
 TARIFF_SCHEDULE_REFRESH_SECONDS = 86400  # Refresh tariff schedule daily (tariffs are stable within a day)
 EDS_ELSPOT_URL = "https://api.energidataservice.dk/dataset/DayAheadPrices"
 

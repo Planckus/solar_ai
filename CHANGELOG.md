@@ -9,6 +9,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.22.1] — 2026-10-02
+
+### Fixed — Energinet's system tariff was missing from the grid tariff
+
+Solar AI builds its own hourly grid tariff from DataHub: the DSO's C tariff plus Energinet's transmission tariff (40000) and system tariff (41000). The Energinet query asked for every record since 2022, oldest first, capped at 500. Energinet also publishes a daily network-loss tariff for consumers connected to the transmission grid (40021/40023), and those records filled the 500 before the 2026 system tariff was reached. The schedule carried 0.043 DKK/kWh for Energinet instead of 0.115, so every value built from it was 0.072 DKK/kWh low before VAT.
+
+The Energinet codes are now filtered on the server, and the history query reads newest first. Records for two different Energinet codes are no longer merged when their rates are equal.
+
+The schedule feeds *Nettarif denne time*, the buy prices in the 24 h price card and the price matrix, the buy price logged at the start of a grid charge, the savings and import-cost tracking, and the manual price stack used when Strømligning has no price for a slot. In Strømligning mode the optimiser takes Strømligning's all-in price per slot, which was correct throughout.
+
+### Fixed — buy prices outside the optimiser left out the retailer's surcharge
+
+The price card, the price matrix, the buy price logged at the start of a grid charge, the savings and import-cost tracking, and the cheapest-slot search in the export decision each computed the buy price from the manual stack (spot + markup + tariffs + elafgift, times VAT). In Strømligning mode the markup is 0, because Strømligning's price already contains the retailer's surcharge, so these prices left the surcharge out. They now use the same per-slot price as the optimiser: Strømligning's all-in price in Strømligning mode, and the manual stack in the other modes. With Enkel Energi's 0.016 DKK/kWh surcharge, the manual stack was 0.020 DKK/kWh low including VAT in all 96 slots of 2026-10-02 after the tariff fix above, and 0.1075 low before it.
+
+### Fixed — a DSO tariff change was only found on its first day
+
+The same history query, read oldest first, stopped at 500 records long before the current year for a DSO that publishes daily records, such as Dinel. A new tariff was found only by the separate start-from-today query, on the day it took effect; on later days the fetch returned nothing and the last good schedule was kept. Dinel's tariff of 2026-10-01 was therefore picked up only because a refresh happened on that day. Reading newest first finds the current record on any day.
+
+### Changed — elafgift default is 0.008 DKK/kWh
+
+Danish elafgift is 0.008 DKK/kWh in 2026. The default was 0.01. A stored value still at the old default is moved to 0.008 once; any other value is left as set.
+
+---
+
 ## [1.22.0] — 2026-09-30
 
 ### Added — Planned house use factor
