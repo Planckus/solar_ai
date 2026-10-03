@@ -1,0 +1,68 @@
+{
+  "_comment": "Source of truth for the 'Supported inverters' section in README.md. Edit this file, then run scripts/render_readme.py.",
+  "inverters": [
+    {
+      "brand": "FoxESS",
+      "model": "H3-10.0-Smart",
+      "connection": "Modbus TCP over LAN, via the FoxESS Modbus integration",
+      "firmware": "Master 1.49, Manager 1.31",
+      "status": "tested",
+      "verified_with": "1.23.1",
+      "notes": "Maintainer's system. All features, including the PV-curtailment flag (register 49251) used to send otherwise throttled solar to the car."
+    },
+    {
+      "brand": "FoxESS",
+      "model": "H3 Smart series (all H3-xx-Smart sizes)",
+      "connection": "Modbus TCP over LAN, via the FoxESS Modbus integration",
+      "firmware": "",
+      "status": "supported",
+      "verified_with": "1.23.1",
+      "notes": "Same platform as the tested H3-10.0-Smart; the sizes differ in power rating only."
+    },
+    {
+      "brand": "FoxESS",
+      "model": "H1 (incl. AC1, AIO-H1, G2), H3 (incl. AC3, AIO-H3), H3 Pro, P1, KH",
+      "connection": "Modbus TCP or RS485, via the FoxESS Modbus integration with write access",
+      "firmware": "",
+      "status": "untested",
+      "verified_with": "",
+      "notes": "Expected to work when the integration exposes work mode, force charge / discharge power and min SoC. The PV-curtailment flag is read from an H3 register and may be unavailable on other models. Reports welcome as GitHub issues."
+    },
+    {
+      "brand": "Rebranded FoxESS",
+      "model": "Kuara H3, Sonnenkraft SK-HWR, STAR, Solavita SP, a-TroniX AX",
+      "connection": "Via the FoxESS Modbus integration with write access",
+      "firmware": "",
+      "status": "untested",
+      "verified_with": "",
+      "notes": "Listed as supported by the FoxESS Modbus integration. Same conditions as the FoxESS row above."
+    },
+    {
+      "brand": "Growatt",
+      "model": "MIN TL-XH, MOD TL3-XH, MID TL3-XH (GEN4 hybrid)",
+      "connection": "ShineWLAN-X2 (Modbus TCP, port 502) or RS485-to-TCP adapter, via the SolaX Inverter Modbus integration",
+      "firmware": "Must support VPP remote power control (registers 30407-30410); versions not yet confirmed",
+      "status": "planned",
+      "verified_with": "",
+      "notes": "Not available yet. Scope, dependencies and design: [docs/GROWATT.md](docs/GROWATT.md)."
+    },
+    {
+      "brand": "Growatt",
+      "model": "SPH, SPA (GEN3), MIC, MIN TL-X, MOD TL3-X, MID TL3-X, SPF, WIT",
+      "connection": "",
+      "firmware": "",
+      "status": "not supported",
+      "verified_with": "",
+      "notes": "Older generation, no battery, off-grid or commercial models. Only GEN4 hybrids with VPP remote power control are in scope."
+    },
+    {
+      "brand": "Other brands",
+      "model": "Any",
+      "connection": "",
+      "firmware": "",
+      "status": "not supported",
+      "verified_with": "",
+      "notes": "Battery control is written for FoxESS, with Growatt GEN4 hybrids planned."
+    }
+  ]
+}

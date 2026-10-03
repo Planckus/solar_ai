@@ -767,6 +767,30 @@ HOUSE_LOAD_LEARNING_ALPHA = 0.01    # Same memory as EV probability (~8 days per
 HOUSE_LOAD_OUTLIER_FACTOR = 5.0     # Clamp spikes to 5× learned value (once model is warm)
 HOUSE_LOAD_WARM_THRESHOLD_KW = 0.05 # Model considered warm above this value (> standby noise)
 
+# v1.23.0 — house load forecast from the measured hourly history: a weighted
+# mean of the same hour on the same day type (weekday / weekend) over the last
+# HOUSE_LOAD_WINDOW_DAYS, each day weighted 0.5^(age / half-life). Backtested
+# on 2025-12 to 2026-09 against the EMA profile above: evening (17-24 h)
+# forecast error −16 % in winter, equal in summer. The EMA profile remains the
+# fallback for any hour with fewer than HOUSE_LOAD_MIN_DAYS of history.
+HOUSE_LOAD_WINDOW_DAYS = 28
+HOUSE_LOAD_HALF_LIFE_DAYS = 7.0
+HOUSE_LOAD_MIN_DAYS = 3
+HOUSE_LOAD_MIN_TICKS_PER_HOUR = 6        # ≥ 30 min of 5-min samples for an hour to count
+HOUSE_LOAD_HISTORY_KEEP_DAYS = 35
+# Same-day correction: from 15:00 to 20:00 the rest of today is scaled by
+# sqrt(actual / forecast) over the last 6 complete hours, clamped. Backtested
+# −4 % to −16 % at 15-19 h; before 14 h it made the forecast worse.
+HOUSE_TODAY_CORRECTION_FROM_HOUR = 15
+HOUSE_TODAY_CORRECTION_TO_HOUR = 20
+HOUSE_TODAY_CORRECTION_SPAN_H = 6
+HOUSE_TODAY_CORRECTION_MIN = 0.5
+HOUSE_TODAY_CORRECTION_MAX = 2.0
+# Evening scorecard: forecast for 17-24 h taken at 17:00, scored after midnight.
+HOUSE_SCORECARD_FROM_HOUR = 17
+HOUSE_SCORECARD_KEEP_DAYS = 120
+HOUSE_SCORECARD_WINDOW = 14
+
 # Seasonal mode
 SEASON_SOLAR_THRESHOLD_KWH = 6.0    # kWh/day 28-day avg — below = winter mode
 SOLAR_DAILY_SAMPLES_MAX = 28        # Days of daily solar history to keep
