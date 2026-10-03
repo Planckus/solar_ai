@@ -9,6 +9,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.23.1] — 2026-10-03
+
+### Fixed — a missing load reading was stored as 0 kW in the hourly house load history
+
+The first learning tick after a restart runs before live data has arrived, and the missing house load reads as 0 kW. The hourly history added in 1.23.0 counted it, which pulls that hour's mean about 8 % low when the restart falls early in the hour. Readings of 0 kW or less are no longer recorded.
+
+### Added — supported inverters section in the README
+
+A *Supported inverters* table near the top of the README lists tested, supported and untested models. It is generated from `supported_inverters.json` by `scripts/render_readme.py`, and a test fails when the README and the JSON disagree.
+
+### Added — Growatt support plan
+
+`docs/GROWATT.md` records the planned Growatt support: scope limited to GEN4 hybrid inverters (MIN TL-XH, MOD TL3-XH, MID TL3-XH) whose firmware accepts VPP remote power control, connection through a ShineWLAN-X2 or an RS485-to-TCP adapter via the SolaX Inverter Modbus integration, every dependency, the control mapping against FoxESS, and the planned setup flow. Growatt is listed as *Planned, not available* in the supported inverters table. No Growatt code is included.
+
+---
+
+## [1.23.0] — 2026-10-02
+
+### Changed — house load forecast from measured hourly history
+
+The optimiser, the dynamic discharge floor and the night bridge took the house load from a per-hour exponential moving average that moved about 11 % a day toward each new value, per weekday / weekend. The weekend profile only updates two days a week, so it took four to five weeks to follow a change. Backtested from December 2025 to April 2026 it ran 0.42 kWh low on the 16-24 h evening.
+
+Solar AI now stores the measured house load per clock hour (excluding the car) for 35 days. Each hour's forecast is the weighted mean of the same hour on the same day type over the last 28 days, each day weighted 0.5^(age / 7 days). An hour with fewer than three days of history uses the moving average, which keeps learning as before; after an update the new method takes over hour by hour within about three weekdays and two weekends.
+
+Backtest, evening 17-24 h forecast made at 17:00, using HA's long-term statistics (car hours before 2026-05-18 excluded as hours above 2 kW):
+
+| Period | Previous method | New method |
+|---|---|---|
+| Dec 2025 – Apr 2026 (42 evenings) | 1.32 kWh | 1.11 kWh |
+| May – Sep 2026 (129 evenings) | 1.05 kWh | 1.08 kWh |
+
+Planning on a higher percentile instead of the mean, and treating public holidays as weekends, were tested and did not improve the result reliably. A regression model on hour, day type, recent level and daylight did no better than the weighted mean.
+
+### Added — same-day correction of the house load
+
+From 15:00 to 20:00 the optimiser scales the rest of today's house load by the square root of measured / forecast load over the last six complete hours, clamped to 0.5-2. Backtested at forecast times from 10:00 to 20:00, it reduced the error by 4-16 % from 15:00 to 19:00 and increased it before 14:00, which is why it is limited to that window.
+
+### Added — evening house load scorecard
+
+At 17:00 the forecast for 17-24 h is logged for the method in use and for the moving average, and scored once the day is over. The new sensor *House load forecast error (evening)* shows the mean absolute error over the last 14 scored evenings, with the moving average's error on the same evenings as `mae_old_kwh`.
+
+---
+
+## [1.22.2] — 2026-10-02
+
+### Fixed — grid charge planned while a PV+battery session ran on sun
+
+On 2026-10-02 the car was switched to PV+battery at 13:18. The sun (5.0-5.6 kW) covered the car's 4 kW and the house, and the battery kept charging. The optimiser still bought a quarter hour at 13:45 (Force Charge, 5.7-8.2 kW from the grid). It reserved the car's live draw for the next two hours as a fixed load, so the sun looked spoken for, the battery looked unable to fill before the evening, and the cheapest midday slot was bought.
+
+A PV+battery session is no longer planned for: no reserved draw and no learned car load within the session horizon. What the car actually takes from the battery shows up in the live SoC, which every re-plan starts from. Fast mode and EVCC now/minpv are still planned as a fixed draw.
+
+### Fixed — a mode change did not re-plan
+
+The plan was re-solved every 15 minutes regardless of the car. On 2026-10-02 the car went back to PV at 13:50:29, ten seconds after a re-plan, and the planned buy ran until 14:00. The optimiser now re-plans at once when the car's effective mode or plug state changes.
+
+---
+
 ## [1.22.1] — 2026-10-02
 
 ### Fixed — Energinet's system tariff was missing from the grid tariff

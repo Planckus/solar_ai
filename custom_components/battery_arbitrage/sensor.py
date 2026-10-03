@@ -815,6 +815,23 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
             "recent": d.get("prediction_log", []),
         },
     ),
+    # v1.23.0 — evening house load forecast scorecard. State = mean absolute
+    # error (kWh) of the 17-24 h forecast taken at 17:00, over the last 14
+    # scored evenings, for the method in use; `mae_old_kwh` is the previous
+    # EMA profile on the same evenings. Unknown until the first evening is scored.
+    BatteryArbitrageSensorDescription(
+        key="house_forecast_accuracy",
+        translation_key="house_forecast_accuracy",
+        icon="mdi:home-analytics",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.get("house_forecast_mae_new"),
+        attrs_fn=lambda d: {
+            "mae_old_kwh": d.get("house_forecast_mae_old"),
+            "samples": d.get("house_forecast_samples", 0),
+            "recent": d.get("house_forecast_recent", []),
+        },
+    ),
     # ── Dynamic discharge floor (v0.47.0 — C) ─────────────────────────────
     # State = the export floor actually in effect (% SoC). When the dynamic
     # feature is on this is the bridge-to-refill reserve; when off it's the

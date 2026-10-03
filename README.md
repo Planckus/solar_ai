@@ -4,6 +4,24 @@
 
 A Home Assistant integration that schedules a FoxESS battery against Nord Pool day-ahead prices, drives an EV charger — OCPP 1.6 or FoxESS Modbus TCP — from solar surplus, and learns from observed production and consumption.
 
+## Supported inverters
+
+Solar AI controls the battery through the [FoxESS Modbus](https://github.com/nathanmarlor/foxess_modbus) integration and needs write access to the inverter. The table is generated from [`supported_inverters.json`](supported_inverters.json). Growatt support is planned for GEN4 hybrid models only; see [docs/GROWATT.md](docs/GROWATT.md) for the scope and dependencies. To report a model, open an issue with the model, connection and firmware versions.
+
+<!-- supported-inverters:start -->
+<!-- Generated from supported_inverters.json by scripts/render_readme.py. Do not edit by hand. -->
+
+| Status | Brand | Model | Connection | Firmware | Verified with | Notes |
+|---|---|---|---|---|---|---|
+| Tested | FoxESS | H3-10.0-Smart | Modbus TCP over LAN, via the FoxESS Modbus integration | Master 1.49, Manager 1.31 | v1.23.1 | Maintainer's system. All features, including the PV-curtailment flag (register 49251) used to send otherwise throttled solar to the car. |
+| Supported | FoxESS | H3 Smart series (all H3-xx-Smart sizes) | Modbus TCP over LAN, via the FoxESS Modbus integration | — | v1.23.1 | Same platform as the tested H3-10.0-Smart; the sizes differ in power rating only. |
+| Untested | FoxESS | H1 (incl. AC1, AIO-H1, G2), H3 (incl. AC3, AIO-H3), H3 Pro, P1, KH | Modbus TCP or RS485, via the FoxESS Modbus integration with write access | — | — | Expected to work when the integration exposes work mode, force charge / discharge power and min SoC. The PV-curtailment flag is read from an H3 register and may be unavailable on other models. Reports welcome as GitHub issues. |
+| Untested | Rebranded FoxESS | Kuara H3, Sonnenkraft SK-HWR, STAR, Solavita SP, a-TroniX AX | Via the FoxESS Modbus integration with write access | — | — | Listed as supported by the FoxESS Modbus integration. Same conditions as the FoxESS row above. |
+| Planned, not available | Growatt | MIN TL-XH, MOD TL3-XH, MID TL3-XH (GEN4 hybrid) | ShineWLAN-X2 (Modbus TCP, port 502) or RS485-to-TCP adapter, via the SolaX Inverter Modbus integration | Must support VPP remote power control (registers 30407-30410); versions not yet confirmed | — | Not available yet. Scope, dependencies and design: [docs/GROWATT.md](docs/GROWATT.md). |
+| Not supported | Growatt | SPH, SPA (GEN3), MIC, MIN TL-X, MOD TL3-X, MID TL3-X, SPF, WIT | — | — | — | Older generation, no battery, off-grid or commercial models. Only GEN4 hybrids with VPP remote power control are in scope. |
+| Not supported | Other brands | Any | — | — | — | Battery control is written for FoxESS, with Growatt GEN4 hybrids planned. |
+<!-- supported-inverters:end -->
+
 ## What it does
 
 Solar AI is an automated energy manager for a FoxESS solar-and-battery system. It runs entirely inside Home Assistant and makes the decisions a battery owner would otherwise make by hand — when to store solar, when to buy cheap grid power, when to sell, and when to hold enough back for the house — and it remakes them every 15 minutes, around the clock, adjusting as prices, weather and your consumption change. You set it up once; it runs itself.
@@ -265,6 +283,28 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.23.1 — house load history guard and a supported inverters table
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **A missing load reading after a restart was stored as 0 kW** in the hourly house load history. It is now skipped.
+- **New [Supported inverters](#supported-inverters) section**, generated from `supported_inverters.json` by `scripts/render_readme.py`; a test fails when the two disagree.
+
+### v1.23.0 — house load forecast from 28 days of measured history
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **House load is forecast from the measured hourly load of the last 28 days**, recent days weighted more, per weekday / weekend. Backtested on December 2025 to September 2026: the evening forecast error fell 16 % in winter, where the previous moving average ran 0.4 kWh low, and was unchanged in summer.
+- **Same-day correction from 15:00 to 20:00**: the rest of the day is scaled by how the last six hours compared with the forecast.
+- **New sensor *House load forecast error (evening)*** scores the 17-24 h forecast every evening against the previous method.
+
+### v1.22.2 — no grid charge for a PV+battery session running on sun
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **A PV+battery session is no longer planned for.** Its draw was reserved for two hours as a fixed load, so the optimiser bought grid power at midday while the sun covered the car and the battery was still charging. What the car takes from the battery now shows up in the live SoC at the next re-plan.
+- **The plan is re-solved as soon as the car's mode or plug state changes**, instead of at the next 15-minute refresh.
 
 ### v1.22.1 — the grid tariff includes Energinet's system tariff, and all buy prices match Strømligning
 
@@ -698,13 +738,16 @@ All components are live-configurable number entities:
 | Per-hour accuracy correction | Rolling per-hour-of-day factor in [0.3, 1.5]: the forecast-weighted median of actual/forecast (v1.22.0). Applied inside the optimiser. |
 | Intra-hour correction (v0.28.6) | Per-tick residual tracking; `_st_solar_factor = mean(actual / forecast over last 4 closed 15-min slots)`. Applied with linear decay over 2 h on top of the per-hour factor. |
 | Net surplus | Predicted house load subtracted from forecast PV to compute available kWh for the battery. Grid charge skipped when solar will fill the battery. |
-| Planner sun-fill rule (v1.21.1) | During daylight the optimiser does not plan a grid charge when the sun alone fills the battery before sunset. It follows the EV controller's split: battery first below the battery-first threshold, the car first above it, and the battery again once the surplus drops below the car's minimum power (a PV-mode car stops there). Buys at a negative price, overnight buys and the night bridge are unaffected. |
+| Planner sun-fill rule (v1.21.1) | During daylight the optimiser does not plan a grid charge when the sun alone fills the battery before sunset. It follows the EV controller's split: battery first below the battery-first threshold, the car first above it, and the battery again once the surplus drops below the car's minimum power (a PV-mode car stops there). A PV+battery session is not planned for (v1.22.2); what it takes from the battery shows in the live SoC. Buys at a negative price, overnight buys and the night bridge are unaffected. |
 
 ### House load model
 
 | Item | Detail |
 |---|---|
-| Per-hour profile | 24 slots, ~8-day exponential moving average per slot |
+| Per-hour forecast (v1.23.0) | Weighted mean of the same hour on the same day type (weekday / weekend) over the last 28 days of measured load, each day weighted by 0.5^(age / 7 days). An hour with fewer than 3 days of history uses the exponential moving average below. |
+| Same-day correction (v1.23.0) | From 15:00 to 20:00 the rest of today is scaled by the square root of measured / forecast load over the last 6 hours, clamped to 0.5-2. |
+| Evening scorecard (v1.23.0) | The 17-24 h forecast is logged at 17:00 for both the current method and the moving average, and scored after midnight. Shown by the *House load forecast error (evening)* sensor. |
+| Per-hour fallback | 24 slots, ~8-day exponential moving average per slot |
 | Short-term mean | 2-hour rolling average |
 | Long-term mean | 28-day rolling average |
 | Vacation detection | If load drops below 25% of 28-day baseline for ≥ 4 hours, the model switches to a conservative estimate. |
@@ -1104,6 +1147,7 @@ On spot price refresh (typically once per hour):
 | `sensor.*_24h_pris_25/75_percentil` | Quartile thresholds used for fallback decisions |
 | `sensor.*_naeste_slots_pris` | Price for the next 30-minute slot |
 | `sensor.*_nettarif_denne_time` | DSO + Energinet + elafgift for the current hour, excl. VAT (DKK/kWh) |
+| `sensor.*_husforbrug_prognosefejl_aften` | Mean absolute error (kWh) of the evening house load forecast over the last 14 scored evenings. Attributes: `mae_old_kwh` (moving-average method on the same evenings), `samples`, `recent`. Unknown until the first evening is scored. |
 | `sensor.*_indfodningstarif_dso_energinet` | Auto-fetched feed-in production tariff (DKK/kWh) |
 | `sensor.*_minimum_eksportpris` | Configured export price floor |
 | `sensor.*_24h_priskort` | 24-h price chart sensor; `slots` attribute = list of `{h, buy, sell}` |

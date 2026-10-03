@@ -350,8 +350,9 @@ class TestEvSessionDemand:
 # ------------------------------------------------------------------ #
 
 class TestHouseLoadProfileSplit:
-    """get_house_load_profile returns the requested day type with layered
-    fallback (own → legacy combined → other type → rolling mean)."""
+    """The EMA profile returns the requested day type with layered fallback
+    (own → legacy combined → other type → rolling mean). Since v1.23.0 it is
+    the per-hour fallback of `get_house_load_profile`."""
 
     def _call(self, stored, weekend):
         import types
@@ -359,7 +360,7 @@ class TestHouseLoadProfileSplit:
             BatteryArbitrageCoordinator,
         )
         stub = types.SimpleNamespace(_stored=stored)
-        return BatteryArbitrageCoordinator.get_house_load_profile(stub, weekend=weekend)
+        return BatteryArbitrageCoordinator._ema_house_load_profile(stub, weekend=weekend)
 
     def test_returns_requested_day_type(self):
         stored = {
@@ -493,7 +494,8 @@ class TestPlannerSunFill:
     TZ = timezone(timedelta(hours=2))
 
     def _plan(self, *, solar_kw, ev_session_kw=0.0, ev_session_h=2.0, ev_priority_soc=80.0,
-              soc=66.0, ev_hours=range(11, 17), ev_pv_stop_kw=1.38, tail_kw=None):
+              soc=66.0, ev_hours=range(11, 17), ev_pv_stop_kw=1.38, tail_kw=None,
+              ev_ignore_session=False):
         # A clear afternoon: cheap at 13:30-14:15, expensive from 17:00. A PV
         # car is learned to charge 11-16 h, which the planner used to read as
         # the sun being gone and buy the battery's top-up from the grid.
@@ -520,7 +522,7 @@ class TestPlannerSunFill:
             now, grid, solar, 1.0, soc, 10.67, 85, 13, ev_priority_soc, 100, 0.926,
             9.81, 17.0, [0.7] * 24, ev_hourly, 10.4, 1.25, [0.0] * 24, 0.0, 0.0,
             0.0, 0.0, 0.03, 2.15, 10.0, ev_session_kw, ev_session_h,
-            ev_pv_stop_kw=ev_pv_stop_kw,
+            ev_pv_stop_kw=ev_pv_stop_kw, ev_ignore_session=ev_ignore_session,
         )
         return [p for p in plan if p["action"] == "CHARGE"]
 
@@ -536,6 +538,16 @@ class TestPlannerSunFill:
         assert self._plan(
             solar_kw=5.0, ev_session_kw=11.0, ev_session_h=8.0, ev_priority_soc=0.0,
         ) != []
+
+    def test_pv_battery_session_is_not_planned_for(self):
+        # PV+battery: the car takes the sun first and the battery only covers
+        # the rest. Reserving its 4 kW draw made the sun look spoken for and
+        # bought grid power at midday (2026-10-02 13:45). The session is not
+        # planned for; the live SoC carries what the car really took.
+        kw = dict(solar_kw=5.0, ev_session_kw=4.0, ev_session_h=2.0,
+                  ev_priority_soc=0.0, ev_hours=range(11, 21))
+        assert self._plan(**kw, ev_ignore_session=True) == []
+        assert self._plan(**kw) != []
 
     def test_pv_car_stop_leaves_the_tail_to_the_battery(self):
         # Car learned to charge until sunset. Above 80 % it takes the surplus,
@@ -601,3 +613,67 @@ class TestPlannerSolarAndDrain:
         c._stored["planner_house_load_factor"] = 1.5
         plan = self._solve(c, now, [], 0.6, 80.0)
         assert plan[8]["soc"] == pytest.approx(62, abs=1)
+
+
+class TestHouseLoadForecast:
+    """v1.23.0 — weighted 28-day house load profile, same-day correction, scorecard."""
+
+    def _coord(self, hours):
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {
+            "house_load_hours": hours,
+            "house_load_weekday": [0.5] * 24,
+            "house_load_weekend": [0.5] * 24,
+        }
+        c._house_profile_cache = None
+        return c
+
+    @staticmethod
+    def _hours(start, ndays, kw_fn):
+        out = {}
+        for k in range(ndays):
+            d = start - timedelta(days=k + 1)
+            for h in range(24):
+                out[f"{d.isoformat()}T{h:02d}"] = [kw_fn(d, h) * 12, 12]
+        return out
+
+    def test_recent_days_weigh_more(self):
+        now = datetime(2026, 10, 7, 12, 0)  # Wednesday
+        # Weekdays: 1.0 kW in the last week, 0.2 kW before that.
+        hours = self._hours(now.date(), 28, lambda d, h: 1.0 if (now.date() - d).days <= 7 else 0.2)
+        prof = self._coord(hours).get_house_load_profile(weekend=False, now=now)
+        assert 0.6 < prof[18] < 1.0
+
+    def test_falls_back_to_ema_without_history(self):
+        now = datetime(2026, 10, 7, 12, 0)
+        hours = self._hours(now.date(), 2, lambda d, h: 3.0)
+        prof = self._coord(hours).get_house_load_profile(weekend=False, now=now)
+        assert prof[18] == 0.5
+
+    def test_today_correction_window_and_clamp(self):
+        now = datetime(2026, 10, 7, 17, 5)
+        hours = self._hours(now.date(), 28, lambda d, h: 0.5)
+        for h in range(11, 17):  # today ran at 4x the forecast
+            hours[f"{now.date().isoformat()}T{h:02d}"] = [2.0 * 12, 12]
+        c = self._coord(hours)
+        assert c._house_today_factor(now) == pytest.approx(2 ** 0.5, abs=0.001)
+        assert c._house_today_factor(now.replace(hour=12)) == 1.0
+
+    def test_scorecard_logs_at_17_and_scores_next_day(self):
+        day = datetime(2026, 10, 7, 17, 0)
+        hours = self._hours(day.date(), 28, lambda d, h: 0.5)
+        for h in range(11, 24):
+            hours[f"{day.date().isoformat()}T{h:02d}"] = [0.5 * 12, 12]
+        c = self._coord(hours)
+        c._update_house_forecast_scorecard(day)
+        c._update_house_forecast_scorecard(day + timedelta(hours=8))
+        summary = c.get_house_forecast_summary()
+        assert summary["house_forecast_samples"] == 1
+        assert summary["house_forecast_mae_new"] == pytest.approx(0.0, abs=0.01)
+
+    def test_zero_reading_is_not_recorded(self):
+        c = self._coord({})
+        now = datetime(2026, 10, 7, 15, 46)
+        c._record_house_load_hour(now, 0.0)
+        c._record_house_load_hour(now, 1.2)
+        assert c._stored["house_load_hours"]["2026-10-07T15"] == [1.2, 1]

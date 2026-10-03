@@ -6,7 +6,7 @@ import logging
 import shutil
 import statistics
 from bisect import bisect_right
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -109,6 +109,19 @@ from .const import (
     EV_SESSION_DP_HORIZON_H,
     ELAFGIFT_OLD_DEFAULT_DKK_KWH,
     DEFAULT_PLANNER_HOUSE_LOAD_FACTOR,
+    HOUSE_LOAD_HALF_LIFE_DAYS,
+    HOUSE_LOAD_HISTORY_KEEP_DAYS,
+    HOUSE_LOAD_MIN_DAYS,
+    HOUSE_LOAD_MIN_TICKS_PER_HOUR,
+    HOUSE_LOAD_WINDOW_DAYS,
+    HOUSE_SCORECARD_FROM_HOUR,
+    HOUSE_SCORECARD_KEEP_DAYS,
+    HOUSE_SCORECARD_WINDOW,
+    HOUSE_TODAY_CORRECTION_FROM_HOUR,
+    HOUSE_TODAY_CORRECTION_MAX,
+    HOUSE_TODAY_CORRECTION_MIN,
+    HOUSE_TODAY_CORRECTION_SPAN_H,
+    HOUSE_TODAY_CORRECTION_TO_HOUR,
     PLAN_REFRESH_SECONDS,
     DYNAMIC_FLOOR_MAX_SOC,
     DEFAULT_PHYSICAL_FLOOR_SOC,
@@ -405,6 +418,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._started_at: datetime = datetime.now(timezone.utc)
         # v0.47.0 — receding-horizon planning: timestamp of the last DP re-solve.
         self._last_plan_refresh: datetime | None = None
+        # v1.22.2 — (EV effective mode, connected) at the last plan solve; a
+        # change re-plans at once instead of waiting for the 15-min refresh.
+        self._last_plan_ev_key: tuple | None = None
         # v0.47.0 — dynamic discharge floor: last computed value + bridge state.
         self._dynamic_floor_soc: float | None = None
         # v1.17.0 — the dark bridge the floor last sized: the battery energy the
@@ -1644,6 +1660,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 )
             self._update_load_history(base_load_kw)
             self._update_house_load_hourly(base_load_kw)
+            self._update_house_forecast_scorecard()
             self._update_ev_charge_learning(ev_charge_power_w)
             self._update_ev_max_kw(ev_charge_power_w)
             self._update_daily_solar(pv_power_w)
@@ -2163,14 +2180,30 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             live_kw=max(0.0, float(ev_charge_power_w or 0) / 1000.0),
             max_kw=float(self._stored.get("ev_max_kw", 0.0)),
         )
+        # v1.22.2 — a PV+battery session is not planned for. The car takes the
+        # sun first and the battery only covers the rest, so reserving its
+        # draw (or the learned car profile) for the next hours made the sun
+        # look spoken for and bought grid power while the battery was still
+        # charging from the sun. What the car does take from the battery
+        # shows up in the live SoC, which every re-plan starts from.
+        ev_pv_battery_session = (
+            bool(ev_connected) and self._ev_effective_mode == EV_MODE_PV_BATTERY
+        )
+        if ev_pv_battery_session:
+            ev_session_kw = 0.0
 
         # v0.47.0 (A) — receding-horizon: re-solve at least every
         # PLAN_REFRESH_SECONDS (plus on restart / tariff refresh) instead of
         # once per day, so the plan picks up tomorrow's day-ahead prices when
         # they publish and tracks the live SoC.
+        # v1.22.2 — also re-solve at once when the car's effective mode or plug
+        # state changes: on 2026-10-02 a buy planned for a PV+battery session
+        # kept running for 10 minutes after the car was switched back to PV.
+        ev_plan_key = (self._ev_effective_mode, bool(ev_connected))
         plan_stale = (
             self._last_plan_refresh is None
             or (now - self._last_plan_refresh).total_seconds() >= PLAN_REFRESH_SECONDS
+            or ev_plan_key != self._last_plan_ev_key
         )
         # v0.47.7 — only (re)solve when the inputs are actually ready. Right
         # after a restart the price cache and live SoC haven't loaded on the
@@ -2183,6 +2216,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         inputs_ready = bool(grid_slot_data_opt) and battery_soc > 0
         if inputs_ready and (tariff_stale or plan_stale or not self._optimizer_plan):
             self._last_plan_refresh = now
+            self._last_plan_ev_key = ev_plan_key
             max_export_kw_setting = float(self._stored.get("max_export_kw", DEFAULT_MAX_EXPORT_KW))
             self._optimizer_plan = self._run_optimizer(
                 now=now,
@@ -2215,6 +2249,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 ev_charge_hourly=list(self._stored.get("ev_charge_hourly", [0.0] * 24)),
                 ev_max_kw=float(self._stored.get("ev_max_kw", 0.0)),
                 ev_pv_stop_kw=self._ev_pv_stop_kw(),
+                ev_ignore_session=ev_pv_battery_session,
+                house_today_factor=self._house_today_factor(),
                 vat_factor=vat_factor,
                 tariff_sched=tariff_sched,
                 elafgift=elafgift,
@@ -3036,6 +3072,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             **self.get_export_income_summary(),
             **self.get_grid_balance_summary(),
             **self.get_prediction_accuracy_summary(),
+            **self.get_house_forecast_summary(),
         )
 
     # ------------------------------------------------------------------ #
@@ -3660,10 +3697,159 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             (1 - HOUSE_LOAD_LEARNING_ALPHA) * current + HOUSE_LOAD_LEARNING_ALPHA * clamped,
             3,
         )
+        self._record_house_load_hour(now, clamped)
 
-    def get_house_load_profile(self, weekend: bool | None = None) -> list[float]:
-        """Return the learned per-hour house load profile (kW, 24 values) for
-        the requested day type (v0.46.0 — L1).
+    def _record_house_load_hour(self, now: datetime, load_kw: float) -> None:
+        """v1.23.0 — accumulate the measured house load per local clock hour.
+
+        Stored as {"YYYY-MM-DDTHH": [sum_kw, ticks]} so an hour's mean survives
+        a restart. Entries older than HOUSE_LOAD_HISTORY_KEEP_DAYS are pruned.
+        """
+        # A house never draws exactly nothing: 0 kW is a missing reading, as on
+        # the first learning tick after a restart, before live data arrives.
+        if load_kw <= 0.0:
+            return
+        hours: dict = self._stored.setdefault("house_load_hours", {})
+        key = now.strftime("%Y-%m-%dT%H")
+        acc = hours.get(key) or [0.0, 0]
+        hours[key] = [round(acc[0] + load_kw, 4), acc[1] + 1]
+        if now.minute < 5:
+            cutoff = (now - timedelta(days=HOUSE_LOAD_HISTORY_KEEP_DAYS)).strftime("%Y-%m-%dT%H")
+            for k in [k for k in hours if k < cutoff]:
+                del hours[k]
+
+    def _house_hour_mean(self, day: date, hour: int) -> float | None:
+        """Mean house load (kW) for a local day and hour, or None if too sparse."""
+        acc = self._stored.get("house_load_hours", {}).get(f"{day.isoformat()}T{hour:02d}")
+        if not acc or acc[1] < HOUSE_LOAD_MIN_TICKS_PER_HOUR:
+            return None
+        return acc[0] / acc[1]
+
+    def get_house_load_profile(
+        self, weekend: bool | None = None, now: datetime | None = None,
+    ) -> list[float]:
+        """Return the per-hour house load forecast (kW, 24 values) for the
+        requested day type.
+
+        v1.23.0 — each hour is a weighted mean of the same hour on the same day
+        type over the last HOUSE_LOAD_WINDOW_DAYS of measured history (weight
+        0.5^(age / HOUSE_LOAD_HALF_LIFE_DAYS)). An hour with fewer than
+        HOUSE_LOAD_MIN_DAYS same-type days uses all days in the window; with
+        fewer still, it uses the EMA profile. Cached per hour, since the
+        dynamic floor reads it once per forecast slot.
+        """
+        now = now or datetime.now()
+        if weekend is None:
+            weekend = now.weekday() >= 5
+        cache_key = (bool(weekend), now.strftime("%Y-%m-%dT%H"))
+        cache = getattr(self, "_house_profile_cache", None)
+        if cache and cache[0] == cache_key:
+            return list(cache[1])
+        ema = self._ema_house_load_profile(weekend)
+        today = now.date()
+        days = [today - timedelta(days=k) for k in range(1, HOUSE_LOAD_WINDOW_DAYS + 1)]
+        out: list[float] = []
+        for h in range(24):
+            same: list[tuple[float, float]] = []
+            every: list[tuple[float, float]] = []
+            for d in days:
+                v = self._house_hour_mean(d, h)
+                if v is None:
+                    continue
+                w = 0.5 ** ((today - d).days / HOUSE_LOAD_HALF_LIFE_DAYS)
+                every.append((v, w))
+                if (d.weekday() >= 5) == bool(weekend):
+                    same.append((v, w))
+            pick = same if len(same) >= HOUSE_LOAD_MIN_DAYS else every
+            if len(pick) >= HOUSE_LOAD_MIN_DAYS:
+                out.append(round(sum(v * w for v, w in pick) / sum(w for _, w in pick), 3))
+            else:
+                out.append(ema[h])
+        self._house_profile_cache = (cache_key, list(out))
+        return out
+
+    def _house_today_factor(self, now: datetime | None = None) -> float:
+        """v1.23.0 — same-day scaling for the rest of today's house load.
+
+        From HOUSE_TODAY_CORRECTION_FROM_HOUR to _TO_HOUR: sqrt of measured /
+        forecast load over the last HOUSE_TODAY_CORRECTION_SPAN_H complete
+        hours, clamped. 1.0 outside that window or with missing hours.
+        """
+        now = now or datetime.now()
+        if not (HOUSE_TODAY_CORRECTION_FROM_HOUR <= now.hour < HOUSE_TODAY_CORRECTION_TO_HOUR):
+            return 1.0
+        profile = self.get_house_load_profile(weekend=now.weekday() >= 5, now=now)
+        actual = forecast = 0.0
+        for h in range(now.hour - HOUSE_TODAY_CORRECTION_SPAN_H, now.hour):
+            v = self._house_hour_mean(now.date(), h)
+            if v is None:
+                return 1.0
+            actual += v
+            forecast += profile[h]
+        if forecast <= 0.0:
+            return 1.0
+        ratio = max(HOUSE_TODAY_CORRECTION_MIN, min(HOUSE_TODAY_CORRECTION_MAX, actual / forecast))
+        return round(ratio ** 0.5, 3)
+
+    def _update_house_forecast_scorecard(self, now: datetime | None = None) -> None:
+        """v1.23.0 — evening forecast scorecard.
+
+        At HOUSE_SCORECARD_FROM_HOUR the forecast for the rest of the day is
+        logged for the current method (with the same-day correction) and the
+        EMA profile; the measured evening is filled in once the day is over.
+        """
+        now = now or datetime.now()
+        log: dict = self._stored.setdefault("house_forecast_log", {})
+        today = now.date()
+        hours = range(HOUSE_SCORECARD_FROM_HOUR, 24)
+        key = today.isoformat()
+        if now.hour == HOUSE_SCORECARD_FROM_HOUR and key not in log:
+            weekend = now.weekday() >= 5
+            profile = self.get_house_load_profile(weekend=weekend, now=now)
+            ema = self._ema_house_load_profile(weekend)
+            factor = self._house_today_factor(now)
+            log[key] = {
+                "new": round(sum(profile[h] for h in hours) * factor, 3),
+                "old": round(sum(ema[h] for h in hours), 3),
+            }
+        for k, entry in log.items():
+            if "actual" in entry or k >= key:
+                continue
+            d = date.fromisoformat(k)
+            vals = [self._house_hour_mean(d, h) for h in hours]
+            entry["actual"] = (
+                None if any(v is None for v in vals) else round(sum(vals), 3)
+            )
+        cutoff = (today - timedelta(days=HOUSE_SCORECARD_KEEP_DAYS)).isoformat()
+        for k in [k for k in log if k < cutoff]:
+            del log[k]
+
+    def get_house_forecast_summary(self) -> dict:
+        """v1.23.0 — mean absolute evening error (kWh) of both methods over
+        the last HOUSE_SCORECARD_WINDOW scored evenings."""
+        log: dict = self._stored.get("house_forecast_log", {})
+        scored = [
+            (k, e) for k, e in sorted(log.items())
+            if e.get("actual") is not None and "new" in e and "old" in e
+        ][-HOUSE_SCORECARD_WINDOW:]
+        if not scored:
+            return {"house_forecast_mae_new": None, "house_forecast_mae_old": None,
+                    "house_forecast_samples": 0, "house_forecast_recent": []}
+        n = len(scored)
+        return {
+            "house_forecast_mae_new": round(sum(abs(e["new"] - e["actual"]) for _, e in scored) / n, 3),
+            "house_forecast_mae_old": round(sum(abs(e["old"] - e["actual"]) for _, e in scored) / n, 3),
+            "house_forecast_samples": n,
+            "house_forecast_recent": [
+                {"date": k, "new": e["new"], "old": e["old"], "actual": e["actual"]}
+                for k, e in scored[-7:]
+            ],
+        }
+
+    def _ema_house_load_profile(self, weekend: bool | None = None) -> list[float]:
+        """Return the EMA-learned per-hour house load profile (kW, 24 values)
+        for the requested day type (v0.46.0 — L1). Fallback for
+        `get_house_load_profile` and the scorecard's comparison baseline.
 
         `weekend=None` selects today's type. Each hour falls back, in order, to:
         its own learned value → the legacy combined profile → the other day
@@ -9000,6 +9186,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ev_session_horizon_h: float = 0.0,
         house_load_weekend: list[float] | None = None,
         ev_pv_stop_kw: float = 0.0,
+        ev_ignore_session: bool = False,
+        house_today_factor: float = 1.0,
     ) -> list[dict]:
         """Backward-induction dynamic programming optimizer.
 
@@ -9032,6 +9220,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 ev_session_kw, ev_session_horizon_h,
                 house_load_weekend=house_load_weekend,
                 ev_pv_stop_kw=ev_pv_stop_kw,
+                ev_ignore_session=ev_ignore_session,
+                house_today_factor=house_today_factor,
             )
         except Exception as err:
             _LOGGER.warning("Optimizer failed — returning empty plan: %s", err)
@@ -9068,6 +9258,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ev_session_horizon_h: float = 0.0,
         house_load_weekend: list[float] | None = None,
         ev_pv_stop_kw: float = 0.0,
+        ev_ignore_session: bool = False,
+        house_today_factor: float = 1.0,
     ) -> list[dict]:
         """Core DP computation at native 15-min resolution.
 
@@ -9173,6 +9365,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             except Exception:  # noqa: BLE001
                 slot_is_weekend = False
             house_kw = (house_load_weekend if slot_is_weekend else house_load_profile)[h] * house_factor
+            # v1.23.0 — same-day correction applies to the rest of today only.
+            try:
+                if slot_start.astimezone().date() == now.astimezone().date():
+                    house_kw *= house_today_factor
+            except Exception:  # noqa: BLE001
+                pass
             ev_prob = ev_charge_hourly[h]
             ev_kw = ev_prob * ev_max_kw
             # v0.45.0 — E1: within the live-session horizon, use the certain
@@ -9184,6 +9382,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
             if ev_session_active:
                 ev_kw = max(ev_kw, ev_session_kw)
+            # v1.22.2 — no car draw is planned during a PV+battery session
+            # (see `ev_pv_battery_session`); the session horizon still bounds it.
+            if ev_ignore_session and hours_ahead <= ev_session_horizon_h:
+                ev_kw = 0.0
 
             # Idle dynamics: solar → house → EV → battery, then any deficit from battery
             solar_to_house = min(solar_kw, house_kw)
