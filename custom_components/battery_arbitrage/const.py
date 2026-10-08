@@ -790,6 +790,22 @@ HOUSE_TODAY_CORRECTION_MAX = 2.0
 HOUSE_SCORECARD_FROM_HOUR = 17
 HOUSE_SCORECARD_KEEP_DAYS = 120
 HOUSE_SCORECARD_WINDOW = 14
+# v1.23.2 — the peak-tariff block, local time (end exclusive). Used by the
+# peak cover and by house load learning below.
+PEAK_TARIFF_FROM_HOUR = 17
+PEAK_TARIFF_TO_HOUR = 21
+# Peak-tariff hours are not learned while the battery is low. A household that
+# sees a low battery at 17-21 h cuts its use; learning that hour teaches the
+# forecast the reduced figure, the next plan buys less, and the battery runs
+# low again. An hour is skipped when it starts below this SoC.
+HOUSE_LOAD_PEAK_MIN_SOC = 30.0
+# Peak cover: before the peak block the battery should hold the block's
+# forecast house load plus a cover, bought at the cheapest price before the
+# block. The cover is learned: the PEAK_COVER_PERCENTILE of how far each
+# measured block ran above the forecast, over the house load window. A heavy
+# evening (cooking) is what the forecast mean cannot see.
+PEAK_COVER_PERCENTILE = 90.0
+PEAK_COVER_MIN_DAYS = 7
 
 # Seasonal mode
 SEASON_SOLAR_THRESHOLD_KWH = 6.0    # kWh/day 28-day avg — below = winter mode

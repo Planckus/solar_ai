@@ -1,6 +1,17 @@
 {
   "config": {
     "step": {
+      "quick": {
+        "title": "Hurtig opsætning",
+        "description": "Solar AI har fundet dit FoxESS-anlæg:\n\n{summary}\n\nBekræft de få ting, der ikke kan findes automatisk, herunder, eller sæt flueben i **Tilpas avancerede indstillinger** for at vælge alle entiteter selv.",
+        "data": {
+          "battery_capacity": "Batterikapacitet (kWh)",
+          "dso_gln": "Netselskab (DSO)",
+          "currency": "Valuta",
+          "create_dashboard": "Opret Solar AI-dashboardet for mig",
+          "advanced": "Tilpas avancerede indstillinger i stedet"
+        }
+      },
       "user": {
         "title": "Live datakilde",
         "description": "Hvor skal Solar AI hente live netstrøm, solcelleproduktion, husforbrug og EV-ladetilstand fra?\n\n• **EVCC** — alt fra EVCC (standard)\n• **Hybrid** — FoxESS for net/sol/forbrug, EVCC for EV-info\n• **Kun FoxESS** — ingen EVCC overhovedet (EV-opladning registreres stadig via FoxESS Modbus TCP eller OCPP indlejret server — se advarslen på næste trin)",
@@ -114,7 +125,10 @@
       "entity_not_found": "En eller flere enheder kunne ikke findes i Home Assistant",
       "must_acknowledge_no_ev": "Du skal sætte flueben i bekræftelsen for at fortsætte"
     },
-    "abort": { "already_configured": "Solar AI er allerede konfigureret" }
+    "abort": {
+      "already_configured": "Solar AI er allerede konfigureret",
+      "no_foxess_modbus": "FoxESS Modbus-integrationen er ikke installeret endnu (eller har ingen entiteter). Solar AI læser og styrer din FoxESS-inverter gennem den, så installér og opsæt FoxESS Modbus først, kontrollér at dens sensorer virker, og tilføj derefter Solar AI."
+    }
   },
   "options": {
     "step": {
