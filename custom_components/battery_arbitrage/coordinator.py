@@ -111,6 +111,11 @@ from .const import (
     DEFAULT_PLANNER_HOUSE_LOAD_FACTOR,
     HOUSE_LOAD_HALF_LIFE_DAYS,
     HOUSE_LOAD_HISTORY_KEEP_DAYS,
+    PEAK_TARIFF_FROM_HOUR,
+    PEAK_TARIFF_TO_HOUR,
+    HOUSE_LOAD_PEAK_MIN_SOC,
+    PEAK_COVER_PERCENTILE,
+    PEAK_COVER_MIN_DAYS,
     HOUSE_LOAD_MIN_DAYS,
     HOUSE_LOAD_MIN_TICKS_PER_HOUR,
     HOUSE_LOAD_WINDOW_DAYS,
@@ -432,6 +437,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._bridge_end: datetime | None = None
         # v1.17.1 — solar surplus expected before that bridge starts.
         self._bridge_solar_surplus_kwh: float = 0.0
+        # v1.23.2 — end of the bridge a started bridge buy is completing; None
+        # when no buy is under way.
+        self._bridge_buy_until: datetime | None = None
+        # v1.23.2 — the next 17-21 h peak block as the dynamic floor sized it
+        # (see _size_peak_cover), and the block a started peak-cover buy is for.
+        self._peak_start: datetime | None = None
+        self._peak_end: datetime | None = None
+        self._peak_need_kwh: float = 0.0
+        self._peak_pre_deltas: list[float] = []
+        self._peak_buy_until: datetime | None = None
+        self._peak_cover_cache: tuple | None = None
+        # v1.23.2 — whether the current peak hour is excluded from house-load
+        # learning, decided on the hour's first tick.
+        self._house_learn_hour_key: str | None = None
+        self._house_learn_hour_skip: bool = False
         # v1.19.2 — a manual force_grid_charge / force_export holds until it
         # is cancelled or has nothing left to do. Without it the services set
         # the inverter mode once and the next decision tick, seconds later,
@@ -1659,7 +1679,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     curtailed=(mppt_curtailed or floor_curtailed),
                 )
             self._update_load_history(base_load_kw)
-            self._update_house_load_hourly(base_load_kw)
+            self._update_house_load_hourly(
+                base_load_kw,
+                self._get_float_state(
+                    self.config.get(CONF_BATTERY_SOC_ENTITY, FOXESS_BATTERY_SOC)),
+            )
             self._update_house_forecast_scorecard()
             self._update_ev_charge_learning(ev_charge_power_w)
             self._update_ev_max_kw(ev_charge_power_w)
@@ -2041,6 +2065,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # by post-restart SoC=0 reads (it pegged the floor at the 85% cap).
         else:
             self._dynamic_floor_soc = None
+            # v1.23.2 — the bridge and the peak block are sized only with the
+            # dynamic floor on; drop what it sized last so neither buy acts on
+            # a stale figure after the switch is turned off.
+            self._bridge_reserve_kwh = 0.0
+            self._bridge_end = None
+            self._clear_peak_cover()
         # v0.65.0 — remember the effective export floor for the hardware-min-SoC
         # backstop set in _transition_to(MODE_EXPORTING).
         self._effective_floor_soc = float(floor_soc)
@@ -2521,10 +2551,109 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 buy_price_next_slot <= buy_price_p25
                 and solar_kwh < predicted_house_load_24h
             )
-            if at_cheapest and (bridge_shortfall_kwh >= MIN_GRID_CHARGE_KWH or fill_up):
+            if self._shortfall_buy_wanted(
+                self._bridge_buy_until, now, bridge_shortfall_kwh, at_cheapest, fill_up,
+            ):
                 should_grid_charge = True
                 bridge_buy_active = True
                 bridge_buy_fill_up = fill_up
+        if bridge_buy_active:
+            self._bridge_buy_until = self._bridge_end
+        elif bridge_shortfall_kwh <= 0.0:
+            self._bridge_buy_until = None
+
+        # v1.23.2 — peak cover. The night bridge buys at the cheapest price
+        # before the morning, which can come after the 17-21 h peak. Before the
+        # peak the battery should hold the block's forecast load plus a learned
+        # cover for a heavy evening; if it will not, buy the difference at the
+        # cheapest price before the block, provided the block's own average
+        # price still beats it after battery losses and wear
+        # (_peak_cover_price_ok). Only when nothing else is charging already.
+        peak_buy_active = False
+        peak_shortfall_kwh = 0.0
+        if self._peak_start is not None and now < self._peak_start:
+            se = efficiency ** 0.5
+            phys_floor = self._physical_floor_soc()
+            peak_shortfall_kwh = self._peak_shortfall_kwh(
+                max(0.0, (battery_soc - phys_floor) / 100.0 * capacity_kwh * se),
+                max(0.0, (max_soc - phys_floor) / 100.0 * capacity_kwh * se),
+            )
+        if (
+            peak_shortfall_kwh > 0.0
+            and not should_grid_charge
+            and bool(grid_slot_data)
+            and price_data_sufficient
+            and not should_export
+            and importable_kwh >= MIN_GRID_CHARGE_KWH
+            and battery_soc < max_soc
+            and not evcc_managing_battery
+            and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
+        ):
+            before = [
+                _buy(value, start, local_hour)
+                for start, _dur_h, local_hour, _local_minute, value in grid_slot_data
+                if start < self._peak_start
+            ]
+            during = [
+                _buy(value, start, local_hour)
+                for start, _dur_h, local_hour, _local_minute, value in grid_slot_data
+                if self._peak_start <= start < self._peak_end
+            ]
+            price_ok = self._peak_cover_price_ok(
+                buy_price_next_slot, before, during, efficiency,
+                float(self._stored.get(
+                    "battery_degradation_cost", DEFAULT_BATTERY_DEGRADATION_COST)),
+            )
+            if self._shortfall_buy_wanted(
+                self._peak_buy_until, now, peak_shortfall_kwh, price_ok,
+            ):
+                should_grid_charge = True
+                peak_buy_active = True
+        if peak_buy_active:
+            self._peak_buy_until = self._peak_start
+        elif peak_shortfall_kwh <= 0.0:
+            self._peak_buy_until = None
+
+        # v1.23.2 — the slots the night bridge and the peak cover expect to buy
+        # in, for the plan display only. Both decide slot by slot, so without
+        # this the plan showed no buy while one was due. Each takes its
+        # qualifying slots in time order until the shortfall is covered at the
+        # learned sustained charge rate.
+        expected_buys: set[datetime] = set()
+        if grid_slot_data and price_data_sufficient and not evcc_managing_battery:
+            priced = [
+                (start, float(dur_h), _buy(value, start, local_hour))
+                for start, dur_h, local_hour, _local_minute, value in grid_slot_data
+                if start + timedelta(hours=float(dur_h)) > now
+            ]
+            per_h = max(0.0, self.get_effective_charge_rate()) * efficiency ** 0.5
+            bridge_due = (
+                bridge_shortfall_kwh >= MIN_GRID_CHARGE_KWH
+                or (bridge_shortfall_kwh > 0.0 and self._bridge_buy_until is not None
+                    and now < self._bridge_buy_until)
+            )
+            if (bridge_due and self._bridge_end is not None
+                    and self._bridge_solar_surplus_kwh * efficiency ** 0.5 < bridge_shortfall_kwh):
+                window = [p for p in priced if p[0] < self._bridge_end]
+                if window:
+                    cheapest = min(p[2] for p in window)
+                    expected_buys.update(self._expected_buy_slots(
+                        [p for p in window if p[2] <= cheapest * BRIDGE_PRICE_TOLERANCE],
+                        bridge_shortfall_kwh, per_h))
+            peak_due = (
+                peak_shortfall_kwh >= MIN_GRID_CHARGE_KWH
+                or (peak_shortfall_kwh > 0.0 and self._peak_buy_until is not None
+                    and now < self._peak_buy_until)
+            )
+            if peak_due and self._peak_start is not None:
+                before = [p for p in priced if p[0] < self._peak_start]
+                during = [p[2] for p in priced if self._peak_start <= p[0] < self._peak_end]
+                degradation = float(self._stored.get(
+                    "battery_degradation_cost", DEFAULT_BATTERY_DEGRADATION_COST))
+                expected_buys.update(self._expected_buy_slots(
+                    [p for p in before if self._peak_cover_price_ok(
+                        p[2], [b[2] for b in before], during, efficiency, degradation)],
+                    peak_shortfall_kwh, per_h))
 
         # ── Price chart data ──────────────────────────────────────────────────
         # When price_resolution_15min is enabled: emit every native slot (15-min or
@@ -2639,10 +2768,17 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 solar_tomorrow_adj_kwh += adj_kw * dur_h_f
 
         # ── Tonight's plan (from DP optimizer) ───────────────────────────────
+        # v1.23.2 — shown with the night bridge and peak-cover buys expected
+        # above. Display only: the optimizer plan itself stays unchanged, since
+        # the dynamic floor credits its CHARGE slots against the night reserve.
+        plan_entries = list(self._optimizer_plan or []) + [
+            {"action": "CHARGE", "iso": st.isoformat(), "hour": st.astimezone().hour}
+            for st in sorted(expected_buys)
+        ]
         # Prefer the optimizer plan; fall back to simple greedy if unavailable.
         if self._optimizer_plan:
-            charge_hours = sorted({s["hour"] for s in self._optimizer_plan if s["action"] == "CHARGE"})
-            export_hours = sorted({s["hour"] for s in self._optimizer_plan if s["action"] == "EXPORT"})
+            charge_hours = sorted({s["hour"] for s in plan_entries if s["action"] == "CHARGE"})
+            export_hours = sorted({s["hour"] for s in plan_entries if s["action"] == "EXPORT"})
 
             # v0.47.2 — date-aware plan string: group the hours by day and tag
             # today / tomorrow, so e.g. tomorrow's 10h is not confused with a
@@ -2650,47 +2786,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             today_local = now.astimezone().date()
 
             def _fmt_plan(action: str) -> str:
-                by_day: dict = {}
-                for s in self._optimizer_plan:
-                    if s["action"] != action:
-                        continue
-                    try:
-                        d = datetime.fromisoformat(s["iso"]).astimezone().date()
-                    except Exception:  # noqa: BLE001
-                        d = today_local
-                    by_day.setdefault(d, set()).add(s["hour"])
-                if not by_day:
-                    return self._msg("none", "ingen")
-                parts = []
-                for d in sorted(by_day):
-                    hrs = ", ".join(f"{h:02d}h" for h in sorted(by_day[d]))
-                    delta = (d - today_local).days
-                    if delta <= 0:
-                        label = self._msg("today", "i dag")
-                    elif delta == 1:
-                        label = self._msg("tomorrow", "i morgen")
-                    else:
-                        label = d.strftime("%a")
-                    parts.append(f"{label} {hrs}")
+                # v1.23.2 — today and tomorrow are always listed, "none" when
+                # nothing is planned that day, so an empty day reads as a
+                # result rather than a missing one. Later days only when used.
+                by_day = _plan_run_starts(plan_entries, action)
+                none_label = self._msg("none", "ingen")
+                tomorrow_local = today_local + timedelta(days=1)
+                parts = [
+                    f"{self._msg('today', 'i dag')} {', '.join(by_day.get(today_local, [])) or none_label}",
+                    f"{self._msg('tomorrow', 'i morgen')} {', '.join(by_day.get(tomorrow_local, [])) or none_label}",
+                ]
+                for d in sorted(d for d in by_day if d > tomorrow_local):
+                    parts.append(f"{d.strftime('%a')} {', '.join(by_day[d])}")
                 return "  |  ".join(parts)
 
-            charge_str = _fmt_plan("CHARGE")
-            export_str = _fmt_plan("EXPORT")
-            none_label = self._msg("none", "ingen")
-            if charge_str == none_label and export_str == none_label:
-                # v0.49.0 — the optimizer ran and found nothing worth doing
-                # today (e.g. prices too flat to clear the spread, battery
-                # covered by solar). Spell that out so a bare "ingen · ingen"
-                # doesn't read like an error or a failed calculation.
-                plan_text = self._msg(
-                    "No trades today — prices too flat to arbitrage (running on self-use)",
-                    "Ingen handler i dag — priserne er for flade til arbitrage (kører på selvforbrug)",
-                )
-            else:
-                plan_text = (
-                    f"{self._msg('Charge', 'Køb')}: {charge_str}"
-                    f"  ·  {self._msg('Export', 'Salg')}: {export_str}"
-                )
+            plan_text = (
+                f"{self._msg('Charge', 'Køb')}: {_fmt_plan('CHARGE')}"
+                f"  ·  {self._msg('Export', 'Salg')}: {_fmt_plan('EXPORT')}"
+            )
         elif price_chart_slots:
             # Fallback: simple greedy sort (used before first optimizer run)
             sorted_by_buy = sorted(price_chart_slots, key=lambda s: s["buy"])
@@ -2738,7 +2851,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
             def _split_day(action: str, delta: int) -> list:
                 out: set = set()
-                for s in self._optimizer_plan:
+                for s in plan_entries:
                     if s["action"] != action:
                         continue
                     try:
@@ -2768,6 +2881,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 capped_charge_rate_kw,
                 bridge_shortfall_kwh if bridge_buy_active else 0.0,
                 bridge_buy_fill_up,
+                peak_shortfall_kwh if peak_buy_active else 0.0,
             )
             # ---- action log: detect export/charge session transitions ----
             # v0.75.8 — deliberately scoped inside this branch, not evaluated
@@ -3099,6 +3213,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         capped_charge_rate_kw: float = 0.0,
         bridge_shortfall_kwh: float = 0.0,
         bridge_fill_up: bool = False,
+        peak_shortfall_kwh: float = 0.0,
     ) -> tuple[str, str]:
         target_mode = MODE_NORMAL
         reason = "Conditions not met for export or grid charging"
@@ -3146,6 +3261,17 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 )
                 if bridge_fill_up:
                     reason += " (filling up: price in the cheapest quarter, little sun forecast)"
+            elif peak_shortfall_kwh > 0.0:
+                reason = self._msg(
+                    f"Peak cover: battery {peak_shortfall_kwh:.1f} kWh short of the "
+                    f"{PEAK_TARIFF_FROM_HOUR}-{PEAK_TARIFF_TO_HOUR} h need plus a heavy-evening "
+                    f"cover — buying at {buy_price_next_slot:.2f} DKK/kWh, the cheapest "
+                    f"price before then",
+                    f"Spidsdækning: batteriet mangler {peak_shortfall_kwh:.1f} kWh til "
+                    f"forbruget kl. {PEAK_TARIFF_FROM_HOUR}-{PEAK_TARIFF_TO_HOUR} plus "
+                    f"buffer til en tung aften — køber til {buy_price_next_slot:.2f} "
+                    f"DKK/kWh, den billigste pris inden da",
+                )
             else:
                 reason = (
                     f"Grid charging: buy price {buy_price_next_slot:.2f} ≤ p25 {buy_price_p25:.2f} DKK/kWh (incl. tariffs + VAT), "
@@ -3662,7 +3788,27 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             3,
         )
 
-    def _update_house_load_hourly(self, base_load_kw: float) -> None:
+    @staticmethod
+    def _shortfall_buy_wanted(
+        until: datetime | None, now: datetime, shortfall_kwh: float,
+        price_ok: bool, fill_up: bool = False,
+    ) -> bool:
+        """Whether a shortfall buy (night bridge, peak cover) runs this tick.
+
+        v1.23.2 — a buy that has started (`until` set and not passed) runs
+        until the shortfall is gone. Stopping once less than
+        MIN_GRID_CHARGE_KWH was missing left that much unbought, and the house
+        pulled the battery back over the threshold within minutes: a string of
+        one-minute buys.
+        """
+        continuing = until is not None and now < until
+        return price_ok and (
+            shortfall_kwh >= MIN_GRID_CHARGE_KWH or fill_up or continuing
+        )
+
+    def _update_house_load_hourly(
+        self, base_load_kw: float, battery_soc: float | None = None,
+    ) -> None:
         """Exponentially update the learned house load for the current hour of day.
 
         Builds a 24-slot daily load profile (kW per hour) that the day-ahead
@@ -3678,6 +3824,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         """
         now = datetime.now()
         hour = now.hour
+        # v1.23.2 — a peak-tariff hour that starts with the battery low is not
+        # learned: the household rations its use then, and the forecast would
+        # learn the rationed figure (see HOUSE_LOAD_PEAK_MIN_SOC). The decision
+        # is taken on the hour's first tick and holds for the whole hour.
+        if PEAK_TARIFF_FROM_HOUR <= hour < PEAK_TARIFF_TO_HOUR:
+            hour_key = now.strftime("%Y-%m-%dT%H")
+            if getattr(self, "_house_learn_hour_key", None) != hour_key:
+                self._house_learn_hour_key = hour_key
+                self._house_learn_hour_skip = (
+                    battery_soc is not None and battery_soc < HOUSE_LOAD_PEAK_MIN_SOC
+                )
+            if self._house_learn_hour_skip:
+                return
         # v0.46.0 — L1: update the profile for the current day type (weekday
         # Mon–Fri vs weekend Sat/Sun). Weekends have a different load shape
         # (later mornings, more daytime presence) that a single blended curve
@@ -3790,6 +3949,137 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return 1.0
         ratio = max(HOUSE_TODAY_CORRECTION_MIN, min(HOUSE_TODAY_CORRECTION_MAX, actual / forecast))
         return round(ratio ** 0.5, 3)
+
+    def _peak_cover_kwh(self, now: datetime | None = None) -> float:
+        """v1.23.2 — learned extra house energy (kWh) for the peak block.
+
+        For each of the last HOUSE_LOAD_WINDOW_DAYS with every block hour
+        measured: the block's load minus the forecast for that day type,
+        floored at 0. Returns the PEAK_COVER_PERCENTILE of those excesses, or 0
+        with fewer than PEAK_COVER_MIN_DAYS days. Hours skipped for a low
+        battery (HOUSE_LOAD_PEAK_MIN_SOC) leave that day out. Cached per day.
+        """
+        now = now or datetime.now()
+        local = now.astimezone() if now.tzinfo else now
+        today = local.date()
+        cache = getattr(self, "_peak_cover_cache", None)
+        if cache and cache[0] == today:
+            return cache[1]
+        hours = range(PEAK_TARIFF_FROM_HOUR, PEAK_TARIFF_TO_HOUR)
+        excess: list[float] = []
+        for k in range(1, HOUSE_LOAD_WINDOW_DAYS + 1):
+            d = today - timedelta(days=k)
+            vals = [self._house_hour_mean(d, h) for h in hours]
+            if any(v is None for v in vals):
+                continue
+            profile = self.get_house_load_profile(weekend=d.weekday() >= 5, now=local)
+            excess.append(max(0.0, sum(vals) - sum(profile[h] for h in hours)))
+        cover = 0.0
+        if len(excess) >= PEAK_COVER_MIN_DAYS:
+            s = sorted(excess)
+            pos = (len(s) - 1) * PEAK_COVER_PERCENTILE / 100.0
+            lo = int(pos)
+            hi = min(lo + 1, len(s) - 1)
+            cover = round(s[lo] + (s[hi] - s[lo]) * (pos - lo), 3)
+        self._peak_cover_cache = (today, cover)
+        return cover
+
+    @staticmethod
+    def _expected_buy_slots(
+        qualifying: list[tuple], shortfall_kwh: float, kwh_per_hour: float,
+    ) -> list[datetime]:
+        """v1.23.2 — the qualifying (start, dur_h, price) slots, in time order,
+        that a shortfall buy needs to cover `shortfall_kwh` at `kwh_per_hour`.
+        With no known rate, only the first slot is returned."""
+        out: list[datetime] = []
+        got = 0.0
+        for start, dur_h, _price in sorted(qualifying, key=lambda p: p[0]):
+            if out and got >= shortfall_kwh:
+                break
+            out.append(start)
+            got += kwh_per_hour * dur_h
+            if kwh_per_hour <= 0.0:
+                break
+        return out
+
+    @staticmethod
+    def _peak_cover_price_ok(
+        price_now: float, before: list[float], during: list[float],
+        efficiency: float, degradation_cost: float,
+    ) -> bool:
+        """v1.23.2 — whether buying now for the peak block pays.
+
+        The price must be within BRIDGE_PRICE_TOLERANCE of the cheapest slot
+        before the block, and a kWh bought now and delivered in the block
+        (price / round-trip efficiency + wear) must cost less than the block's
+        average price.
+        """
+        if not before or not during:
+            return False
+        delivered_cost = price_now / max(efficiency, 0.5) + degradation_cost
+        return (
+            price_now <= min(before) * BRIDGE_PRICE_TOLERANCE
+            and delivered_cost < sum(during) / len(during)
+        )
+
+    def _clear_peak_cover(self) -> None:
+        self._peak_start = None
+        self._peak_end = None
+        self._peak_need_kwh = 0.0
+        self._peak_pre_deltas = []
+
+    def _size_peak_cover(self, now: datetime, slots: list[tuple], eff: float) -> None:
+        """v1.23.2 — size the next peak block for the peak-cover buy.
+
+        Sets _peak_start / _peak_end, _peak_need_kwh (battery energy the block
+        needs: house load net of solar, inverter standby and the learned cover)
+        and _peak_pre_deltas (the battery's forecast change per slot from now to
+        the block). Leaves them cleared while the block is running or when the
+        forecast does not reach its end. `slots` are the dynamic floor's
+        (start, house_kw, dur_h, solar_covers, charge_here, solar_kw).
+        """
+        local = now.astimezone()
+        if PEAK_TARIFF_FROM_HOUR <= local.hour < PEAK_TARIFF_TO_HOUR:
+            return
+        start = local.replace(hour=PEAK_TARIFF_FROM_HOUR, minute=0, second=0, microsecond=0)
+        if start <= local:
+            start += timedelta(days=1)
+        end = start.replace(hour=PEAK_TARIFF_TO_HOUR)
+        se = eff ** 0.5
+        deltas: list[float] = []
+        block_kwh = 0.0
+        reached = start
+        for st, house_kw, dur_h, _covers, _charge, solar_kw in slots:
+            if st >= end:
+                break
+            if st < start:
+                net = (solar_kw - house_kw) * dur_h
+                deltas.append(net * se if net > 0 else net / se)
+            else:
+                block_kwh += max(0.0, house_kw - solar_kw) * dur_h
+                reached = st + timedelta(hours=dur_h)
+        if reached < end:
+            return
+        block_h = PEAK_TARIFF_TO_HOUR - PEAK_TARIFF_FROM_HOUR
+        self._peak_start = start
+        self._peak_end = end
+        self._peak_need_kwh = (
+            block_kwh + INVERTER_STANDBY_KW * block_h + self._peak_cover_kwh(now)) / se
+        self._peak_pre_deltas = deltas
+
+    def _peak_shortfall_kwh(
+        self, usable_kwh: float, max_usable_kwh: float,
+    ) -> float:
+        """v1.23.2 — battery energy missing at the start of the peak block:
+        the need minus what the battery holds then, walking today's usable
+        energy through the forecast slots before the block (bounded by empty
+        and full)."""
+        if self._peak_start is None:
+            return 0.0
+        e = usable_kwh
+        for d in self._peak_pre_deltas:
+            e = min(max_usable_kwh, max(0.0, e + d))
+        return max(0.0, self._peak_need_kwh - e)
 
     def _update_house_forecast_scorecard(self, now: datetime | None = None) -> None:
         """v1.23.0 — evening forecast scorecard.
@@ -3967,6 +4257,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._bridge_reserve_kwh = 0.0
         self._bridge_end = None
         self._bridge_solar_surplus_kwh = 0.0
+        self._clear_peak_cover()
 
         if capacity_kwh <= 0 or not solar_slot_data:
             return None
@@ -4023,6 +4314,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # and every computed floor came out several points too high — holding
         # back battery that was in fact available.
         hw_floor = self._physical_floor_soc()
+
+        self._size_peak_cover(now, slots, max(efficiency, 0.5))
 
         # Next bridge = first upcoming slot where solar does NOT cover the house.
         start_idx = next((i for i, x in enumerate(slots) if not x[3]), None)
@@ -9932,6 +10225,27 @@ def _covering_value(
     if i >= 0 and t < slots[i][0] + timedelta(hours=slots[i][1]):
         return slots[i][4] / 1000.0
     return default
+
+
+def _plan_run_starts(entries: list[dict], action: str) -> dict[date, list[str]]:
+    """v1.23.2 — start time ("HH:MM", local) of each run of consecutive plan
+    slots with `action`, grouped by local date. Slots up to 15 minutes apart
+    belong to one run, so a buy from 01:15 to 01:45 reads as 01:15."""
+    starts: list[datetime] = []
+    for s in entries:
+        if s.get("action") != action:
+            continue
+        try:
+            starts.append(datetime.fromisoformat(s["iso"]).astimezone())
+        except (KeyError, TypeError, ValueError):
+            continue
+    out: dict[date, list[str]] = {}
+    prev: datetime | None = None
+    for st in sorted(set(starts)):
+        if prev is None or st - prev > timedelta(minutes=15):
+            out.setdefault(st.date(), []).append(st.strftime("%H:%M"))
+        prev = st
+    return out
 
 
 def _weighted_ratio_percentile(bucket: list[dict], p: float) -> float | None:

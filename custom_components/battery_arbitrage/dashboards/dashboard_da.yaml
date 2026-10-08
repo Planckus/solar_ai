@@ -328,6 +328,13 @@ views:
         #### ⚖️ Arbitrage-spread
 
         **{{ ''%.3f'' | format(spread) }} DKK/kWh** {% if spread >= min_spread %}✅ over grænse ({{ ''%.2f'' | format(min_spread) }}){% else %}⛔ under grænse ({{ ''%.2f'' | format(min_spread) }}){% endif %}'
+    - type: markdown
+      title: Dagens plan
+      content: |-
+        {% for part in states('sensor.solar_ai_dagens_plan').split('  ·  ') %}{% set kv = part.split(': ', 1) %}
+        {% if kv | length == 2 %}**{{ kv[0] }}:** {{ kv[1] }}{% else %}{{ part }}{% endif %}
+
+        {% endfor %}
     - type: custom:solar-ai-chart-card
       title: 24t priskort
       icon: mdi:chart-bar
@@ -398,54 +405,6 @@ views:
         name: Næste slots pris
       - entity: sensor.battery_arbitrage_net_arbitrage_spread
         name: Net-arbitrage spread
-    - type: markdown
-      title: Dagens plan
-      content: '**{{ states(''sensor.solar_ai_dagens_plan'') }}**
-
-
-        {% set charge_hrs = state_attr(''sensor.solar_ai_dagens_plan'', ''charge_hours_today'') | default([]) %}
-
-        {% set export_hrs = state_attr(''sensor.solar_ai_dagens_plan'', ''export_hours_today'') | default([]) %}
-
-        {% set ex_m = state_attr(''sensor.solar_ai_dagens_plan'', ''export_hours_tomorrow'') | default([]) %}
-
-        {% set ch_m = state_attr(''sensor.solar_ai_dagens_plan'', ''charge_hours_tomorrow'') | default([]) %}
-
-        {% set cur_h = now().hour %}
-
-        {% if charge_hrs or export_hrs %}
-
-        | ⚡ Opladning | 💰 Eksport |
-
-        | :-- | :-- |
-
-        {% set nrows = [charge_hrs | length, export_hrs | length] | max %}{% for i in range(nrows) %}{% set ch = ''**'' + (''%02d:00'' | format(charge_hrs[i])) + ''**'' if i < (charge_hrs | length) else '''' %}{% set ex = ''**'' + (''%02d:00'' | format(export_hrs[i])) + ''**'' if i < (export_hrs | length) else '''' %}
-
-        | {{ ch }} | {{ ex }} |{% endfor %}
-
-
-        | 00 | 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08 | 09 | 10 | 11 |
-
-        |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-
-        {% set ns = namespace(r='''') %}{% for h in range(12) %}{% set sym = ''⚡'' if h in charge_hrs else (''💰'' if h in export_hrs else (''◀'' if h == cur_h else ''·'')) %}{% set ns.r = ns.r + ''| '' + sym + '' '' %}{% endfor %}{{ ns.r }}|
-
-        | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 |
-
-        |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-
-        {% set ns = namespace(r='''') %}{% for h in range(12, 24) %}{% set sym = ''⚡'' if h in charge_hrs else (''💰'' if h in export_hrs else (''◀'' if h == cur_h else ''·'')) %}{% set ns.r = ns.r + ''| '' + sym + '' '' %}{% endfor %}{{ ns.r }}|
-
-
-        *Tidslinjen viser **i dag** · ⚡ opladning · 💰 eksport · ◀ nu*
-
-        {% if ch_m or ex_m %}**I morgen:**{% if ch_m %} ⚡ {{ ch_m | join(''h, '') }}h{% endif %}{% if ex_m %} 💰 {{ ex_m | join(''h, '') }}h{% endif %}{% endif %}
-
-        {% else %}
-
-        *Ingen plandata*
-
-        {% endif %}'
     - type: custom:solar-ai-entities-card
       title: Beslutningsbetingelser
       icon_color: cyan
@@ -537,11 +496,13 @@ views:
       - entity: sensor.solar_ai_samlet_besparelse_i_periode
         name: Besparelse i perioden
     - type: custom:solar-ai-entities-card
-      title: Besparelser (DKK)
+      title: Gevinst fra handel (DKK)
       icon_color: green
       icon: mdi:cash
       show_header_toggle: false
       entities:
+      - type: section
+        label: Kun batterisalg og billig netopladning
       - entity: sensor.solar_ai_faktisk_besparelse_i_dag
         name: I dag — faktisk
       - entity: sensor.solar_ai_forpasset_besparelse_i_dag
@@ -575,7 +536,7 @@ views:
       - entity: sensor.foxessmodbus_load_power
         name: Husforbrug
     - type: history-graph
-      title: Besparelser — 7 dage
+      title: Gevinst fra handel — 7 dage
       hours_to_show: 168
       entities:
       - entity: sensor.solar_ai_faktisk_besparelse_i_dag
@@ -1032,11 +993,13 @@ views:
 
         {% endif %}'
     - type: custom:solar-ai-entities-card
-      title: 💰 Besparelser
+      title: Gevinst fra handel
       icon_color: green
       icon: mdi:cash
       show_header_toggle: false
       entities:
+      - type: section
+        label: Kun batterisalg og billig netopladning
       - entity: sensor.solar_ai_faktisk_besparelse_i_dag
         name: I dag — faktisk
       - entity: sensor.solar_ai_forpasset_besparelse_i_dag

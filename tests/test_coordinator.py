@@ -677,3 +677,174 @@ class TestHouseLoadForecast:
         c._record_house_load_hour(now, 0.0)
         c._record_house_load_hour(now, 1.2)
         assert c._stored["house_load_hours"]["2026-10-07T15"] == [1.2, 1]
+
+    @staticmethod
+    def _learn_at(c, when, kw, soc):
+        from unittest.mock import patch
+        with patch(
+            "custom_components.battery_arbitrage.coordinator.datetime",
+            wraps=datetime,
+        ) as dt_mock:
+            dt_mock.now.return_value = when
+            c._update_house_load_hourly(kw, soc)
+
+    def test_peak_hour_starting_low_is_not_learned(self):
+        # v1.23.2 — 18:00 starts at 25 %: the whole hour is skipped, even after
+        # the SoC reads higher later in the hour. 19:00 starts at 40 %: learned.
+        c = self._coord({})
+        self._learn_at(c, datetime(2026, 10, 7, 18, 0), 0.4, 25.0)
+        self._learn_at(c, datetime(2026, 10, 7, 18, 30), 0.4, 35.0)
+        self._learn_at(c, datetime(2026, 10, 7, 19, 0), 1.5, 40.0)
+        self._learn_at(c, datetime(2026, 10, 7, 19, 30), 1.5, 28.0)
+        hours = c._stored["house_load_hours"]
+        assert "2026-10-07T18" not in hours
+        assert hours["2026-10-07T19"] == [3.0, 2]
+        assert c._stored["house_load_weekday"][18] == 0.5  # EMA untouched too
+
+    def test_low_soc_outside_peak_hours_is_learned(self):
+        c = self._coord({})
+        self._learn_at(c, datetime(2026, 10, 7, 14, 0), 0.8, 15.0)
+        self._learn_at(c, datetime(2026, 10, 7, 21, 0), 0.8, 15.0)
+        hours = c._stored["house_load_hours"]
+        assert "2026-10-07T14" in hours and "2026-10-07T21" in hours
+
+    def test_peak_hour_learned_when_soc_unknown(self):
+        c = self._coord({})
+        self._learn_at(c, datetime(2026, 10, 7, 17, 0), 0.9, None)
+        assert "2026-10-07T17" in c._stored["house_load_hours"]
+
+
+class TestBridgeBuyContinues:
+    """v1.23.2 — a started shortfall buy runs until the shortfall is gone."""
+
+    want = staticmethod(BatteryArbitrageCoordinator._shortfall_buy_wanted)
+
+    def test_small_shortfall_alone_does_not_start_a_buy(self):
+        now = datetime(2026, 10, 8, 1, 30)
+        assert not self.want(None, now, 0.4, True)
+
+    def test_started_buy_finishes_the_last_half_kwh(self):
+        now = datetime(2026, 10, 8, 1, 30)
+        until = datetime(2026, 10, 8, 8, 30)
+        assert self.want(until, now, 0.4, True)
+        assert not self.want(until, now, 0.4, False)  # price gate still applies
+
+    def test_finished_bridge_does_not_carry_over(self):
+        until = datetime(2026, 10, 8, 8, 30)
+        assert not self.want(until, datetime(2026, 10, 8, 23, 0), 0.4, True)
+
+
+class TestPeakCover:
+    """v1.23.2 — battery holds the 17-21 h forecast plus a learned cover."""
+
+    TZ = timezone(timedelta(hours=2))
+
+    def _coord(self, hours):
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {
+            "house_load_hours": hours,
+            "house_load_weekday": [0.5] * 24,
+            "house_load_weekend": [0.5] * 24,
+        }
+        c._house_profile_cache = None
+        c._peak_cover_cache = None
+        c._clear_peak_cover()
+        return c
+
+    @staticmethod
+    def _hours(today, ndays, kw_fn):
+        out = {}
+        for k in range(ndays):
+            d = today - timedelta(days=k + 1)
+            for h in range(24):
+                out[f"{d.isoformat()}T{h:02d}"] = [kw_fn(d, h) * 12, 12]
+        return out
+
+    def test_cover_is_the_heavy_evening_excess(self):
+        # 28 days at 0.5 kW; every 4th day, across weekdays and weekends, the
+        # 17-21 h block runs at 1.5 kW: 6 kWh against a forecast of about 3.
+        today = datetime(2026, 10, 8, 12, 0)
+        heavy = lambda d: (today.date() - d).days % 4 == 0
+        hours = self._hours(today.date(), 28,
+                            lambda d, h: 1.5 if heavy(d) and 17 <= h < 21 else 0.5)
+        c = self._coord(hours)
+        cover = c._peak_cover_kwh(today)
+        assert 2.0 < cover < 4.0   # p90 lands on a heavy evening
+        # an ordinary month has no cover
+        flat = self._coord(self._hours(today.date(), 28, lambda d, h: 0.5))
+        assert flat._peak_cover_kwh(today) == 0.0
+
+    def test_no_cover_without_enough_days(self):
+        today = datetime(2026, 10, 8, 12, 0)
+        c = self._coord(self._hours(today.date(), 5, lambda d, h: 2.0))
+        assert c._peak_cover_kwh(today) == 0.0
+
+    def _slots(self, start, n, house_kw, solar_kw=0.0):
+        return [(start + timedelta(minutes=15 * i), house_kw, 0.25, False, False, solar_kw)
+                for i in range(n)]
+
+    def test_shortfall_before_the_block(self):
+        # 13:00, no sun, house 0.5 kW, efficiency 1.0, no cover history.
+        now = datetime(2026, 10, 8, 13, 0, tzinfo=self.TZ)
+        c = self._coord({})
+        c._size_peak_cover(now, self._slots(now, 40, 0.5), 1.0)
+        assert c._peak_start.hour == 17 and c._peak_end.hour == 21
+        # need = 4 h x (0.5 + standby) ; before the block 4 h x 0.5 = 2 kWh drain
+        need = 4 * (0.5 + 0.07)
+        assert c._peak_need_kwh == pytest.approx(need)
+        # 4 kWh now, 2 kWh left at 17:00
+        assert c._peak_shortfall_kwh(4.0, 9.0) == pytest.approx(need - 2.0)
+        assert c._peak_shortfall_kwh(6.0, 9.0) == 0.0
+
+    def test_sun_before_the_block_fills_it(self):
+        now = datetime(2026, 10, 8, 11, 0, tzinfo=self.TZ)
+        c = self._coord({})
+        slots = self._slots(now, 24, 0.5, 3.0) + self._slots(now + timedelta(hours=6), 16, 0.5)
+        c._size_peak_cover(now, slots, 1.0)
+        assert c._peak_shortfall_kwh(0.0, 9.0) == 0.0
+
+    def test_nothing_sized_during_the_block(self):
+        now = datetime(2026, 10, 8, 18, 0, tzinfo=self.TZ)
+        c = self._coord({})
+        c._size_peak_cover(now, self._slots(now, 100, 0.5), 1.0)
+        assert c._peak_start is None
+
+    def test_forecast_short_of_the_block_end(self):
+        now = datetime(2026, 10, 8, 13, 0, tzinfo=self.TZ)
+        c = self._coord({})
+        c._size_peak_cover(now, self._slots(now, 20, 0.5), 1.0)   # ends 18:00
+        assert c._peak_start is None
+
+    def test_price_must_beat_the_block_after_losses_and_wear(self):
+        ok = BatteryArbitrageCoordinator._peak_cover_price_ok
+        # 1.00 now, block 1.20: 1.00 / 0.9 + 0.10 = 1.21 does not pay
+        assert not ok(1.00, [1.00, 1.30], [1.20] * 16, 0.9, 0.10)
+        # block 1.30: pays
+        assert ok(1.00, [1.00, 1.30], [1.30] * 16, 0.9, 0.10)
+        # not the cheapest slot before the block
+        assert not ok(1.20, [1.00, 1.30], [3.00] * 16, 0.9, 0.10)
+
+    def test_expected_buy_slots_cover_the_shortfall_in_time_order(self):
+        pick = BatteryArbitrageCoordinator._expected_buy_slots
+        t = lambda h, m: datetime(2026, 10, 9, h, m)
+        slots = [(t(3, 45), 0.25, 1.0), (t(1, 15), 0.25, 1.0), (t(2, 15), 0.25, 1.0)]
+        # 3 kWh at 8 kWh/h: 2 kWh per quarter hour → two slots
+        assert pick(slots, 3.0, 8.0) == [t(1, 15), t(2, 15)]
+        assert pick(slots, 1.0, 8.0) == [t(1, 15)]
+        assert pick(slots, 3.0, 0.0) == [t(1, 15)]   # unknown rate: first slot only
+        assert pick([], 3.0, 8.0) == []
+
+
+class TestPlanRunStarts:
+    """v1.23.2 — plan text lists the start time of each buy / sell run."""
+
+    def test_consecutive_slots_merge_into_one_start_time(self):
+        from custom_components.battery_arbitrage.coordinator import _plan_run_starts
+        tz = timezone(timedelta(hours=2))
+        e = lambda h, m, a="CHARGE": {"action": a, "iso": datetime(2026, 10, 9, h, m, tzinfo=tz).isoformat(), "hour": h}
+        entries = [e(1, 15), e(1, 30), e(2, 15), e(13, 0), e(13, 15), e(13, 30), e(13, 45), e(19, 0, "EXPORT")]
+        runs = _plan_run_starts(entries, "CHARGE")
+        day = datetime(2026, 10, 9, tzinfo=tz).astimezone().date()
+        assert runs[day] == ["01:15", "02:15", "13:00"]
+        assert _plan_run_starts(entries, "EXPORT")[day] == ["19:00"]
+        assert _plan_run_starts([], "CHARGE") == {}

@@ -9,6 +9,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.23.2] — 2026-10-08
+
+### Fixed — the overnight bridge buy stopped short and then bought in one-minute bursts
+
+The overnight bridge buy started when the battery was at least 0.5 kWh short of the night's need and stopped as soon as it was less than that. Every buy therefore left up to 0.5 kWh unbought. The house then drew the battery back over the threshold within minutes, which started a new buy that ran for about a minute. Recorded nights show strings of one-minute charges of one percent each. A buy that has started now runs until the shortfall is gone. The start threshold and the price rule are unchanged.
+
+### Changed — peak hours with a low battery are not learned as house load
+
+When the battery is low in the expensive 17-21 h hours, a household tends to cut its use. The house load forecast learned those hours like any other, so the next forecast predicted the reduced use, the plan bought less, and the battery ran low again. An hour from 17:00 to 21:00 that starts below 30 % SoC is now left out of the house load history. Hours outside that window, and hours that start at or above 30 %, are learned as before.
+
+### Added — peak cover for the 17-21 h block
+
+The night bridge buys at the cheapest price before the morning, which can fall after the expensive 17-21 h block. The optimiser buys for the forecast mean, so an evening with heavy cooking ran the battery out during the block and the rest came from the grid at peak price.
+
+Before the block, Solar AI now checks whether the battery will hold the block's forecast house load plus a cover at 17:00, after the forecast sun and house use until then. If it will not, it buys the difference at the cheapest price before the block, provided the block's average price is still higher after battery losses (round-trip efficiency) and battery wear (degradation cost). A started buy runs until the shortfall is gone, like the night bridge. It does not act while another charge is running, while exporting, or during the block itself.
+
+The cover is learned, not set: for each of the last 28 days with all block hours recorded, how far the block ran above the forecast, floored at 0; the cover is the 90th percentile of those values, so it covers nine evenings in ten. It is 0 until seven evenings are recorded, and on an install whose evening use stays at the forecast. Like the night bridge, it runs only with the dynamic discharge floor on.
+
+### Changed — the plan shows the night bridge and peak-cover buys
+
+*Today's plan* listed only the optimiser's buys. The night bridge and the peak cover decide slot by slot, so a buy they were about to make did not appear, and the plan could read as if nothing would be bought while the battery was short for the night. The plan now includes the slots each of them expects to buy in: their qualifying slots in time order until the shortfall is covered at the learned sustained charge rate. The plan lists the start time of each buy or sell run (`01:15`) instead of whole hours (`01h`), so a buy in the 01:15 slot no longer reads as 01:00. Consecutive slots form one run. Charge and export each list today and tomorrow, with *none* for a day without a planned action (`Charge: today none  |  tomorrow 03:45, 13:30`); this replaces the separate *No trades today* text.
+
+The *Today's plan* card shows two lines, *Charge* and *Export*, taken from the plan text; the hour timeline and the charge / export table are removed. It now sits between *Price breakdown* and the 24 h price card on the *Prices & Plan* page.
+
+### Fixed — night bridge sizing kept after turning the dynamic floor off
+
+The night bridge reserve was only refreshed while the dynamic discharge floor was on, so after switching it off the last sized figure stayed in place. It is now cleared together with the peak block.
+
+### Changed — the trade savings card is named *Trading gain*
+
+The dashboard showed two cards called savings. *Total savings* is the saving at the meter: solar self-use, the battery and trading. The second card counts trades only: battery energy sold to the grid, and cheap grid charging valued at the expected spread. With no trades its figures do not change, which read as stuck history. The second card and its 7-day graph are now titled *Trading gain*, with the subtitle *Battery sales and cheap grid charging only*, on both the English and the Danish dashboard. The sensors and their entity ids are unchanged.
+
+### Fixed — Danish text missing from the quick setup step
+
+The quick setup step and the *FoxESS Modbus not installed* message had no Danish translation and showed in English on Danish installs.
+
+---
+
 ## [1.23.1] — 2026-10-03
 
 ### Fixed — a missing load reading was stored as 0 kW in the hourly house load history
