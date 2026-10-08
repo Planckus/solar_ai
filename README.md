@@ -284,6 +284,17 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.23.2 — peak cover for 17-21 h, complete overnight bridge buys
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Peak cover for 17-21 h.** Before the block, the battery is filled at the cheapest earlier price to the block's forecast use plus a learned cover for a heavy evening (the 90th percentile of how far recent evenings ran above the forecast).
+- **A started overnight bridge buy now runs until the battery covers the night.** It used to stop just short and then restart in one-minute bursts.
+- **A 17-21 h hour that starts below 30 % SoC is not learned as house load.** Use cut back because the battery is low no longer lowers the next day's forecast.
+- **Today's plan includes the night bridge and peak-cover buys** expected to happen, not only the optimiser's own, and lists start times (`01:15`) instead of whole hours.
+- **The trade savings card is now called *Trading gain*** and says it counts battery sales and cheap grid charging only.
+- **Danish text for the quick setup step** and the *FoxESS Modbus not installed* message.
+
 ### v1.23.1 — house load history guard and a supported inverters table
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
@@ -746,6 +757,8 @@ All components are live-configurable number entities:
 |---|---|
 | Per-hour forecast (v1.23.0) | Weighted mean of the same hour on the same day type (weekday / weekend) over the last 28 days of measured load, each day weighted by 0.5^(age / 7 days). An hour with fewer than 3 days of history uses the exponential moving average below. |
 | Same-day correction (v1.23.0) | From 15:00 to 20:00 the rest of today is scaled by the square root of measured / forecast load over the last 6 hours, clamped to 0.5-2. |
+| Low-battery peak hours (v1.23.2) | An hour from 17:00 to 21:00 that starts below 30 % SoC is not recorded, so use reduced because the battery is low does not lower the forecast. |
+| Peak cover (v1.23.2) | Before 17:00 the battery is bought up, at the cheapest earlier price when the block's average still beats it after battery losses and wear, to the 17-21 h forecast plus a cover: the 90th percentile of how far each of the last 28 evenings ran above the forecast (0 until seven evenings are recorded). Requires the dynamic discharge floor. |
 | Evening scorecard (v1.23.0) | The 17-24 h forecast is logged at 17:00 for both the current method and the moving average, and scored after midnight. Shown by the *House load forecast error (evening)* sensor. |
 | Per-hour fallback | 24 slots, ~8-day exponential moving average per slot |
 | Short-term mean | 2-hour rolling average |
@@ -829,6 +842,7 @@ Control loop properties:
 - Actual savings: revenue from battery export plus the estimated value of cheap grid charging.
 - Missed savings: estimated opportunity cost while the arbitrage switch is off.
 - Reported for today, 7 days, and 30 days.
+- Shown on the dashboard as *Trading gain*. It changes only on days with battery export or grid charging. Solar self-consumption and the battery covering the house are counted in *Total savings*, not here.
 - Stored in a 90-day rolling log that survives HA restarts.
 - Hours blocked by the minimum export price floor are excluded from both actual and missed calculations.
 
