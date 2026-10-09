@@ -39,6 +39,7 @@ import yaml
 #                  e.g.  export MAC_IP=$(ipconfig getifaddr en0)   on macOS
 #                        export MAC_IP=$(hostname -I | awk '{print $1}')  on Linux
 #   EVCC_URL    — your EVCC instance                         (default: http://your-ha-ip:7070)
+#   HASS_TOKEN  — a Home Assistant long-lived access token   (REQUIRED)
 #
 # Find your HA's IP under Settings → System → Network.
 
@@ -78,20 +79,10 @@ INSTALL_DEFAULTS = {
 
 
 def _read_token() -> str:
-    cfg_path = Path(os.path.expanduser(
-        "~/Library/Application Support/Claude/claude_desktop_config.json"
-    ))
-    if cfg_path.exists():
-        with open(cfg_path) as f:
-            cfg = json.load(f)
-        for server in cfg.get("mcpServers", {}).values():
-            token = server.get("env", {}).get("HASS_TOKEN")
-            if token:
-                return token
     token = os.environ.get("HASS_TOKEN", "")
     if not token:
         raise RuntimeError(
-            "HASS_TOKEN not found in Claude config or environment.\n"
+            "HASS_TOKEN is not set.\n"
             "Set it with:  export HASS_TOKEN=<your-long-lived-token>"
         )
     return token

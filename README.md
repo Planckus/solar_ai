@@ -6,7 +6,7 @@ A Home Assistant integration that schedules a FoxESS battery against Nord Pool d
 
 ## Supported inverters
 
-Solar AI controls the battery through the [FoxESS Modbus](https://github.com/nathanmarlor/foxess_modbus) integration and needs write access to the inverter. The table is generated from [`supported_inverters.json`](supported_inverters.json). Growatt support is planned for GEN4 hybrid models only; see [docs/GROWATT.md](docs/GROWATT.md) for the scope and dependencies. To report a model, open an issue with the model, connection and firmware versions.
+Solar AI controls the battery through the [FoxESS Modbus](https://github.com/nathanmarlor/foxess_modbus) integration and needs write access to the inverter. The table is generated from [`supported_inverters.json`](supported_inverters.json). Growatt support is planned for GEN4 hybrid models only; see the [Growatt support plan](docs/GROWATT.md) for the scope and dependencies. To report a model, open an issue with the model, connection and firmware versions.
 
 <!-- supported-inverters:start -->
 <!-- Generated from supported_inverters.json by scripts/render_readme.py. Do not edit by hand. -->
@@ -17,7 +17,7 @@ Solar AI controls the battery through the [FoxESS Modbus](https://github.com/nat
 | Supported | FoxESS | H3 Smart series (all H3-xx-Smart sizes) | Modbus TCP over LAN, via the FoxESS Modbus integration | — | v1.23.1 | Same platform as the tested H3-10.0-Smart; the sizes differ in power rating only. |
 | Untested | FoxESS | H1 (incl. AC1, AIO-H1, G2), H3 (incl. AC3, AIO-H3), H3 Pro, P1, KH | Modbus TCP or RS485, via the FoxESS Modbus integration with write access | — | — | Expected to work when the integration exposes work mode, force charge / discharge power and min SoC. The PV-curtailment flag is read from an H3 register and may be unavailable on other models. Reports welcome as GitHub issues. |
 | Untested | Rebranded FoxESS | Kuara H3, Sonnenkraft SK-HWR, STAR, Solavita SP, a-TroniX AX | Via the FoxESS Modbus integration with write access | — | — | Listed as supported by the FoxESS Modbus integration. Same conditions as the FoxESS row above. |
-| Planned, not available | Growatt | MIN TL-XH, MOD TL3-XH, MID TL3-XH (GEN4 hybrid) | ShineWLAN-X2 (Modbus TCP, port 502) or RS485-to-TCP adapter, via the SolaX Inverter Modbus integration | Must support VPP remote power control (registers 30407-30410); versions not yet confirmed | — | Not available yet. Scope, dependencies and design: [docs/GROWATT.md](docs/GROWATT.md). |
+| Planned, not available | Growatt | MIN TL-XH, MOD TL3-XH, MID TL3-XH (GEN4 hybrid) | ShineWLAN-X2 (Modbus TCP, port 502) or RS485-to-TCP adapter, via the SolaX Inverter Modbus integration | Must support VPP remote power control (registers 30407-30410); versions not yet confirmed | — | Not available yet. Scope, dependencies and design: [Growatt support plan](docs/GROWATT.md). |
 | Not supported | Growatt | SPH, SPA (GEN3), MIC, MIN TL-X, MOD TL3-X, MID TL3-X, SPF, WIT | — | — | — | Older generation, no battery, off-grid or commercial models. Only GEN4 hybrids with VPP remote power control are in scope. |
 | Not supported | Other brands | Any | — | — | — | Battery control is written for FoxESS, with Growatt GEN4 hybrids planned. |
 <!-- supported-inverters:end -->
@@ -283,6 +283,13 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.23.3 — documentation and tooling cleanup
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Documents are referred to by name** in the README and CHANGELOG instead of by file name.
+- **The deploy script reads the Home Assistant token from `HASS_TOKEN`** only.
 
 ### v1.23.2 — peak cover for 17-21 h, complete overnight bridge buys
 
@@ -654,7 +661,7 @@ Released over 2026-05-26 → 2026-05-27 as a chain of small fixes. The latest re
 
 **Tooling (v0.39.9).** `deploy.py`'s `DASHBOARD_YAML` constant had pointed at a legacy backward-compat mirror (`battery_arbitrage_dashboard.yaml`) that had silently drifted from the canonical `dashboard_da.yaml`. Repointed to the documented canonical file; the legacy mirror is deleted.
 
-**Smaller patches.** v0.39.0 added an opt-in auto-Full mode that promotes the EV to `Full` while spot price is ≤ 0 and reverts when the price-floor block closes. v0.39.1 normalised Strømligning cache keys to handle ISO-format variations (`+00:00` vs `.000Z`). v0.39.2 added `binary_sensor.solar_ai_eksport_stop_aktiv` so dashboards can render a conditional chip while the price-floor block is open. v0.39.3 fixed an `UnboundLocalError` introduced by v0.39.0. v0.39.5 corrected the nesting level the buy-price-breakdown sensor used to read Strømligning's `entry.price.total` and `entry.details`. See [CHANGELOG.md](CHANGELOG.md) for per-version detail.
+**Smaller patches.** v0.39.0 added an opt-in auto-Full mode that promotes the EV to `Full` while spot price is ≤ 0 and reverts when the price-floor block closes. v0.39.1 normalised Strømligning cache keys to handle ISO-format variations (`+00:00` vs `.000Z`). v0.39.2 added `binary_sensor.solar_ai_eksport_stop_aktiv` so dashboards can render a conditional chip while the price-floor block is open. v0.39.3 fixed an `UnboundLocalError` introduced by v0.39.0. v0.39.5 corrected the nesting level the buy-price-breakdown sensor used to read Strømligning's `entry.price.total` and `entry.details`. See the [CHANGELOG](CHANGELOG.md) for per-version detail.
 
 ### v0.38.x — EV scheduling on the dashboard + curtailment-probe refinements
 
@@ -692,7 +699,7 @@ Released over 2026-05-26 → 2026-05-27 as a chain of small fixes. The latest re
 - EV charge session log with per-tick grid vs solar energy split. Each completed session records start, stop, duration, total kWh, energy from solar surplus, and energy from grid. Rendered as a history table on the Logs tab.
 - Bug fixes: lader_effekt now zeros on session end; cool-down restart works from any plugged-in OCPP state; ARMING timer clears when surplus drops below minimum; EV charge power is subtracted before house-load learning; live anti-flap countdown computes against a fixed-target timestamp.
 
-See [CHANGELOG.md](CHANGELOG.md) for the per-version detail.
+See the [CHANGELOG](CHANGELOG.md) for the per-version detail.
 
 ### v0.27.x — embedded OCPP server and EV charge controller
 
@@ -703,7 +710,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the per-version detail.
 
 ### Configuration reference
 
-[docs/CONFIGURATION.md](docs/CONFIGURATION.md) lists every slider, switch, and setup field with the value range and effect.
+The [configuration reference](docs/CONFIGURATION.md) lists every slider, switch, and setup field with the value range and effect.
 
 ---
 
@@ -1169,7 +1176,7 @@ On spot price refresh (typically once per hour):
 
 ### Number entities (live-editable)
 
-See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full reference.
+See the [configuration reference](docs/CONFIGURATION.md) for the full reference.
 
 | Entity | Range | Description |
 |---|---|---|
@@ -1350,7 +1357,7 @@ Use the url_path exactly as it appears in *Settings → Dashboards* — the part
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for full version history.
+See the [CHANGELOG](CHANGELOG.md) for full version history.
 
 ---
 
