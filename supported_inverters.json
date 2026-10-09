@@ -1,5 +1,5 @@
 {
-  "_comment": "Source of truth for the 'Supported inverters' section in README.md. Edit this file, then run scripts/render_readme.py.",
+  "_comment": "Source of truth for the 'Supported inverters' section in the README. Edit this file, then run scripts/render_readme.py.",
   "inverters": [
     {
       "brand": "FoxESS",
@@ -44,7 +44,7 @@
       "firmware": "Must support VPP remote power control (registers 30407-30410); versions not yet confirmed",
       "status": "planned",
       "verified_with": "",
-      "notes": "Not available yet. Scope, dependencies and design: [docs/GROWATT.md](docs/GROWATT.md)."
+      "notes": "Not available yet. Scope, dependencies and design: [Growatt support plan](docs/GROWATT.md)."
     },
     {
       "brand": "Growatt",
