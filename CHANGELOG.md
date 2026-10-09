@@ -9,6 +9,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.23.3] — 2026-10-09
+
+### Changed — documentation refers to documents by name
+
+The README, the CHANGELOG and the supported inverters data named documentation files by their file names. They now use plain names, such as *the Growatt support plan* and *the configuration reference*; the links are unchanged. No change to the integration.
+
+### Changed — maintainer tooling
+
+- The deploy script reads the Home Assistant token from the `HASS_TOKEN` environment variable only.
+- An internal maintainer notes file is no longer part of the repository.
+
+---
+
 ## [1.23.2] — 2026-10-08
 
 ### Fixed — the overnight bridge buy stopped short and then bought in one-minute bursts
@@ -59,7 +72,7 @@ A *Supported inverters* table near the top of the README lists tested, supported
 
 ### Added — Growatt support plan
 
-`docs/GROWATT.md` records the planned Growatt support: scope limited to GEN4 hybrid inverters (MIN TL-XH, MOD TL3-XH, MID TL3-XH) whose firmware accepts VPP remote power control, connection through a ShineWLAN-X2 or an RS485-to-TCP adapter via the SolaX Inverter Modbus integration, every dependency, the control mapping against FoxESS, and the planned setup flow. Growatt is listed as *Planned, not available* in the supported inverters table. No Growatt code is included.
+The [Growatt support plan](docs/GROWATT.md) records the planned Growatt support: scope limited to GEN4 hybrid inverters (MIN TL-XH, MOD TL3-XH, MID TL3-XH) whose firmware accepts VPP remote power control, connection through a ShineWLAN-X2 or an RS485-to-TCP adapter via the SolaX Inverter Modbus integration, every dependency, the control mapping against FoxESS, and the planned setup flow. Growatt is listed as *Planned, not available* in the supported inverters table. No Growatt code is included.
 
 ---
 
@@ -516,7 +529,6 @@ Found during an audit of every user-facing EVCC mention (dashboard reasons, enti
 
 ### Internal
 
-Full findings and fix sketches were tracked in INBOX.md items 8–10 before implementation.
 
 ---
 
@@ -1175,7 +1187,7 @@ Built and shipped live-iteratively against a real installation (HA snapshot take
 
 ### Documentation
 
-- Added an **EV charging settings** section to the configuration reference (`docs/CONFIGURATION.md`) documenting every EV/charger GUI setting: charging mode and default-on-connect, min/max charge rate, battery-first threshold, control interval, and the FoxESS Modbus tuning controls (three-phase switch threshold, charging current step, phase-switch interval, override ramp step), plus charger backend, host, and the embedded OCPP server. Brought the README release highlights current through v0.59.13.
+- Added an **EV charging settings** section to the configuration reference documenting every EV/charger GUI setting: charging mode and default-on-connect, min/max charge rate, battery-first threshold, control interval, and the FoxESS Modbus tuning controls (three-phase switch threshold, charging current step, phase-switch interval, override ramp step), plus charger backend, host, and the embedded OCPP server. Brought the README release highlights current through v0.59.13.
 
 ---
 
@@ -3281,7 +3293,7 @@ Major fix release after the user spotted several real bugs during the first full
 
 ### Files touched
 
-`ocpp_server.py`, `coordinator.py`, `const.py`, `config_flow.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json`, `CHANGELOG.md`.
+`ocpp_server.py`, `coordinator.py`, `const.py`, `config_flow.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json`.
 
 ### What this should fix in practice
 
@@ -3306,7 +3318,7 @@ Applied to the live Lovelace dashboard via the WebSocket `lovelace/config/save` 
 
 ### Files touched
 
-`manifest.json`, `CHANGELOG.md`.
+`manifest.json`.
 
 ---
 
@@ -3324,7 +3336,7 @@ The live dashboard config lives in HA's storage (`/.storage/lovelace_battery-arb
 
 ### Files touched
 
-`manifest.json`, `CHANGELOG.md`.
+`manifest.json`.
 
 ---
 
@@ -3341,7 +3353,7 @@ Documentation accuracy fix.
 
 ### Files touched
 
-`README.md`, `manifest.json`, `CHANGELOG.md`.
+`manifest.json`.
 
 ---
 
@@ -3360,7 +3372,7 @@ UX fix to the "Overskud" value shown on the EV-styring dashboard card. Previousl
 
 ### Files touched
 
-`coordinator.py`, `manifest.json`, `CHANGELOG.md`.
+`coordinator.py`, `manifest.json`.
 
 ---
 
@@ -3385,7 +3397,7 @@ Two real bugs found during the first live FULL-mode test: (a) the v0.27.2 batter
 
 ### Files touched
 
-`coordinator.py`, `manifest.json`, `CHANGELOG.md`.
+`coordinator.py`, `manifest.json`.
 
 ---
 
@@ -3425,7 +3437,7 @@ If the charger doesn't support `TriggerMessage`, the persisted snapshot keeps th
 
 ### Files touched
 
-`ocpp_server.py`, `coordinator.py`, `__init__.py`, `manifest.json`, `CHANGELOG.md`.
+`ocpp_server.py`, `coordinator.py`, `__init__.py`, `manifest.json`.
 
 ---
 
@@ -3459,7 +3471,7 @@ Previously, in `Fuld kraft` mode the EV would happily pull max power from a mix 
 
 ### Files touched
 
-`coordinator.py`, `__init__.py`, `sensor.py`, `manifest.json`, `CHANGELOG.md`.
+`coordinator.py`, `__init__.py`, `sensor.py`, `manifest.json`.
 
 ---
 
@@ -3481,7 +3493,7 @@ Hotfix to v0.27.0 — chargers that don't auto-start sessions (FoxESS L11PMC inc
 
 ### Files touched
 
-`ocpp_server.py`, `coordinator.py`, `manifest.json`, `CHANGELOG.md`.
+`ocpp_server.py`, `coordinator.py`, `manifest.json`.
 
 ---
 
@@ -3543,7 +3555,7 @@ If you prefer to keep `lbbrhzn/ocpp` for some reason, toggle **"Use Solar AI's e
 
 ### Files touched
 
-`ocpp_server.py` (new), `coordinator.py`, `sensor.py`, `config_flow.py`, `__init__.py`, `const.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json` (new requirement: `ocpp>=2.1.0`), `CHANGELOG.md`, `README.md`.
+`ocpp_server.py` (new), `coordinator.py`, `sensor.py`, `config_flow.py`, `__init__.py`, `const.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json` (new requirement: `ocpp>=2.1.0`).
 
 ---
 
@@ -3567,7 +3579,7 @@ User-facing feature add: a **battery-priority threshold** that lets the user say
 
 ### Files touched
 
-`const.py`, `coordinator.py`, `number.py`, `__init__.py`, `config_flow.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json`, `CHANGELOG.md`.
+`const.py`, `coordinator.py`, `number.py`, `__init__.py`, `config_flow.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json`.
 
 ---
 
@@ -3582,7 +3594,7 @@ Self-healing patch for the OCPP entity override fields. Discovered during the fi
 
 ### Files touched
 
-`coordinator.py`, `manifest.json`, `CHANGELOG.md`.
+`coordinator.py`, `manifest.json`.
 
 ---
 
@@ -3596,7 +3608,7 @@ Patch follow-up to v0.26.1 fixing a startup-phase warning that v0.26.0 introduce
 
 ### Files touched
 
-`coordinator.py`, `manifest.json`, `CHANGELOG.md`.
+`coordinator.py`, `manifest.json`.
 
 ---
 
@@ -3619,7 +3631,7 @@ Follow-up to v0.26.0 that surfaces the new time-based hysteresis to the user. Th
 
 ### Files touched
 
-`sensor.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json`, `CHANGELOG.md`, plus the live Lovelace dashboard via WebSocket.
+`sensor.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json`, plus the live Lovelace dashboard via WebSocket.
 
 ---
 
@@ -3655,7 +3667,7 @@ This release reworks the EV charge controller so behaviour can be tuned to match
 
 ### Files touched
 
-`const.py`, `coordinator.py`, `config_flow.py`, `__init__.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json`, `README.md`, `CHANGELOG.md`.
+`const.py`, `coordinator.py`, `config_flow.py`, `__init__.py`, `translations/en.json`, `translations/da.json`, `strings.json`, `manifest.json`.
 
 ---
 
@@ -3704,7 +3716,7 @@ OptionsFlow restructured into 3 steps: Parameters → **OCPP Settings** (new) �
 
 ### Added — Configuration reference doc
 
-- **`docs/CONFIGURATION.md`** — every slider, switch, and setup-wizard field explained in plain English: what it controls, its range and default, and concrete advice on when to change it. Linked from the README.
+- **Configuration reference** — every slider, switch, and setup-wizard field explained in plain English: what it controls, its range and default, and concrete advice on when to change it. Linked from the README.
 
 ### Added — Dashboard
 
