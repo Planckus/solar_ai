@@ -9,6 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.23.6] — 2026-10-12
+
+### Documentation — charger control over OCPP or Modbus TCP
+
+The recommendation at the top of *Using Solar AI with EVCC* now names both ways Solar AI controls a charger: over OCPP 1.6 through the embedded OCPP server, for any OCPP 1.6 charger, and over Modbus TCP for a FoxESS charger, which adds single-phase charging from about 1.4 kW. EVCC is recommended only for chargers that support neither.
+
+### Documentation — supported inverters
+
+The tested FoxESS H3-10.0-Smart and the H3 Smart series are now listed as verified with v1.23.5. No change to the integration.
+
+---
+
 ## [1.23.5] — 2026-10-12
 
 ### Fixed — in EVCC live-data mode the car was taken out of house load twice
