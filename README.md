@@ -13,8 +13,8 @@ Solar AI controls the battery through the [FoxESS Modbus](https://github.com/nat
 
 | Status | Brand | Model | Connection | Firmware | Verified with | Notes |
 |---|---|---|---|---|---|---|
-| Tested | FoxESS | H3-10.0-Smart | Modbus TCP over LAN, via the FoxESS Modbus integration | Master 1.49, Manager 1.31 | v1.23.1 | Maintainer's system. All features, including the PV-curtailment flag (register 49251) used to send otherwise throttled solar to the car. |
-| Supported | FoxESS | H3 Smart series (all H3-xx-Smart sizes) | Modbus TCP over LAN, via the FoxESS Modbus integration | — | v1.23.1 | Same platform as the tested H3-10.0-Smart; the sizes differ in power rating only. |
+| Tested | FoxESS | H3-10.0-Smart | Modbus TCP over LAN, via the FoxESS Modbus integration | Master 1.49, Manager 1.31 | v1.23.5 | Maintainer's system. All features, including the PV-curtailment flag (register 49251) used to send otherwise throttled solar to the car. |
+| Supported | FoxESS | H3 Smart series (all H3-xx-Smart sizes) | Modbus TCP over LAN, via the FoxESS Modbus integration | — | v1.23.5 | Same platform as the tested H3-10.0-Smart; the sizes differ in power rating only. |
 | Untested | FoxESS | H1 (incl. AC1, AIO-H1, G2), H3 (incl. AC3, AIO-H3), H3 Pro, P1, KH | Modbus TCP or RS485, via the FoxESS Modbus integration with write access | — | — | Expected to work when the integration exposes work mode, force charge / discharge power and min SoC. The PV-curtailment flag is read from an H3 register and may be unavailable on other models. Reports welcome as GitHub issues. |
 | Untested | Rebranded FoxESS | Kuara H3, Sonnenkraft SK-HWR, STAR, Solavita SP, a-TroniX AX | Via the FoxESS Modbus integration with write access | — | — | Listed as supported by the FoxESS Modbus integration. Same conditions as the FoxESS row above. |
 | Planned, not available | Growatt | MIN TL-XH, MOD TL3-XH, MID TL3-XH (GEN4 hybrid) | ShineWLAN-X2 (Modbus TCP, port 502) or RS485-to-TCP adapter, via the SolaX Inverter Modbus integration | Must support VPP remote power control (registers 30407-30410); versions not yet confirmed | — | Not available yet. Scope, dependencies and design: [Growatt support plan](docs/GROWATT.md). |
@@ -172,7 +172,7 @@ Everything here can be changed later from *Settings → Devices & Services → S
 
 ### Using Solar AI with EVCC
 
-**Recommended: let Solar AI control the charger instead.** With the embedded OCPP server or the FoxESS Modbus charger connection (see [Connect an EV charger](#5-connect-an-ev-charger-optional) and [EV charge controller](#ev-charge-controller-opt-in)), Solar AI reads the car's power directly in every live-data mode and keeps it out of the learned house load. It also applies its charging modes, the battery-first threshold and the grid import limit to the car and the house battery together. Use EVCC only when your charger cannot be connected to Solar AI that way, or when you already depend on EVCC.
+**Recommended: let Solar AI control the charger instead.** Solar AI controls a charger in two ways: over **OCPP 1.6** through its embedded OCPP server, for any OCPP 1.6 charger, or over **Modbus TCP** for a FoxESS charger, which adds single-phase charging from about 1.4 kW for small solar surpluses. Setup for both is in [Connect an EV charger](#5-connect-an-ev-charger-optional), and the controller is described under [EV charge controller](#ev-charge-controller-opt-in). With either, Solar AI reads the car's power directly in every live-data mode and keeps it out of the learned house load. It also applies its charging modes, the battery-first threshold and the grid import limit to the car and the house battery together. Use EVCC only when your charger supports neither OCPP 1.6 nor FoxESS Modbus TCP, or when you already depend on EVCC.
 
 **What each one does.** EVCC ([evcc.io](https://evcc.io)) is a separate, free application that controls your EV charger — when and how fast the car charges, including solar following. Solar AI does the home-battery arbitrage — it reads live grid, PV and EV data and decides when to charge the battery from the grid, when to export, and when to hold. They run side by side: EVCC owns the car, Solar AI owns the battery, and Solar AI reads EVCC's live data over the LAN so the two don't fight.
 
@@ -287,6 +287,13 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.23.6 — charger control documentation
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The EVCC section recommends Solar AI's own charger control over OCPP 1.6 or FoxESS Modbus TCP**, with EVCC only for chargers that support neither.
+- **Supported inverters:** the H3 Smart rows are verified with v1.23.5.
 
 ### v1.23.5 — EVCC house-load fixes and a FoxESS-only warning
 
