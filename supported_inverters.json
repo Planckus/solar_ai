@@ -7,7 +7,7 @@
       "connection": "Modbus TCP over LAN, via the FoxESS Modbus integration",
       "firmware": "Master 1.49, Manager 1.31",
       "status": "tested",
-      "verified_with": "1.23.1",
+      "verified_with": "1.23.5",
       "notes": "Maintainer's system. All features, including the PV-curtailment flag (register 49251) used to send otherwise throttled solar to the car."
     },
     {
@@ -16,7 +16,7 @@
       "connection": "Modbus TCP over LAN, via the FoxESS Modbus integration",
       "firmware": "",
       "status": "supported",
-      "verified_with": "1.23.1",
+      "verified_with": "1.23.5",
       "notes": "Same platform as the tested H3-10.0-Smart; the sizes differ in power rating only."
     },
     {
