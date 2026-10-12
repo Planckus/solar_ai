@@ -875,3 +875,24 @@ class TestModelHealthReserveCap:
     def test_no_cap_issue_below_the_cap(self):
         issues, _ = self._coord([1.0] * 8)._check_model_health()
         assert not [i for i in issues if "Reserve factor" in i]
+
+
+class TestHouseLoadWithoutCar:
+    """v1.23.5 — the car is taken out of house load once, in every live-data mode."""
+
+    f = staticmethod(BatteryArbitrageCoordinator._house_load_kw)
+
+    def test_hybrid_subtracts_the_evcc_car_from_the_inverter_load(self):
+        # inverter load 5 kW includes a 3 kW car on an EVCC loadpoint
+        assert self.f(5000, 3000, 3000, "hybrid") == pytest.approx(2.0)
+
+    def test_evcc_home_power_already_excludes_the_car(self):
+        # EVCC homePower = grid + PV + battery - charge power: 2 kW house
+        assert self.f(2000, 3000, 3000, "evcc") == pytest.approx(2.0)
+
+    def test_evcc_mode_still_subtracts_a_car_evcc_does_not_see(self):
+        # car on the embedded OCPP server, unknown to EVCC
+        assert self.f(5000, 3000, 0, "evcc") == pytest.approx(2.0)
+
+    def test_foxess_only_with_own_charger_backend(self):
+        assert self.f(5000, 3000, 0, "foxess") == pytest.approx(2.0)
