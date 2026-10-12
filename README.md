@@ -172,6 +172,8 @@ Everything here can be changed later from *Settings → Devices & Services → S
 
 ### Using Solar AI with EVCC
 
+**Recommended: let Solar AI control the charger instead.** With the embedded OCPP server or the FoxESS Modbus charger connection (see [Connect an EV charger](#5-connect-an-ev-charger-optional) and [EV charge controller](#ev-charge-controller-opt-in)), Solar AI reads the car's power directly in every live-data mode and keeps it out of the learned house load. It also applies its charging modes, the battery-first threshold and the grid import limit to the car and the house battery together. Use EVCC only when your charger cannot be connected to Solar AI that way, or when you already depend on EVCC.
+
 **What each one does.** EVCC ([evcc.io](https://evcc.io)) is a separate, free application that controls your EV charger — when and how fast the car charges, including solar following. Solar AI does the home-battery arbitrage — it reads live grid, PV and EV data and decides when to charge the battery from the grid, when to export, and when to hold. They run side by side: EVCC owns the car, Solar AI owns the battery, and Solar AI reads EVCC's live data over the LAN so the two don't fight.
 
 You do **not** set up EVCC from inside Solar AI. EVCC must already be installed and running, with your charger (and, for EVCC mode, your grid/PV meters) configured in EVCC itself. Solar AI only needs EVCC's address — it reads from EVCC's local API and never changes EVCC's configuration.
@@ -183,6 +185,8 @@ You do **not** set up EVCC from inside Solar AI. EVCC must already be installed 
    |---|---|---|---|
    | **EVCC** | EVCC already sees your grid and PV meters | EVCC | EVCC |
    | **Hybrid** | You want grid + PV straight from the FoxESS inverter, but still let EVCC run the car | FoxESS Modbus sensors | EVCC |
+
+   > **If EVCC controls your charger, do not choose FoxESS only.** In FoxESS-only mode Solar AI does not read EVCC and cannot see the car. The inverter's house-load reading includes the car, so every charging session is learned as house use. That raises the learned house load, the overnight reserve and the 17-21 h peak cover, and the battery holds back and buys more than the house needs. Choose Hybrid or EVCC.
 
 3. **Enter the EVCC URL** from step 1 (both modes), e.g. `http://your-ha-ip:7070`.
 4. **(Hybrid only) Confirm the FoxESS live sensors** — grid import/export, PV power, house load. Auto-detected defaults are pre-filled; change only if your entity IDs differ. Hybrid also needs a solar-forecast source (Solcast or Forecast.Solar), since it doesn't take the PV forecast from EVCC.
@@ -283,6 +287,14 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.23.5 — EVCC house-load fixes and a FoxESS-only warning
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **EVCC mode no longer subtracts the car from house load twice**; house load read too low while a car charged.
+- **All EVCC loadpoints are read**, not only the first.
+- **Recommendation:** let Solar AI control the charger (embedded OCPP server or FoxESS Modbus charger). With a charger controlled by EVCC, choose Hybrid or EVCC as live data source; in FoxESS-only mode the car is learned as house use.
 
 ### v1.23.4 — clearer reserve-cap warning
 
@@ -986,7 +998,7 @@ The integration supports three live-data modes. Pick one during setup:
 |---|---|---|
 | EVCC | EVCC is running and EV-aware coordination is wanted | EVCC + Solcast (via EVCC) + FoxESS Modbus |
 | Hybrid | EVCC handles the EV, but live grid and PV come directly from the inverter | EVCC + FoxESS Modbus + a solar forecast source |
-| FoxESS only | No EV, or the EV does not draw from the house battery | FoxESS Modbus + a solar forecast source (Solcast direct or Forecast.Solar) |
+| FoxESS only | No EV, or the car charges through Solar AI's own charger connection (embedded OCPP server or FoxESS Modbus charger). Not with a charger controlled by EVCC: Solar AI cannot see that car and learns its charging as house use. | FoxESS Modbus + a solar forecast source (Solcast direct or Forecast.Solar) |
 
 Note on FoxESS-only mode: if there is an OCPP-connected EV charger, the embedded OCPP server (v0.27.0+) still detects EV charging directly via the charger. Grid-headroom protection caps battery charging based on live grid-import readings in all modes. EV-aware scheduling (skip grid charge during typical EV hours, hourly probability learning) requires EVCC live-data mode and is inactive in FoxESS-only mode.
 

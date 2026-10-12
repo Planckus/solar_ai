@@ -9,6 +9,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.23.5] — 2026-10-12
+
+### Fixed — in EVCC live-data mode the car was taken out of house load twice
+
+EVCC reports `homePower` without its loadpoints (grid + PV + battery − charge power). Solar AI subtracted the EVCC charge power from it again, so while a car charged the house load read too low, down to 0 kW. The learned house load, the overnight reserve and the peak cover then learned too little use for those hours. In EVCC mode only a car EVCC does not see, on the embedded OCPP server or the FoxESS Modbus charger, is now subtracted. Hybrid and FoxESS-only mode are unchanged.
+
+### Fixed — only the first EVCC loadpoint was read
+
+The car's charge power came from the first EVCC loadpoint only, so a car on a second loadpoint was learned as house use. All loadpoints are now added up.
+
+### Documentation — EVCC with FoxESS-only mode
+
+In FoxESS-only mode Solar AI does not read EVCC and cannot see a car whose charger EVCC controls; the inverter's house load includes it, so each charging session is learned as house use. The *Using Solar AI with EVCC* section now warns against that combination, and the *Live data mode* table no longer recommends FoxESS only for any EV that does not draw from the house battery. The section also recommends letting Solar AI control the charger through the embedded OCPP server or the FoxESS Modbus charger connection, which sees the car in every mode.
+
+---
+
 ## [1.23.4] — 2026-10-11
 
 ### Changed — the reserve-cap warning names the cause and the setting that acts
