@@ -5234,9 +5234,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             rf = self._reserve_factor()
             rmin = float(self._stored.get("reserve_factor_min", RESERVE_FACTOR_MIN))
             if rf >= RESERVE_FACTOR_MAX - 1e-6:
+                # v1.23.4 — the cap is a constant, and the 'Reserve safety
+                # factor' slider only applies before the nights are learned, so
+                # the old "consider raising it" pointed at nothing a user can
+                # change. Name the cause and the setting that does act.
+                share = 100 - float(self._stored.get(
+                    "reserve_percentile_pct", DEFAULT_RESERVE_PERCENTILE_PCT))
                 issues.append(
-                    f"Reserve factor pinned at max ({RESERVE_FACTOR_MAX}): overnight need "
-                    f"exceeds the cap — consider raising it")
+                    f"Reserve factor at its cap ({RESERVE_FACTOR_MAX}): on {share:g} % or "
+                    f"more of the learned nights the house used over {RESERVE_FACTOR_MAX:g}× "
+                    f"its forecast (22-06 h). Check for night loads Solar AI does not see, "
+                    f"such as a car on a charger outside Solar AI or electric heating, or "
+                    f"lower Reserve percentile")
             elif rf <= rmin + 1e-6:
                 notes.append(
                     f"Reserve factor pinned at min ({rmin:g}) — this house's "

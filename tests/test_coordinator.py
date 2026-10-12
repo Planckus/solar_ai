@@ -848,3 +848,30 @@ class TestPlanRunStarts:
         assert runs[day] == ["01:15", "02:15", "13:00"]
         assert _plan_run_starts(entries, "EXPORT")[day] == ["19:00"]
         assert _plan_run_starts([], "CHARGE") == {}
+
+
+class TestModelHealthReserveCap:
+    """v1.23.4 — the reserve-cap issue names the cause and a setting that acts."""
+
+    def _coord(self, samples, pct=80):
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {"overnight_ratio_samples": samples, "reserve_percentile_pct": pct,
+                     "battery_capacity": 10.0}
+        c.config = {}
+        c.get_learned_capacity = lambda: None
+        c.get_auto_efficiency = lambda: None
+        c.get_solar_accuracy_factor = lambda: 1.0
+        c.get_prediction_accuracy_summary = lambda: {}
+        return c
+
+    def test_cap_message_names_cause_and_percentile(self):
+        # p70 of five ordinary nights and three heavy ones lands above 2.0
+        issues, _ = self._coord([1.0] * 5 + [2.6] * 3, pct=70)._check_model_health()
+        msg = [i for i in issues if "Reserve factor" in i]
+        assert len(msg) == 1
+        assert "30 % or more" in msg[0] and "Reserve percentile" in msg[0]
+        assert "consider raising" not in msg[0]
+
+    def test_no_cap_issue_below_the_cap(self):
+        issues, _ = self._coord([1.0] * 8)._check_model_health()
+        assert not [i for i in issues if "Reserve factor" in i]
