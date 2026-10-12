@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.23.4] — 2026-10-11
+
+### Changed — the reserve-cap warning names the cause and the setting that acts
+
+*Model health* reported "Reserve factor pinned at max (2.0): overnight need exceeds the cap — consider raising it". The cap is fixed in the code, and the *Reserve safety factor* setting applies only until seven nights are learned, so the advice pointed at nothing a user could change. The warning now reads: on the given share of learned nights the house used more than twice its forecast between 22:00 and 06:00; check for night loads Solar AI does not see, such as a car on a charger outside Solar AI or electric heating, or lower *Reserve percentile*. When the factor sits at the cap, the battery holds back more for the night than an ordinary night needs.
+
+---
+
 ## [1.23.3] — 2026-10-09
 
 ### Changed — documentation refers to documents by name

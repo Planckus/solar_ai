@@ -284,6 +284,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.23.4 — clearer reserve-cap warning
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The *Model health* warning for a reserve factor at its cap now names the cause and the setting that acts.** It used to suggest raising the cap, which is fixed, and pointed users at the *Reserve safety factor*, which no longer applies once nights are learned.
+
 ### v1.23.3 — documentation and tooling cleanup
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
@@ -879,7 +885,7 @@ Every setting below is editable from the dashboard (**Indstillinger / Settings**
 | **Maximum SoC (grid charge)**<br>_Maksimum SoC (netopladning)_ | 10–100 % | 100 % | Ceiling that grid-charging will fill the battery to. |
 | **Battery capacity**<br>_Batterikapacitet (kWh)_ | 3–30 kWh | from setup | Usable capacity used for all the energy maths (reserve sizing, exportable energy, cycle planning). Your value is the anchor: once the discharge-run learner has measured the real capacity it refines this, but only within ±50 % of what you set. |
 | **Planned house use factor**<br>_Planlagt husforbrug-faktor_ | 1.0–2.0× | 1.0× | The optimiser plans as if the house uses this multiple of its learned load. Higher = buys more, and earlier, before expensive hours, and sells less. Buys stay whole quarter hours at the charge rate. |
-| **Reserve safety factor**<br>_Reserve-sikkerhedsfaktor_ | 1.0–2.0× | 1.3× | Multiplier on the predicted overnight need that the *Dynamic discharge floor* reserves. Lower = sell more into peaks; higher = hold more for the night. Used until the adaptive learner has ≈7 clean nights of data, after which the measured value takes over. |
+| **Reserve safety factor**<br>_Reserve-sikkerhedsfaktor_ | 1.0–2.0× | 1.3× | Multiplier on the predicted overnight need that the *Dynamic discharge floor* reserves. Lower = sell more into peaks; higher = hold more for the night. Used until the adaptive learner has ≈7 clean nights of data, after which the measured value takes over and this setting has no effect. The learned factor is capped at 2.0; when it sits at the cap, *Model health* reports it, and *Reserve percentile* is the setting that changes it. |
 | **Blocked sell hours**<br>_Blokerede salgstimer_ | hours of day | none | Hours in which the battery is never sold — set with the clickable hour grid on the Settings page (or as a comma list, e.g. `20,21`). Solar export and house self-consumption are unaffected; only the battery *sell* is held. |
 | **Export power cap**<br>_Eksporteffekt-grænse (0 = ingen)_ | 0–10 kW | 0 (no cap) | Limits how fast the battery discharges to the grid. 0 = use the full available rate. |
 | **Grid import limit**<br>_Net-importgrænse_ | 5–63 kW | 17 kW | Your main breaker rating. Total grid draw is kept under this, less a 0.5 kW margin. Grid-charge power is reduced first to leave headroom for the house and the car; the EV charging current is then capped to what remains, pausing the car if that is below its minimum current. |
