@@ -1492,7 +1492,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         grid_power_w = evcc_state.get("gridPower", 0)   # positive = import, negative = export
         loadpoints = evcc_state.get("loadpoints", [{}])
         lp = loadpoints[0] if loadpoints else {}
-        ev_charge_power_w = lp.get("chargePower", 0)
+        # v1.23.5 — every EVCC loadpoint, not only the first: a car on a second
+        # loadpoint was counted as house load.
+        evcc_charge_w = sum(
+            max(0.0, float(lp_.get("chargePower", 0) or 0)) for lp_ in loadpoints
+        )
+        ev_charge_power_w = evcc_charge_w
         ev_mode = lp.get("mode", "pv")
         # v0.28.0 fix — FoxESS-only mode has loadpoints=[] so the EVCC-based
         # ev_charge_power_w defaults to 0. Backfill from the embedded OCPP
@@ -1580,7 +1585,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         )
 
         # Base house load (subtract EV charging — it's a separate decision)
-        base_load_kw = max(0.0, (home_power_w - ev_charge_power_w) / 1000)
+        base_load_kw = self._house_load_kw(
+            home_power_w, ev_charge_power_w, evcc_charge_w,
+            self._setting(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE),
+        )
 
         # ---- solar forecast (raw from Solcast via EVCC) ----
         solar_kwh_raw = _sum_forecast(solar_rates.get("rates", []), now, forecast_hours, watts=True)
@@ -3787,6 +3795,26 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             (1 - EV_MAX_KW_LEARNING_ALPHA) * current_max + EV_MAX_KW_LEARNING_ALPHA * clamped,
             3,
         )
+
+    @staticmethod
+    def _house_load_kw(
+        home_power_w: float, ev_charge_power_w: float, evcc_charge_w: float,
+        live_source: str,
+    ) -> float:
+        """House load (kW) without the car.
+
+        v1.23.5 — in EVCC live-data mode homePower comes from EVCC, which
+        already leaves its loadpoints out (homePower = grid + PV + battery −
+        charge power), so only a car EVCC does not see (the embedded OCPP
+        server or the FoxESS Modbus charger) is subtracted. Subtracting the
+        EVCC charge power again read the house load as too low, down to 0,
+        while the car charged. In Hybrid and FoxESS-only mode homePower is the
+        inverter's load, which includes every car.
+        """
+        car_in_home_w = float(ev_charge_power_w or 0)
+        if live_source == LIVE_SOURCE_EVCC:
+            car_in_home_w = max(0.0, car_in_home_w - float(evcc_charge_w or 0))
+        return max(0.0, (float(home_power_w or 0) - car_in_home_w) / 1000)
 
     @staticmethod
     def _shortfall_buy_wanted(
