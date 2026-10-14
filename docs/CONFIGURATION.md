@@ -247,7 +247,7 @@ These control solar-following EV charging. They apply on the next control cycle 
 #### EV charging mode — `ev_active_mode`
 
 - Options: **Locked** (no charging) · **Solar only** (charge from solar surplus) · **Solar + battery** (surplus, plus the house battery if needed) · **Full power** (charge at maximum, from the grid if the sun is short) · **Scheduled** (follow the schedule slots)
-- Effect: the live charging mode. Resets to the *default mode on connect* each time a car is plugged in.
+- Effect: the live charging mode. Resets to the *default mode on connect* each time a car is plugged in. Exception: *Scheduled* is kept on the first plug-in after it is chosen, so it can be set before the car comes home; after the car has been unplugged in Scheduled, the next plug-in resets it like any other mode. A Home Assistant restart does not count as a plug-in.
 
 #### Default mode on connect — `ev_default_mode`
 

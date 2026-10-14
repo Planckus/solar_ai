@@ -562,7 +562,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Tracks the floor-block state on the prior tick, so we can
         # detect the active → inactive edge that triggers auto-revert.
         self._ev_prev_floor_block_active: bool = False
-        self._ev_prev_connected: bool = False               # last known plug state
+        self._ev_prev_connected: bool | None = False        # last known plug state (None: baseline pending)
         self._ev_last_reason: str = ""                      # human-readable status
         # Battery-lock state (v0.27.2): when EV is FULL-mode charging, we
         # set house battery max_discharge_current to 0 so the EV's grid demand
@@ -1132,6 +1132,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     )
         # Hydrate the in-memory active mode from storage
         self._ev_active_mode = self._stored.get("ev_active_mode", EV_MODE_LOCKED)
+        # v1.23.7 — and the last plug state, so the first reading after a
+        # restart is compared with the state before it. Starting from False
+        # made every restart with the car plugged in look like a plug-in and
+        # reset the mode to the default-on-connect mode.
+        # No stored state yet (first start on this version): the first reading
+        # is taken as the baseline, not as a plug-in.
+        prev = self._stored.get("ev_prev_connected")
+        self._ev_prev_connected = None if prev is None else bool(prev)
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
         # v0.49.1 — restore the last good feed-in tariff so the export price is
@@ -5585,24 +5593,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ev_connected = ocpp_status in (
             "Preparing", "Charging", "SuspendedEV", "SuspendedEVSE", "Finishing",
         )
-        if ev_connected and not self._ev_prev_connected:
-            # Default mode: prefer live override stored via the dashboard
-            # select entity (v0.27.0), fall back to config-entry value.
-            default_mode = self._stored.get(
-                "ev_default_mode",
-                self.config.get(CONF_EV_DEFAULT_MODE, DEFAULT_EV_DEFAULT_MODE),
-            )
-            # v1.11.0 — keep Scheduled sticky across a plug-in. The
-            # default-on-connect reset exists so each new car session starts at
-            # the user's preferred default, but the schedules only govern while
-            # the master mode is Scheduled — resetting to the PV (etc.) default
-            # on every connect would silently defeat a planned charge the moment
-            # the car is plugged in. So when the current master mode is
-            # Scheduled, preserve it; the session-state resets below still run so
-            # the new session starts clean.
-            if self._ev_active_mode != EV_MODE_SCHEDULED:
-                self._ev_active_mode = default_mode
-                self._stored["ev_active_mode"] = default_mode
+        # Default mode on a plug-in: the dashboard override (v0.27.0) or the
+        # config-entry value; Scheduled handling in _ev_mode_on_plug_in.
+        # v1.23.7 — "Unavailable" means the charger is not talking to the
+        # server (e.g. still reconnecting after a restart), which says nothing
+        # about the cable: the plug state is left as it was.
+        charger_known = ocpp_status != "Unavailable"
+        if charger_known and self._ev_mode_on_plug_in(ev_connected):
             self._ev_above_start_count = 0
             self._ev_below_stop_count = 0
             self._ev_surplus_above_min_since_ts = None
@@ -5611,7 +5608,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_cool_entry_ts = None                  # v0.39.11
             self._ev_pv_drain_since_ts = None              # v1.13.7
             _LOGGER.info("EV plugged in (%s) — mode %s", charger_id, self._ev_active_mode)
-        self._ev_prev_connected = ev_connected
+        if charger_known:
+            self._set_ev_prev_connected(ev_connected)
 
         if not ev_connected:
             self._ev_last_amps = 0
@@ -6193,18 +6191,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ev_connected = state["connected"]
 
         # Plug-in detection → reset to the default-on-connect mode (mirror OCPP).
-        if ev_connected and not self._ev_prev_connected:
-            default_mode = self._stored.get(
-                "ev_default_mode",
-                self.config.get(CONF_EV_DEFAULT_MODE, DEFAULT_EV_DEFAULT_MODE),
-            )
-            # v1.11.0 — keep Scheduled sticky across a plug-in (see OCPP path):
-            # a planned charge must survive the car being plugged in, so don't
-            # overwrite the master mode when it's Scheduled. Session-state resets
-            # below still run for a clean new session.
-            if self._ev_active_mode != EV_MODE_SCHEDULED:
-                self._ev_active_mode = default_mode
-                self._stored["ev_active_mode"] = default_mode
+        # Default mode on a plug-in (Scheduled handling in _ev_mode_on_plug_in).
+        if self._ev_mode_on_plug_in(ev_connected):
             self._ev_surplus_above_min_since_ts = None
             self._ev_surplus_below_min_since_ts = None
             self._ev_arm_drop_since_ts = None
@@ -6223,7 +6211,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._reset_override_ramp()
             self._reset_override_3ph_session()
             _LOGGER.info("EV plugged in (Modbus) — mode %s", self._ev_active_mode)
-        self._ev_prev_connected = ev_connected
+        self._set_ev_prev_connected(ev_connected)
 
         if not ev_connected:
             self._ev_last_amps = 0
@@ -8545,6 +8533,43 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 return i
         return None
 
+    def _set_ev_prev_connected(self, ev_connected: bool) -> None:
+        """Record the plug state for the next tick and across a restart."""
+        self._ev_prev_connected = ev_connected
+        self._stored["ev_prev_connected"] = ev_connected
+
+    def _ev_mode_on_plug_in(self, ev_connected: bool) -> bool:
+        """Apply the default-on-connect mode on a plug-in edge; True on a plug-in.
+
+        v1.23.7 — a plug-in returns the master mode to the default-on-connect
+        mode. Scheduled is kept only on the first plug-in after it was chosen,
+        so choosing it before the car comes home still works (v1.11.0). Once a
+        car has been unplugged while in Scheduled, the next plug-in returns to
+        the default like any other mode; before, Scheduled stayed on across
+        every later plug-in until changed by hand. The flag is stored, so it
+        survives a restart.
+        """
+        if self._ev_prev_connected is None:
+            return False      # baseline reading after an upgrade, see async_load_storage
+        if (not ev_connected and self._ev_prev_connected
+                and self._ev_active_mode == EV_MODE_SCHEDULED):
+            self._stored["ev_scheduled_unplugged"] = True
+        if not (ev_connected and not self._ev_prev_connected):
+            return False
+        default_mode = self._stored.get(
+            "ev_default_mode",
+            self.config.get(CONF_EV_DEFAULT_MODE, DEFAULT_EV_DEFAULT_MODE),
+        )
+        keep_scheduled = (
+            self._ev_active_mode == EV_MODE_SCHEDULED
+            and not self._stored.get("ev_scheduled_unplugged", False)
+        )
+        if not keep_scheduled:
+            self._ev_active_mode = default_mode
+            self._stored["ev_active_mode"] = default_mode
+        self._stored["ev_scheduled_unplugged"] = False
+        return True
+
     def set_ev_mode(self, new_mode: str, *, _from_auto_full: bool = False) -> None:
         """Public setter used by the mode select entity.
 
@@ -8556,6 +8581,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if new_mode not in (EV_MODE_LOCKED, EV_MODE_PV, EV_MODE_PV_BATTERY, EV_MODE_FULL, EV_MODE_SCHEDULED):
             _LOGGER.warning("EV controller: unknown mode '%s' ignored", new_mode)
             return
+        # v1.23.7 — choosing Scheduled starts a new schedule: the next plug-in
+        # keeps it (see _ev_mode_on_plug_in).
+        if new_mode == EV_MODE_SCHEDULED:
+            self._stored["ev_scheduled_unplugged"] = False
         # v0.39.0 — user manually changed the mode while auto-Full was
         # active. Clear the auto state. The next negative-price event
         # will start fresh.

@@ -9,6 +9,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.23.7] — 2026-10-14
+
+### Fixed — Scheduled did not return to the default mode when the car was plugged in again
+
+A plug-in sets the EV mode to *Default mode on connect*. Since v1.11.0 *Scheduled* was exempt, so a schedule chosen before the car came home was not undone on arrival. The exemption had no end: once the car had been unplugged and plugged in again, the mode stayed *Scheduled* until changed by hand, and the next night's window charged again. Scheduled is now kept on the first plug-in after it is chosen only. After the car has been unplugged in Scheduled, the next plug-in returns to the default mode, like every other mode. The state is stored, so it survives a restart. Both charger backends.
+
+### Fixed — a Home Assistant restart reset the EV mode as if the car had been plugged in
+
+The last plug state was only kept in memory and started as unplugged, so the first reading after a restart with the car plugged in counted as a plug-in and set the mode to *Default mode on connect*. A mode chosen by hand, such as *Full power*, was lost on every restart. The plug state is now stored and restored at startup. On the OCPP backend a charger that has not reconnected yet (status *Unavailable*) no longer counts as unplugged. A car plugged in while Home Assistant was down still gets the default mode. On the first start after this update, with no stored plug state yet, the first reading is taken as the starting point and does not change the mode.
+
+### Documentation — supported inverters
+
+The tested FoxESS H3-10.0-Smart and the H3 Smart series are listed as verified with v1.23.7.
+
+---
+
 ## [1.23.6] — 2026-10-12
 
 ### Documentation — charger control over OCPP or Modbus TCP
