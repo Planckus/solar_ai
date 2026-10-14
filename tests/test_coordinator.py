@@ -896,3 +896,88 @@ class TestHouseLoadWithoutCar:
 
     def test_foxess_only_with_own_charger_backend(self):
         assert self.f(5000, 3000, 0, "foxess") == pytest.approx(2.0)
+
+
+class TestScheduledOnPlugIn:
+    """v1.23.7 — a plug-in returns to the default mode; Scheduled only survives
+    the first plug-in after it was chosen."""
+
+    def _coord(self, mode, connected):
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {"ev_default_mode": "pv", "ev_active_mode": mode}
+        c.config = {}
+        c._ev_active_mode = mode
+        c._ev_prev_connected = connected
+        return c
+
+    def _tick(self, c, connected):
+        plugged = c._ev_mode_on_plug_in(connected)
+        c._ev_prev_connected = connected
+        return plugged
+
+    def test_scheduled_chosen_while_connected_resets_on_the_next_plug_in(self):
+        # Recorded 6-8 Oct: Scheduled chosen with the car in, car leaves, comes back.
+        c = self._coord("scheduled", True)
+        self._tick(c, False)            # unplugged in the morning
+        assert self._tick(c, True)      # plugged in again in the afternoon
+        assert c._ev_active_mode == "pv"
+
+    def test_scheduled_chosen_before_the_car_comes_home_is_kept(self):
+        # car away, Scheduled chosen (set_ev_mode clears the unplugged flag)
+        c = self._coord("scheduled", False)
+        c._stored["ev_scheduled_unplugged"] = False
+        self._tick(c, True)
+        assert c._ev_active_mode == "scheduled"
+        self._tick(c, False)
+        self._tick(c, True)
+        assert c._ev_active_mode == "pv"
+
+    def test_other_modes_still_return_to_the_default(self):
+        c = self._coord("full", False)
+        self._tick(c, True)
+        assert c._ev_active_mode == "pv"
+
+    def test_restart_mid_schedule_keeps_scheduled(self):
+        # After a restart the first tick looks like a plug-in.
+        c = self._coord("scheduled", False)
+        self._tick(c, True)
+        assert c._ev_active_mode == "scheduled"
+
+    @staticmethod
+    def _restart(c):
+        # what async_load_storage does with the stored state
+        n = object.__new__(BatteryArbitrageCoordinator)
+        n._stored = c._stored
+        n.config = {}
+        n._ev_active_mode = n._stored.get("ev_active_mode", "locked")
+        n._ev_prev_connected = bool(n._stored.get("ev_prev_connected", False))
+        return n
+
+    def _tick_stored(self, c, connected):
+        plugged = c._ev_mode_on_plug_in(connected)
+        c._set_ev_prev_connected(connected)
+        return plugged
+
+    def test_restart_with_the_car_plugged_in_keeps_a_manual_mode(self):
+        # Recorded 8 Oct 14:02: a restart reset a manual Full to the PV default.
+        c = self._coord("full", False)
+        self._tick_stored(c, True)            # plug-in → default pv
+        c._ev_active_mode = c._stored["ev_active_mode"] = "full"   # user picks Full
+        self._tick_stored(c, True)
+        c = self._restart(c)
+        assert not self._tick_stored(c, True)
+        assert c._ev_active_mode == "full"
+
+    def test_car_plugged_in_during_a_restart_gets_the_default(self):
+        c = self._coord("full", False)
+        self._tick_stored(c, False)           # car away when HA went down
+        c = self._restart(c)
+        assert self._tick_stored(c, True)
+        assert c._ev_active_mode == "pv"
+
+    def test_first_start_after_the_upgrade_takes_a_baseline(self):
+        # No stored plug state yet: the first reading is not a plug-in.
+        c = self._coord("full", None)
+        assert not self._tick_stored(c, True)
+        assert c._ev_active_mode == "full"
+        assert c._stored["ev_prev_connected"] is True

@@ -13,8 +13,8 @@ Solar AI controls the battery through the [FoxESS Modbus](https://github.com/nat
 
 | Status | Brand | Model | Connection | Firmware | Verified with | Notes |
 |---|---|---|---|---|---|---|
-| Tested | FoxESS | H3-10.0-Smart | Modbus TCP over LAN, via the FoxESS Modbus integration | Master 1.49, Manager 1.31 | v1.23.5 | Maintainer's system. All features, including the PV-curtailment flag (register 49251) used to send otherwise throttled solar to the car. |
-| Supported | FoxESS | H3 Smart series (all H3-xx-Smart sizes) | Modbus TCP over LAN, via the FoxESS Modbus integration | — | v1.23.5 | Same platform as the tested H3-10.0-Smart; the sizes differ in power rating only. |
+| Tested | FoxESS | H3-10.0-Smart | Modbus TCP over LAN, via the FoxESS Modbus integration | Master 1.49, Manager 1.31 | v1.23.7 | Maintainer's system. All features, including the PV-curtailment flag (register 49251) used to send otherwise throttled solar to the car. |
+| Supported | FoxESS | H3 Smart series (all H3-xx-Smart sizes) | Modbus TCP over LAN, via the FoxESS Modbus integration | — | v1.23.7 | Same platform as the tested H3-10.0-Smart; the sizes differ in power rating only. |
 | Untested | FoxESS | H1 (incl. AC1, AIO-H1, G2), H3 (incl. AC3, AIO-H3), H3 Pro, P1, KH | Modbus TCP or RS485, via the FoxESS Modbus integration with write access | — | — | Expected to work when the integration exposes work mode, force charge / discharge power and min SoC. The PV-curtailment flag is read from an H3 register and may be unavailable on other models. Reports welcome as GitHub issues. |
 | Untested | Rebranded FoxESS | Kuara H3, Sonnenkraft SK-HWR, STAR, Solavita SP, a-TroniX AX | Via the FoxESS Modbus integration with write access | — | — | Listed as supported by the FoxESS Modbus integration. Same conditions as the FoxESS row above. |
 | Planned, not available | Growatt | MIN TL-XH, MOD TL3-XH, MID TL3-XH (GEN4 hybrid) | ShineWLAN-X2 (Modbus TCP, port 502) or RS485-to-TCP adapter, via the SolaX Inverter Modbus integration | Must support VPP remote power control (registers 30407-30410); versions not yet confirmed | — | Not available yet. Scope, dependencies and design: [Growatt support plan](docs/GROWATT.md). |
@@ -287,6 +287,13 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.23.7 — EV mode on plug-in: Scheduled and restarts
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **A car plugged in again after a scheduled session starts in the default mode on connect.** Scheduled is kept only on the first plug-in after it is chosen.
+- **A Home Assistant restart no longer resets the EV mode** as if the car had been plugged in.
 
 ### v1.23.6 — charger control documentation
 
@@ -830,7 +837,7 @@ Five modes selectable from the dashboard (both backends):
 | Solar-only | Charge only from real-time PV surplus. Stops when surplus drops below the minimum. If the house battery starts discharging to cover the car, charging stops. |
 | Solar+Battery-to-minimum | Solar surplus first; house battery tops up to the minimum when surplus is insufficient. Stops at the battery floor. |
 | Full power | Maximum charge rate from any source, within the Net import limit. House battery discharge is locked at 0 A while the car draws, so the EV's grid demand cannot be supplemented from the house battery. The lock is lifted while Solar AI is grid-charging the battery (Force Charge), where the battery cannot feed the car. On the Modbus backend, full mode always uses three-phase. |
-| Scheduled | Follows the per-weekday charging windows (Skema 1–4) set on the dashboard; each window selects one of the modes above, with a configurable fallback outside any window. A planned (scheduled) charge survives the car being plugged in rather than being reset to the default-on-connect mode. |
+| Scheduled | Follows the per-weekday charging windows (Skema 1–4) set on the dashboard; each window selects one of the modes above, with a configurable fallback outside any window. Scheduled survives the first plug-in after it is chosen, so it can be set before the car comes home. Once the car has been unplugged in Scheduled, the next plug-in returns to the default-on-connect mode, like every other mode. |
 
 Which mode a freshly plugged-in car starts in is set by the **default charge mode on connect** picker (both backends).
 
