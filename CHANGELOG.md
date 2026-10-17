@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.24.1] — 2026-10-17
+
+### Documentation — settings screenshots
+
+The README *Screenshots* section has two images of the settings page: the master switches and battery limits, and the optimiser and notification settings. The *Customisable* section links to them. No change to the integration.
+
+---
+
 ## [1.24.0] — 2026-10-17
 
 ### Added — sell in the evening, buy back in the night
