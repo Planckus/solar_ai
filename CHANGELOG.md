@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.24.2] — 2026-10-17
+
+### Fixed — price settings read "unavailable" on the settings page
+
+VAT, electricity duty and spot markup only apply in the manual price mode, or with Strømligning when manual overrides are on. Otherwise the supplier's price already contains them and Home Assistant marks the three settings unavailable, which the settings page showed as "unavailable %" and "unavailable DKK/kWh". The page now shows *Included in the supplier price* (Danish: *Indregnet i leverandørprisen*) for them. The dashboard entities card takes a new optional `unavailable_text` per row for this.
+
+---
+
 ## [1.24.1] — 2026-10-17
 
 ### Documentation — settings screenshots
