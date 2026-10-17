@@ -448,6 +448,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._peak_pre_deltas: list[float] = []
         self._peak_buy_until: datetime | None = None
         self._peak_cover_cache: tuple | None = None
+        # v1.24.0 — cheapest night buy-back price that beats selling now (set by
+        # _night_refill_credit), for the sale reason text.
+        self._refill_buy_price: float | None = None
+        # v1.24.0 — the export floor does not hold the whole night's need from
+        # the battery alone (grid buys counted against it, or no dynamic floor):
+        # a sale refilled by later sun then still needs min_spread.
+        self._floor_grid_credited: bool = True
+        # v1.24.0 — the last Force Charge setpoint was cut below the learned rate
+        # (grid limit, car); such ticks do not teach the charge-rate learner.
+        self._charge_rate_throttled: bool = False
         # v1.23.2 — whether the current peak hour is excluded from house-load
         # learning, decided on the hour's first tick.
         self._house_learn_hour_key: str | None = None
@@ -1909,7 +1919,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # ---- temperature learning (gated) ----
         if is_learning_tick and cell_temp_low is not None:
             self._calibrate_charge_rate(
-                cell_temp_low, battery_charge_kw, battery_soc, work_mode_str
+                cell_temp_low, battery_charge_kw, battery_soc, work_mode_str,
+                throttled=self._charge_rate_throttled,
             )
         learned_charge_rate = self.get_current_charge_rate()
 
@@ -2066,10 +2077,32 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # rebuy — which, when that forecast was wrong (or the price feed thin),
         # drained the battery overnight and forced an expensive emergency buy.
         if self._stored.get("dynamic_discharge_floor", False):
+            # v1.24.0 — inputs for the sell-and-buy-back credit (see
+            # _night_refill_credit): the sell price now, every buy slot, the
+            # sustained charge rate for the battery's temperature, and what
+            # else draws on the grid limit in each hour.
+            _ev_hourly = list(self._stored.get("ev_charge_hourly", [0.0] * 24))
+            _ev_max = float(self._stored.get("ev_max_kw", 0.0))
+            refill_inputs = {
+                "sell": export_price,
+                "wear": float(self._stored.get(
+                    "battery_degradation_cost", DEFAULT_BATTERY_DEGRADATION_COST)),
+                "rate_kw": self.get_effective_charge_rate(),
+                "min_spread": float(self._stored.get(
+                    "min_spread_arbitrage",
+                    self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE))),
+                "grid_max_kw": float(self._stored.get("grid_max_kw", GRID_MAX_KW)),
+                "ev_kw_by_hour": [p * _ev_max for p in (_ev_hourly + [0.0] * 24)[:24]],
+                "slots": [
+                    (start, float(dur_h), _buy_at(value, start, local_hour))
+                    for start, dur_h, local_hour, _m, value in grid_slot_data
+                ],
+            } if len(grid_slot_data) >= MIN_PRICE_SLOTS_FOR_GRID_CHARGE else None
             dyn_floor = self._compute_dynamic_floor_soc(
                 now=now, capacity_kwh=capacity_kwh, efficiency=efficiency,
                 solar_slot_data=solar_slot_data_opt,
                 grid_charge_kw=self.get_effective_charge_rate(),
+                refill=refill_inputs,
             )
             if dyn_floor is not None:
                 # Never below the user's slider — only raise the floor above it.
@@ -2086,6 +2119,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # a stale figure after the switch is turned off.
             self._bridge_reserve_kwh = 0.0
             self._bridge_end = None
+            self._refill_buy_price = None
+            # No night reserve without the dynamic floor: sales need the spread.
+            self._floor_grid_credited = True
             self._clear_peak_cover()
         # v0.65.0 — remember the effective export floor for the hardware-min-SoC
         # backstop set in _transition_to(MODE_EXPORTING).
@@ -2146,6 +2182,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             0.0, grid_max_kw - GRID_SAFETY_MARGIN_KW - non_ev_grid_kw - ev_grid_claim_kw)
         # Cap the charge rate to what the grid can safely supply
         capped_charge_rate_kw = min(learned_charge_rate if learned_charge_rate > 0 else GRID_MAX_KW, grid_headroom_kw)
+        self._charge_rate_throttled = (
+            learned_charge_rate > 0 and capped_charge_rate_kw < learned_charge_rate - 0.2)
         # v1.15.3 — the planner gets the same net import limit, but without the
         # car's live draw in it. grid_import already includes the car, so
         # capped_charge_rate_kw is net of it — and the planner then subtracts
@@ -2156,56 +2194,24 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # capped_charge_rate_kw, which is the one that protects the breaker.
         planner_headroom_kw = max(
             0.0, grid_max_kw - GRID_SAFETY_MARGIN_KW - non_ev_grid_kw)
+        # v1.24.0 — plan charge windows with the sustained rate the battery
+        # has delivered at this temperature (mean of Force Charge samples), not
+        # the 90th-percentile peak: a cold battery charges slower, and planning
+        # at the peak left too few slots to fill it. The inverter setpoint
+        # (capped_charge_rate_kw) still asks for the peak.
+        planning_rate_kw = self.get_effective_charge_rate() or learned_charge_rate
         planner_charge_rate_kw = min(
-            learned_charge_rate if learned_charge_rate > 0 else GRID_MAX_KW, planner_headroom_kw)
+            planning_rate_kw if planning_rate_kw > 0 else GRID_MAX_KW, planner_headroom_kw)
 
-        # ---- spread calculations ----
-        # True cost of arbitrage has two components:
-        #
-        #  1. Recharge cost: to restore what we sold we must buy back more kWh than we
-        #     exported (round-trip losses).  Cost per exported kWh = buy_price_min / efficiency.
-        #
-        #  2. House drag cost: while the battery is depleted (from now until the cheapest
-        #     recharge slot), the house must buy from the grid instead of drawing from the
-        #     battery.  We use the actual per-hour buy prices and the temperature-adaptive
-        #     charge rate to estimate when the battery can recover.
-        #
-        # house drag per hour = max(0, house_load - avg_solar) × buy_price[h]
-        # drag period         = hours from now until cheapest charge slot
-        # (solar_kwh / 24 is a flat per-hour solar estimate; conservative but avoids
-        #  requiring per-hour solar forecast that EVCC does not provide)
-
-        house_drag_cost = 0.0
-        if grid_slot_data and truly_exportable_kwh > 0 and learned_charge_rate > 0:
-            # Find the slot with the cheapest full buy price (native resolution)
-            cheapest_slot = min(
-                grid_slot_data,
-                key=lambda s: _buy_at(s[4], s[0], s[2]),
-            )
-            cheapest_start = cheapest_slot[0]
-            # Only count drag if the cheapest slot is in the future
-            if cheapest_start > now:
-                for slot_start, dur_h, h, m, spot in grid_slot_data:
-                    if now < slot_start < cheapest_start:
-                        buy_h = self._compute_buy_price(
-                            spot=spot,
-                            hour=h,
-                            slot_start_dt=slot_start,
-                            spot_markup=spot_markup,
-                            tariff_this_hour_dso=tariff_sched[h],
-                            elafgift=elafgift,
-                            vat_factor=vat_factor,
-                        )
-                        # Per-slot solar: use actual forecast kW, fall back to 24h average
-                        solar_kw = _covering_value(
-                            solar_slot_data, slot_start, solar_kwh / 24.0)
-                        net_house_kw = max(0.0, load_2h_avg - solar_kw)
-                        # Multiply by slot duration (0.25 h for 15-min, 1.0 h for hourly)
-                        house_drag_cost += net_house_kw * buy_h * dur_h
-
-        recharge_cost_per_kwh = buy_price_min / efficiency if efficiency > 0 else buy_price_min
-        house_drag_per_kwh = house_drag_cost / truly_exportable_kwh if truly_exportable_kwh > 0 else 0.0
-        grid_arbitrage_spread = export_price - recharge_cost_per_kwh - house_drag_per_kwh
+        # ---- spread ----
+        # v1.24.0 — the spread the user's Minimum arbitrage spread is compared
+        # with, measured as the optimiser measures it (grid_spread_ok): the
+        # sell price now minus the cheapest buy price ahead after charging
+        # losses (buy / √eff). The old figure also charged the house's grid
+        # use until the cheapest slot to the energy sold, divided by the few
+        # kWh above the floor, which gave values such as −40 DKK/kWh.
+        charge_eff = efficiency ** 0.5 if efficiency > 0 else 1.0
+        grid_arbitrage_spread = export_price - buy_price_min / charge_eff
         min_spread = float(self._stored.get("min_spread_arbitrage", self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE)))
         grid_arbitrage_worthwhile = grid_arbitrage_spread >= min_spread
 
@@ -2297,6 +2303,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 ev_pv_stop_kw=self._ev_pv_stop_kw(),
                 ev_ignore_session=ev_pv_battery_session,
                 house_today_factor=self._house_today_factor(),
+                solar_sale_needs_spread=self._floor_grid_credited,
                 vat_factor=vat_factor,
                 tariff_sched=tariff_sched,
                 elafgift=elafgift,
@@ -2404,7 +2411,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # and veto a sell even when the (economically-correct) DP plan said
             # export. The floor + the DP own the reservation; energy above the
             # floor is genuinely sellable.
-            and exportable_kwh >= MIN_EXPORTABLE_KWH
+            # v1.24.0 — a sale that has started runs to the floor. Stopping once
+            # less than MIN_EXPORTABLE_KWH was left above it kept that much
+            # unsold every time (sales ended at 90 % against an 85 % floor).
+            and (exportable_kwh >= MIN_EXPORTABLE_KWH
+                 or (self._current_mode == MODE_EXPORTING and exportable_kwh > 0.0))
             and battery_soc > floor_soc
             # Don't fight EVCC: if EV is fast/minpv-charging, hold the battery for it
             and not ev_charging_now
@@ -2531,6 +2542,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         bridge_buy_active = False
         bridge_buy_fill_up = False
         bridge_shortfall_kwh = 0.0
+        # v1.24.0 — battery energy a buy adds per hour, for sizing buy windows:
+        # the sustained charge rate at the battery's temperature, within the
+        # grid import limit.
+        window_kwh_per_h = min(
+            self.get_effective_charge_rate() or learned_charge_rate,
+            planner_headroom_kw,
+        ) * efficiency ** 0.5
         if self._bridge_reserve_kwh > 0 and self._bridge_end is not None and now < self._bridge_end:
             usable_kwh = max(
                 0.0,
@@ -2550,16 +2568,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and not evcc_managing_battery
             and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
         ):
-            bridge_buys = [
-                _buy(value, start, local_hour)
-                for start, _dur_h, local_hour, _local_minute, value in grid_slot_data
+            # v1.24.0 — the window holds as many of the cheapest slots before
+            # the bridge ends as the shortfall needs at the sustained charge
+            # rate for the battery's temperature.
+            bridge_slots = [
+                (start, float(dur_h), _buy(value, start, local_hour))
+                for start, dur_h, local_hour, _local_minute, value in grid_slot_data
                 if start < self._bridge_end
             ]
-            cheapest_before_bridge = min(bridge_buys) if bridge_buys else 0.0
-            at_cheapest = (
-                cheapest_before_bridge > 0.0
-                and buy_price_next_slot <= cheapest_before_bridge * BRIDGE_PRICE_TOLERANCE
-            )
+            bridge_limit = self._buy_window_limit(
+                bridge_slots, bridge_shortfall_kwh, window_kwh_per_h)
+            # Prices can be negative: no "> 0" guard on the limit.
+            at_cheapest = bridge_limit is not None and buy_price_next_slot <= bridge_limit
             # "Really cheap and the sun will not do it": at a price in the day's
             # cheapest quarter, with the 24 h solar forecast below the house's
             # own 24 h need, fill the battery rather than buying the gap alone.
@@ -2606,8 +2626,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
         ):
             before = [
-                _buy(value, start, local_hour)
-                for start, _dur_h, local_hour, _local_minute, value in grid_slot_data
+                (start, float(dur_h), _buy(value, start, local_hour))
+                for start, dur_h, local_hour, _local_minute, value in grid_slot_data
                 if start < self._peak_start
             ]
             during = [
@@ -2616,7 +2636,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 if self._peak_start <= start < self._peak_end
             ]
             price_ok = self._peak_cover_price_ok(
-                buy_price_next_slot, before, during, efficiency,
+                buy_price_next_slot,
+                self._buy_window_limit(before, peak_shortfall_kwh, window_kwh_per_h),
+                during, efficiency,
                 float(self._stored.get(
                     "battery_degradation_cost", DEFAULT_BATTERY_DEGRADATION_COST)),
             )
@@ -2642,7 +2664,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 for start, dur_h, local_hour, _local_minute, value in grid_slot_data
                 if start + timedelta(hours=float(dur_h)) > now
             ]
-            per_h = max(0.0, self.get_effective_charge_rate()) * efficiency ** 0.5
+            per_h = window_kwh_per_h
             bridge_due = (
                 bridge_shortfall_kwh >= MIN_GRID_CHARGE_KWH
                 or (bridge_shortfall_kwh > 0.0 and self._bridge_buy_until is not None
@@ -2652,9 +2674,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     and self._bridge_solar_surplus_kwh * efficiency ** 0.5 < bridge_shortfall_kwh):
                 window = [p for p in priced if p[0] < self._bridge_end]
                 if window:
-                    cheapest = min(p[2] for p in window)
+                    limit = self._buy_window_limit(window, bridge_shortfall_kwh, per_h)
                     expected_buys.update(self._expected_buy_slots(
-                        [p for p in window if p[2] <= cheapest * BRIDGE_PRICE_TOLERANCE],
+                        [p for p in window if limit is not None and p[2] <= limit],
                         bridge_shortfall_kwh, per_h))
             peak_due = (
                 peak_shortfall_kwh >= MIN_GRID_CHARGE_KWH
@@ -2666,9 +2688,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 during = [p[2] for p in priced if self._peak_start <= p[0] < self._peak_end]
                 degradation = float(self._stored.get(
                     "battery_degradation_cost", DEFAULT_BATTERY_DEGRADATION_COST))
+                limit = self._buy_window_limit(before, peak_shortfall_kwh, per_h)
                 expected_buys.update(self._expected_buy_slots(
                     [p for p in before if self._peak_cover_price_ok(
-                        p[2], [b[2] for b in before], during, efficiency, degradation)],
+                        p[2], limit, during, efficiency, degradation)],
                     peak_shortfall_kwh, per_h))
 
         # ── Price chart data ──────────────────────────────────────────────────
@@ -2898,6 +2921,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 bridge_shortfall_kwh if bridge_buy_active else 0.0,
                 bridge_buy_fill_up,
                 peak_shortfall_kwh if peak_buy_active else 0.0,
+                sale_buyback=self._refill_buy_price,
+                sale_margin=(
+                    export_price * efficiency ** 0.5
+                    - self._refill_buy_price / efficiency ** 0.5
+                    - float(self._stored.get(
+                        "battery_degradation_cost", DEFAULT_BATTERY_DEGRADATION_COST))
+                ) if self._refill_buy_price is not None and efficiency > 0 else None,
+                above_floor_kwh=exportable_kwh,
             )
             # ---- action log: detect export/charge session transitions ----
             # v0.75.8 — deliberately scoped inside this branch, not evaluated
@@ -3230,6 +3261,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         bridge_shortfall_kwh: float = 0.0,
         bridge_fill_up: bool = False,
         peak_shortfall_kwh: float = 0.0,
+        sale_buyback: float | None = None,
+        sale_margin: float | None = None,
+        above_floor_kwh: float = 0.0,
     ) -> tuple[str, str]:
         target_mode = MODE_NORMAL
         reason = "Conditions not met for export or grid charging"
@@ -3248,7 +3282,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 return MODE_GRID_CHARGING, self._mode_reason
             self._manual_mode = None
         elif self._manual_mode == MODE_EXPORTING:
-            if exportable_kwh >= MIN_EXPORTABLE_KWH:
+            # v1.24.0 — runs until nothing is left above the floor.
+            if exportable_kwh > 0.0:
                 await self._transition_or_hold(
                     MODE_EXPORTING, capped_charge_rate_kw,
                     self._msg("Manual export — running until you stop it",
@@ -3258,11 +3293,26 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         if should_export:
             target_mode = MODE_EXPORTING
-            reason = (
-                f"Exporting: sell price {export_price:.2f} DKK/kWh (peak ref p75 {price_p75:.2f}), "
-                f"spread {spread:.2f} DKK/kWh, "
-                f"{exportable_kwh:.1f} kWh available"
-            )
+            # v1.24.0 — name what the sale is weighed against: the night
+            # buy-back and its margin after losses and wear, or energy above
+            # the full night reserve. The old "spread" spread the house's whole
+            # grid cost until the cheapest hour over the few kWh being sold.
+            if sale_buyback is not None and sale_margin is not None:
+                reason = self._msg(
+                    f"Selling at {export_price:.2f} DKK/kWh, bought back tonight at "
+                    f"{sale_buyback:.2f}: {sale_margin:+.2f} DKK/kWh after losses and wear; "
+                    f"{above_floor_kwh:.1f} kWh above the floor",
+                    f"Sælger til {export_price:.2f} DKK/kWh, købes tilbage i nat til "
+                    f"{sale_buyback:.2f}: {sale_margin:+.2f} DKK/kWh efter tab og slid; "
+                    f"{above_floor_kwh:.1f} kWh over gulvet",
+                )
+            else:
+                reason = self._msg(
+                    f"Selling at {export_price:.2f} DKK/kWh: energy above the night "
+                    f"reserve, {above_floor_kwh:.1f} kWh above the floor",
+                    f"Sælger til {export_price:.2f} DKK/kWh: energi over natreserven, "
+                    f"{above_floor_kwh:.1f} kWh over gulvet",
+                )
         elif should_grid_charge:
             target_mode = MODE_GRID_CHARGING
             # v1.17.0 — an overnight bridge buy is not a p25 trade and must not
@@ -4021,6 +4071,32 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         return cover
 
     @staticmethod
+    def _buy_window_limit(
+        slots: list[tuple], shortfall_kwh: float, kwh_per_hour: float,
+    ) -> float | None:
+        """v1.24.0 — highest buy price a shortfall buy (night bridge, peak
+        cover) accepts: the price of the last slot needed when the window's
+        (start, dur_h, price) slots are taken cheapest first at `kwh_per_hour`,
+        and at least the cheapest price plus (BRIDGE_PRICE_TOLERANCE − 1) of
+        its size, so a negative price widens the window upward too. A slow
+        (cold) battery needs more slots, so the window widens. None without
+        slots."""
+        if not slots:
+            return None
+        ordered = sorted(slots, key=lambda sl: sl[2])
+        cheapest = ordered[0][2]
+        limit = cheapest + abs(cheapest) * (BRIDGE_PRICE_TOLERANCE - 1.0)
+        got = 0.0
+        for _start, dur_h, price in ordered:
+            if got >= shortfall_kwh:
+                break
+            limit = max(limit, price)
+            got += kwh_per_hour * dur_h
+            if kwh_per_hour <= 0.0:
+                break
+        return limit
+
+    @staticmethod
     def _expected_buy_slots(
         qualifying: list[tuple], shortfall_kwh: float, kwh_per_hour: float,
     ) -> list[datetime]:
@@ -4040,21 +4116,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
     @staticmethod
     def _peak_cover_price_ok(
-        price_now: float, before: list[float], during: list[float],
+        price_now: float, window_limit: float | None, during: list[float],
         efficiency: float, degradation_cost: float,
     ) -> bool:
         """v1.23.2 — whether buying now for the peak block pays.
 
-        The price must be within BRIDGE_PRICE_TOLERANCE of the cheapest slot
-        before the block, and a kWh bought now and delivered in the block
-        (price / round-trip efficiency + wear) must cost less than the block's
-        average price.
+        The price must be inside the buy window before the block
+        (`window_limit`, from _buy_window_limit; v1.24.0), and a kWh bought
+        now and delivered in the block (price / round-trip efficiency + wear)
+        must cost less than the block's average price.
         """
-        if not before or not during:
+        if window_limit is None or not during:
             return False
         delivered_cost = price_now / max(efficiency, 0.5) + degradation_cost
         return (
-            price_now <= min(before) * BRIDGE_PRICE_TOLERANCE
+            price_now <= window_limit
             and delivered_cost < sum(during) / len(during)
         )
 
@@ -4259,9 +4335,79 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return median_kw
         return p10_kw
 
+    def _night_refill_credit(
+        self, now: datetime, slots: list[tuple], start_idx: int,
+        bridge_end: datetime, eff: float, refill: dict | None,
+    ) -> tuple[float, float]:
+        """v1.24.0 — battery energy (kWh) the night top-up can buy back before
+        `bridge_end` at a price that beats selling it now, and the house energy
+        needed before the first such slot. (0, 0) without inputs or when no
+        buy-back pays.
+
+        A buy-back slot pays when sell × √eff − buy / √eff − wear > 0, per kWh
+        in the battery, and sell − buy / √eff reaches the user's minimum
+        arbitrage spread. Its capacity is the sustained charge rate for the
+        current battery temperature, limited by the grid import limit less the
+        house's forecast use and the car's expected draw in that hour.
+        `slots` are the dynamic floor's (start, house_kw, dur_h, solar_covers,
+        charge_here, solar_kw).
+        """
+        if not refill:
+            return 0.0, 0.0
+        se = eff ** 0.5
+        sell = float(refill.get("sell", 0.0))
+        wear = float(refill.get("wear", 0.0))
+        rate = float(refill.get("rate_kw", 0.0))
+        if sell <= 0.0 or rate <= 0.0:
+            return 0.0, 0.0
+        # Pays after losses and wear, and beats the buy-back by the user's
+        # minimum arbitrage spread (same measure as the optimiser's
+        # grid_spread_ok: sell − buy / √eff).
+        max_buy = min((sell * se - wear) * se,
+                      (sell - float(refill.get("min_spread", 0.0))) * se)
+        ev_kw = refill.get("ev_kw_by_hour") or [0.0] * 24
+        grid_room = float(refill.get("grid_max_kw", 0.0)) - GRID_SAFETY_MARGIN_KW
+        paying = [
+            (st, dur, p) for st, dur, p in refill.get("slots", [])
+            if st + timedelta(hours=dur) > now and st < bridge_end and p < max_buy
+        ]
+        if not paying:
+            return 0.0, 0.0
+        # The night top-up buys cheapest first (_buy_window_limit), so the
+        # credit takes the paying slots in the same order until they cover the
+        # night's need, and the house runs on the battery until the earliest
+        # of the chosen slots, not until the first paying one.
+        night_need = sum(
+            (max(0.0, house_kw - solar_kw) + INVERTER_STANDBY_KW) * dur_h
+            for _st, house_kw, dur_h, _c, _ch, solar_kw in slots[start_idx:]
+            if _st < bridge_end
+        ) / se
+        house_by_hour = self.get_house_load_profile()
+        credit = 0.0
+        chosen: list[datetime] = []
+        for st, dur, _p in sorted(paying, key=lambda sl: sl[2]):
+            if credit >= night_need:
+                break
+            h = st.astimezone().hour
+            room = grid_room - house_by_hour[h] - ev_kw[h]
+            add = max(0.0, min(rate, room)) * dur * se
+            if add > 0.0:
+                credit += add
+                chosen.append(st)
+        if not chosen:
+            return 0.0, 0.0
+        first = min(chosen)
+        need = 0.0
+        for st, house_kw, dur_h, _covers, _charge, solar_kw in slots[start_idx:]:
+            if st >= first:
+                break
+            need += (max(0.0, house_kw - solar_kw) + INVERTER_STANDBY_KW) * dur_h
+        self._refill_buy_price = min(p for _st, _d, p in paying)
+        return credit, need / se
+
     def _compute_dynamic_floor_soc(
         self, *, now: datetime, capacity_kwh: float, efficiency: float,
-        solar_slot_data: list, grid_charge_kw: float,
+        solar_slot_data: list, grid_charge_kw: float, refill: dict | None = None,
     ) -> float | None:
         """Discharge floor that reserves enough SoC to run the house through the
         next *dark bridge* — the upcoming stretch where solar doesn't cover the
@@ -4293,6 +4439,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._bridge_reserve_kwh = 0.0
         self._bridge_end = None
         self._bridge_solar_surplus_kwh = 0.0
+        self._refill_buy_price = None
+        # Until a full night reserve is sized below, a sale needs the spread.
+        self._floor_grid_credited = True
         self._clear_peak_cover()
 
         if capacity_kwh <= 0 or not solar_slot_data:
@@ -4357,6 +4506,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         start_idx = next((i for i, x in enumerate(slots) if not x[3]), None)
         if start_idx is None:
             # Solar covers the house across the whole horizon — no bridge.
+            # Nothing to hold for a night: energy above the floor is solar.
+            self._floor_grid_credited = False
             return hw_floor
 
         # Across the dark bridge (until solar covers the house again, or the
@@ -4437,6 +4588,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # the safe/conservative direction.
         charge_kwh = max(0.0, float(grid_charge_kw)) * bridge_charge_h * (eff ** 0.5)
         reserve_kwh = max(0.0, house_need_kwh - charge_kwh) * margin
+        # v1.24.0 — sell-and-buy-back credit. Energy the night top-up can buy
+        # back before it is needed, at a price below what selling it now earns
+        # after losses and wear, does not have to stay in the battery. The
+        # house's use until the first such buy-back slot always does.
+        refill_kwh, need_before_refill_kwh = self._night_refill_credit(
+            now, slots, start_idx, bridge_end, eff, refill)
+        if refill_kwh > charge_kwh:
+            reserve_kwh = max(
+                need_before_refill_kwh, house_need_kwh - refill_kwh) * margin
+        # Grid buys counted against the reserve: energy above this floor is
+        # refilled from the grid, so a sale needs the user's spread.
+        self._floor_grid_credited = (charge_kwh > 0.0 or refill_kwh > charge_kwh)
         # v1.17.0 — publish the sized bridge for the overnight bridge buy. The
         # need is BEFORE the planned-charge credit: the buy decision is what
         # schedules that charge, so netting it off here would hide the shortfall
@@ -4607,10 +4770,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         return counter >= VACATION_MIN_DURATION
 
     def _calibrate_charge_rate(
-        self, cell_temp: float, charge_kw: float, soc: float, work_mode: str
+        self, cell_temp: float, charge_kw: float, soc: float, work_mode: str,
+        *, throttled: bool = False,
     ) -> None:
+        # v1.24.0 — a tick whose Force Charge setpoint was cut below the learned
+        # rate (grid import limit, car charging) measures the cut, not what the
+        # battery takes at this temperature, and is skipped.
         if (
-            work_mode != WORK_MODE_FORCE_CHARGE
+            throttled
+            or work_mode != WORK_MODE_FORCE_CHARGE
             or charge_kw < CALIBRATION_MIN_CHARGE_KW
             or soc >= CALIBRATION_MAX_SOC
         ):
@@ -9547,6 +9715,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ev_pv_stop_kw: float = 0.0,
         ev_ignore_session: bool = False,
         house_today_factor: float = 1.0,
+        solar_sale_needs_spread: bool = False,
     ) -> list[dict]:
         """Backward-induction dynamic programming optimizer.
 
@@ -9581,6 +9750,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 ev_pv_stop_kw=ev_pv_stop_kw,
                 ev_ignore_session=ev_ignore_session,
                 house_today_factor=house_today_factor,
+                solar_sale_needs_spread=solar_sale_needs_spread,
             )
         except Exception as err:
             _LOGGER.warning("Optimizer failed — returning empty plan: %s", err)
@@ -9619,6 +9789,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         ev_pv_stop_kw: float = 0.0,
         ev_ignore_session: bool = False,
         house_today_factor: float = 1.0,
+        solar_sale_needs_spread: bool = False,
     ) -> list[dict]:
         """Core DP computation at native 15-min resolution.
 
@@ -10015,9 +10186,17 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # a sub-threshold grid cycle up as a "solar" one. Requiring
             # sell_h >= min_spread makes the user's threshold bind on solar-funded
             # exports too; a normal (low) min_spread still admits them as before.
+            # v1.24.0 — reversed by user decision: energy the sun will replace
+            # is excess solar, and sells at any price above min_export_price
+            # (checked with the EXPORT branch below); the value function prices
+            # the wear. That holds only while the export floor keeps the whole
+            # night's need; see solar_sale_needs_spread.
+            # When grid buys were counted against the night reserve
+            # (`solar_sale_needs_spread`), energy above the floor is refilled
+            # from the grid, not the sun, and the sale needs min_spread.
             solar_refill_ok = (
                 solar_kwh_after[t] >= MIN_EXPORTABLE_KWH
-                and sell_h >= min_spread
+                and (not solar_sale_needs_spread or sell_h >= min_spread)
             )
             spread_ok = grid_spread_ok or solar_refill_ok
 
@@ -10093,7 +10272,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 # ── EXPORT ────────────────────────────────────────────────
                 # Revenue = (kWh out × discharge_eff × sell) − (kWh out × degradation)
                 # Floor/max-aware accounting for residual idle dynamics.
-                if s > soc_floor and sell_h > min_export_price and spread_ok:
+                # v1.24.0 — only when at least MIN_EXPORTABLE_KWH is above the
+                # floor, the amount the executor needs to start a sale; smaller
+                # planned sales never ran and only showed up in the plan.
+                if ((s - soc_floor) / 100.0 * capacity_kwh * efficiency >= MIN_EXPORTABLE_KWH
+                        and sell_h > min_export_price and spread_ok):
                     avail_pct = s - soc_floor
                     actual_exp_pct = min(export_delta_slot, avail_pct)
                     actual_exp_kwh = actual_exp_pct / 100.0 * capacity_kwh

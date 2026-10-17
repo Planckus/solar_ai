@@ -9,6 +9,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.24.0] — 2026-10-17
+
+### Added — sell in the evening, buy back in the night
+
+The dynamic discharge floor reserved the house's whole night need, so the battery could only sell what lay above it. With the floor at its 85 % cap this was a few percent, and sales lasted one to five minutes. The floor did not count that the night bridge buys energy back at night. When selling now earns more than buying back costs, after round-trip losses and wear, the floor now keeps only the house's use until the night bridge's buy-back slots. Those slots are taken cheapest first, as the night bridge buys them, and count only as far as they can refill the battery within the sustained charge rate, the grid import limit, the house's use and the car's expected draw in that hour. When buying back does not pay, the floor is unchanged.
+
+The *Minimum arbitrage spread* setting decides how much a sale must beat the buy-back by: the floor only lowers for a buy-back that clears it.
+
+### Changed — energy the sun will replace sells above the minimum export price
+
+A battery sale refilled by later sun needed a sell price of at least the *Minimum arbitrage spread*. Such energy is excess solar, so it now sells at any price above *Minimum export price*; the optimiser's value function still accounts for wear. This applies while the night floor holds the whole night's need in the battery, so the sun, not a night buy, refills it. When planned grid buys or the buy-back credit count against the night reserve, or the dynamic floor is off, the sale needs the *Minimum arbitrage spread* as before.
+
+### Fixed — a sale stopped short of the floor
+
+A sale stopped as soon as less than 0.5 kWh was left above the floor, so every sale kept that much unsold. A sale that has started now runs to the floor, and so does a manual export. The optimiser no longer plans sales below 0.5 kWh, which never ran and only showed in the plan.
+
+### Changed — charge windows from the sustained charge rate at the battery's temperature
+
+The optimiser planned charging with the 90th-percentile charge rate of the battery's temperature band. A cold battery charges slower, so the plan left too few slots. The optimiser, the night bridge and the peak cover now size their windows with the sustained rate, the mean of the observed charge power in that band. The night bridge and the peak cover take the cheapest slots before the deadline until the shortfall is covered at that rate, instead of only slots within 5 % of the cheapest. The inverter is still asked for the learned rate. Force Charge ticks where the setpoint was cut for the grid import limit no longer count as charge-rate samples.
+
+### Documentation — supported inverters
+
+The tested FoxESS H3-10.0-Smart and the H3 Smart series are listed as verified with v1.24.0.
+
+### Documentation — customisable settings
+
+The README has a *Customisable* section near the top that lists every setting behind the buy, sell, night reserve and EV charging decisions, with what each decides and its default.
+
+### Documentation — screenshots
+
+The README has a *Screenshots* section with five images of the bundled dashboard: front page status and charge mode, front page price and solar charts, *Prices & Plan*, *History* and the EV mode picker. Savings totals and dates are masked.
+
+### Fixed — the night bridge and the peak cover did not buy at negative prices
+
+Both required the price limit of their buy window to be above 0, so with a negative cheapest price they never bought. The 5 % allowance above the cheapest price was computed as cheapest × 1.05, which for a negative price lies below the cheapest price. Both now accept negative prices, and the allowance is 5 % of the cheapest price's size above it.
+
+### Changed — the sale reason shows the buy-back
+
+The reason for a sale showed a "spread" that divided the house's grid cost until the cheapest hour by the few kWh being sold, giving values such as −40 DKK/kWh, and an amount that subtracted the house's whole 24-hour need. It now shows the sell price, the night buy-back price and the margin per kWh after losses and wear, or that the energy sold is above the night reserve, and the energy above the floor.
+
+The *Net arbitrage spread* sensor, shown as *Arbitrage-spread* on the *Prices & Plan* page, used the same calculation. It is now the sell price minus the cheapest buy price ahead after charging losses, the measure the optimiser compares with *Minimum arbitrage spread*.
+
+---
+
 ## [1.23.7] — 2026-10-14
 
 ### Fixed — Scheduled did not return to the default mode when the car was plugged in again
