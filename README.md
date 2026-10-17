@@ -2,7 +2,7 @@
 
 [![HACS Custom Repository](https://img.shields.io/badge/HACS-Custom-orange?logo=home-assistant-community-store)](https://hacs.xyz)
 
-A Home Assistant integration that schedules a FoxESS battery against Nord Pool day-ahead prices, drives an EV charger — OCPP 1.6 or FoxESS Modbus TCP — from solar surplus, and learns from observed production and consumption.
+A Home Assistant integration that schedules a FoxESS battery against Nord Pool day-ahead prices, drives an EV charger — OCPP 1.6 or FoxESS Modbus TCP — from solar surplus, and learns from observed production and consumption. Every rule for when it buys, sells and holds back is a setting you can change from the dashboard; see [Customisable](#customisable).
 
 ## Supported inverters
 
@@ -13,8 +13,8 @@ Solar AI controls the battery through the [FoxESS Modbus](https://github.com/nat
 
 | Status | Brand | Model | Connection | Firmware | Verified with | Notes |
 |---|---|---|---|---|---|---|
-| Tested | FoxESS | H3-10.0-Smart | Modbus TCP over LAN, via the FoxESS Modbus integration | Master 1.49, Manager 1.31 | v1.23.7 | Maintainer's system. All features, including the PV-curtailment flag (register 49251) used to send otherwise throttled solar to the car. |
-| Supported | FoxESS | H3 Smart series (all H3-xx-Smart sizes) | Modbus TCP over LAN, via the FoxESS Modbus integration | — | v1.23.7 | Same platform as the tested H3-10.0-Smart; the sizes differ in power rating only. |
+| Tested | FoxESS | H3-10.0-Smart | Modbus TCP over LAN, via the FoxESS Modbus integration | Master 1.49, Manager 1.31 | v1.24.0 | Maintainer's system. All features, including the PV-curtailment flag (register 49251) used to send otherwise throttled solar to the car. |
+| Supported | FoxESS | H3 Smart series (all H3-xx-Smart sizes) | Modbus TCP over LAN, via the FoxESS Modbus integration | — | v1.24.0 | Same platform as the tested H3-10.0-Smart; the sizes differ in power rating only. |
 | Untested | FoxESS | H1 (incl. AC1, AIO-H1, G2), H3 (incl. AC3, AIO-H3), H3 Pro, P1, KH | Modbus TCP or RS485, via the FoxESS Modbus integration with write access | — | — | Expected to work when the integration exposes work mode, force charge / discharge power and min SoC. The PV-curtailment flag is read from an H3 register and may be unavailable on other models. Reports welcome as GitHub issues. |
 | Untested | Rebranded FoxESS | Kuara H3, Sonnenkraft SK-HWR, STAR, Solavita SP, a-TroniX AX | Via the FoxESS Modbus integration with write access | — | — | Listed as supported by the FoxESS Modbus integration. Same conditions as the FoxESS row above. |
 | Planned, not available | Growatt | MIN TL-XH, MOD TL3-XH, MID TL3-XH (GEN4 hybrid) | ShineWLAN-X2 (Modbus TCP, port 502) or RS485-to-TCP adapter, via the SolaX Inverter Modbus integration | Must support VPP remote power control (registers 30407-30410); versions not yet confirmed | — | Not available yet. Scope, dependencies and design: [Growatt support plan](docs/GROWATT.md). |
@@ -63,6 +63,72 @@ Solar AI tunes itself to your specific system instead of running on fixed assump
 - **Show, then trust.** Run it in monitoring mode first — it shows exactly what it *would* do on a built-in dashboard (prices, the plan, battery, EV, earnings and history) — and hand over control only when you're satisfied.
 
 Everything runs locally in Home Assistant, on top of your existing FoxESS Modbus and solar-forecast integrations. No cloud account, and no external service makes the decisions.
+
+---
+
+## Customisable
+
+Solar AI decides within limits you set. Each one is a number, switch or picker on the dashboard, applies within 15 minutes and needs no restart. The defaults suit a typical install; change any of them to match your own priorities.
+
+**Selling**
+
+| Setting | What it decides | Default |
+|---|---|---|
+| Minimum export price | Lowest price at which solar and battery energy is sold; below it, export is blocked at the inverter, which covers negative prices | 0.00 DKK/kWh |
+| Minimum arbitrage spread | How much a battery sale must beat the night buy-back by, after charging losses, before battery energy is sold and bought back | 0.30 DKK/kWh |
+| Battery wear cost | Cost per kWh cycled, counted in every buy and sell decision | 0.10 DKK/kWh |
+| Minimum SoC (export) | The battery is never sold below this | 50 % |
+| Blocked sell hours | Hours in which the battery is never sold | none |
+| Export power cap | Maximum battery export power | no cap |
+
+**Buying**
+
+| Setting | What it decides | Default |
+|---|---|---|
+| Maximum SoC (grid charge) | Highest SoC a grid charge fills to | 100 % |
+| Grid import limit | Your main fuse; battery and car are kept below it together | 17 kW |
+| Planned house use factor | Plans as if the house uses this much more than learned, so it buys earlier and more before expensive hours | 1.0× |
+| Solar confidence | Which forecast percentile the plan relies on; lower plans for less sun | 50 % |
+| Price components | Spot markup, sell-side fee, electricity duty and VAT, so the prices it compares match your bill | set during setup |
+
+**Night reserve**
+
+| Setting | What it decides | Default |
+|---|---|---|
+| Dynamic discharge floor | Holds back the energy the house needs until the sun returns, instead of a fixed floor | off |
+| Reserve safety factor | Margin on the night reserve until the overnight learner has data | 1.3× |
+| Reserve percentile | How much forecast error the learned reserve covers | 80 % |
+| Minimum reserve factor | Lower limit on the learned reserve | 0.8× |
+
+**EV charging**
+
+| Setting | What it decides | Default |
+|---|---|---|
+| Charge mode | Locked, Solar only, Solar + battery, Full power or Scheduled | — |
+| Default mode on connect | The mode a newly plugged-in car starts in | Locked |
+| Battery-first threshold | The car waits for solar until the house battery reaches this SoC | 80 % |
+| Schedules 1–4 | Weekday time windows, each with its own charge mode | off |
+| Minimum / maximum charge rate | Limits for the charge current | 6 A / 16 A, three-phase |
+
+The [configuration reference](docs/CONFIGURATION.md) describes every setting in full.
+
+---
+
+## Screenshots
+
+The bundled dashboard, Danish edition, on a FoxESS H3 install. Savings totals and dates are masked.
+
+| Front page: live status, charge mode and battery charge button | Front page: 24 h prices and 48 h solar forecast |
+|---|---|
+| ![Front page with house load, solar, battery, grid and EV tiles, buy and sell price, charge mode picker and battery charge button](docs/images/dashboard-status.png) | ![24 hour buy and sell price chart and 48 hour solar forecast chart](docs/images/dashboard-charts.png) |
+
+| Prices & Plan: today's plan, price chart and price matrices | History: savings, trading gain and battery SoC |
+|---|---|
+| ![Today's plan with buy and sell times, 24 hour price chart and buy and sell price matrices](docs/images/prices-plan.png) | ![Total savings, trading gain and a 24 hour battery state-of-charge chart](docs/images/history.png) |
+
+EV page: charge mode and default mode on connect.
+
+![EV charge mode and default charge mode on connect](docs/images/ev-modes.png)
 
 ---
 
@@ -287,6 +353,16 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.24.0 — sell in the evening, buy back in the night
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The battery can sell at an evening peak and buy the energy back in the night** when that pays after losses and wear. The house's use until the buy-back stays in the battery.
+- **A started sale runs to the floor**; sales no longer stop 0.5 kWh short.
+- **Charge windows use the sustained charge rate at the battery's temperature**, so a cold battery gets a longer window.
+- **The sale reason and the *Net arbitrage spread* sensor show the real sell-versus-buy-back margin**; the old figure gave values far outside any real margin.
+- **New [Customisable](#customisable) and [Screenshots](#screenshots) sections.**
 
 ### v1.23.7 — EV mode on plug-in: Scheduled and restarts
 
@@ -860,7 +936,7 @@ Control loop properties:
 |---|---|
 | Round-trip efficiency | Auto-detected from FoxESS lifetime charge/discharge totals. Activates after 100 kWh cycled. Falls back to configured value until then. |
 | Usable capacity | Learned during Force Charge cycles by measuring energy delivered vs SoC rise per tick. Activates after 20 samples. |
-| Temperature-adaptive charge rate | 7 buckets: `< 0`, `0–5`, `6–15`, `16–21`, `21–35`, `35–50`, `> 50 °C`. Each bucket records actual charge power during Force Charge and updates the learned rate at the 90th percentile. Each bucket is also exposed as an editable number entity for manual override. |
+| Temperature-adaptive charge rate | 7 buckets: `< 0`, `0–5`, `6–15`, `16–21`, `21–35`, `35–50`, `> 50 °C`. Each bucket records actual charge power during Force Charge and updates the learned rate at the 90th percentile; ticks where the charge was cut below that rate for the grid import limit are not recorded (v1.24.0). The inverter is asked for the learned rate. Charge windows (the optimiser, the night bridge, the peak cover) are sized with the sustained rate, the mean of the bucket's samples, so a cold battery gets a longer window. Each bucket is also exposed as an editable number entity for manual override. |
 
 ### Seasonal mode
 
@@ -915,7 +991,7 @@ Every setting below is editable from the dashboard (**Indstillinger / Settings**
 | **Blocked sell hours**<br>_Blokerede salgstimer_ | hours of day | none | Hours in which the battery is never sold — set with the clickable hour grid on the Settings page (or as a comma list, e.g. `20,21`). Solar export and house self-consumption are unaffected; only the battery *sell* is held. |
 | **Export power cap**<br>_Eksporteffekt-grænse (0 = ingen)_ | 0–10 kW | 0 (no cap) | Limits how fast the battery discharges to the grid. 0 = use the full available rate. |
 | **Grid import limit**<br>_Net-importgrænse_ | 5–63 kW | 17 kW | Your main breaker rating. Total grid draw is kept under this, less a 0.5 kW margin. Grid-charge power is reduced first to leave headroom for the house and the car; the EV charging current is then capped to what remains, pausing the car if that is below its minimum current. |
-| **Dynamic discharge floor**<br>_Dynamisk afladningsgulv (selvlærende)_ | on/off | off | When on, raises the export floor to the SoC needed to run the house from now until solar covers it again (net of any planned grid-charge), on top of your *Minimum SoC*. The reserve is a deterministic calculation from the learned load profile and accuracy-corrected solar forecast, multiplied by the *Reserve safety factor*. Short bright night → lower floor (export more); long winter night → higher floor (hold more). While Force-Discharging it also raises the inverter's own on-grid Min-SoC to the floor as a hardware backstop, and restores it the moment selling stops. |
+| **Dynamic discharge floor**<br>_Dynamisk afladningsgulv (selvlærende)_ | on/off | off | When on, raises the export floor to the SoC needed to run the house from now until solar covers it again (net of any planned grid-charge), on top of your *Minimum SoC*. The reserve is a deterministic calculation from the learned load profile and accuracy-corrected solar forecast, multiplied by the *Reserve safety factor*. Short bright night → lower floor (export more); long winter night → higher floor (hold more). When selling now earns more than buying the energy back during the night costs, after round-trip losses and wear, the reserve covers only the house's use until the night bridge's cheapest buy-back slots, as far as those slots can refill the battery within the charge rate and the grid import limit (v1.24.0). While Force-Discharging it also raises the inverter's own on-grid Min-SoC to the floor as a hardware backstop, and restores it the moment selling stops. |
 | **Effective discharge floor**<br>_Effektivt afladningsgulv_ | read-only | — | Shows the floor actually in effect right now (the static value, or the computed dynamic reserve), with the reserve factor in use as an attribute. |
 
 #### Price parameters
@@ -934,7 +1010,7 @@ These build the buy- and sell-side prices the optimiser uses. (The DSO + Energin
 
 | Setting | Range | Default | What it does |
 |---|---|---|---|
-| **Minimum arbitrage spread**<br>_Minimum arbitrage-spread_ | 0.00–3.00 DKK/kWh | 0.30 | Required gap between selling now and buying back later (after round-trip losses) before the optimiser will export-and-rebuy. Higher = more conservative, fewer cycles. |
+| **Minimum arbitrage spread**<br>_Minimum arbitrage-spread_ | 0.00–3.00 DKK/kWh | 0.30 | Required gap between selling now and buying back later (after round-trip losses) before the optimiser will export-and-rebuy. Higher = more conservative, fewer cycles. Energy the sun will replace is not subject to it while the dynamic floor holds the whole night's need in the battery: that sells at any price above *Minimum export price* (v1.24.0). |
 | **Battery wear cost**<br>_Batteri-slidomkostning_ | 0.00–1.00 DKK/kWh | 0.10 | Estimated battery degradation per kWh cycled. Subtracted from both charge and export rewards so the optimiser won't cycle the battery for tiny gains. Higher = less cycling. |
 | **Solar confidence**<br>_Sol-konfidens_ | 10–90 % | 50 | The percentile of each hour's solar forecast the optimiser plans against. 50 = median (neutral, = previous behaviour). Lower = assume less solar (more conservative — grid-charges more readily in cheap windows, holds back more battery). |
 
@@ -1195,7 +1271,7 @@ On spot price refresh (typically once per hour):
 | Entity | Description |
 |---|---|
 | `sensor.*_eksportpris` | Current net export price (DKK/kWh). Never < 0. |
-| `sensor.*_net_arbitrage_spread` | Export price minus 24-h minimum buy price |
+| `sensor.*_net_arbitrage_spread` | Sell price now minus the cheapest buy price ahead after charging losses (buy / √efficiency), the measure *Minimum arbitrage spread* is compared with |
 | `sensor.*_24h_prisminimum/maksimum/gennemsnit` | 24-h price statistics |
 | `sensor.*_24h_pris_25/75_percentil` | Quartile thresholds used for fallback decisions |
 | `sensor.*_naeste_slots_pris` | Price for the next 30-minute slot |
