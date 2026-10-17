@@ -207,8 +207,8 @@ These feed into the buy-price and sell-price formulas the optimiser uses.
 #### Minimum arbitrage spread — `min_spread_arbitrage`
 
 - Range: 0.00–3.00 DKK/kWh (0.05 steps)
-- Default: 1.00 DKK/kWh
-- Effect: hard gate on EXPORT decisions. The optimiser only sells from the battery if `(sell price after fees) − (recharge cost after losses)` is at least this much.
+- Default: 0.30 DKK/kWh
+- Effect: gate on battery sales that are refilled from the grid. The optimiser only sells energy that has to be bought back if `(sell price after fees) − (buy-back price after charging losses)` is at least this much; the night floor only lowers for such a buy-back under the same condition. Energy the sun will replace before it is needed is not subject to it while the dynamic discharge floor holds the whole night's need in the battery: that sells at any price above *Minimum export price*. When planned grid charges count against that reserve, or the dynamic floor is off, the spread applies.
 - Lower it: capture more legitimate arbitrage when the battery wear cost is doing the heavy lifting.
 - Raise it: larger safety margin on top of the wear cost.
 

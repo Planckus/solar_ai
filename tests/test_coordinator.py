@@ -818,11 +818,11 @@ class TestPeakCover:
     def test_price_must_beat_the_block_after_losses_and_wear(self):
         ok = BatteryArbitrageCoordinator._peak_cover_price_ok
         # 1.00 now, block 1.20: 1.00 / 0.9 + 0.10 = 1.21 does not pay
-        assert not ok(1.00, [1.00, 1.30], [1.20] * 16, 0.9, 0.10)
+        assert not ok(1.00, 1.05, [1.20] * 16, 0.9, 0.10)
         # block 1.30: pays
-        assert ok(1.00, [1.00, 1.30], [1.30] * 16, 0.9, 0.10)
-        # not the cheapest slot before the block
-        assert not ok(1.20, [1.00, 1.30], [3.00] * 16, 0.9, 0.10)
+        assert ok(1.00, 1.05, [1.30] * 16, 0.9, 0.10)
+        # outside the buy window
+        assert not ok(1.20, 1.05, [3.00] * 16, 0.9, 0.10)
 
     def test_expected_buy_slots_cover_the_shortfall_in_time_order(self):
         pick = BatteryArbitrageCoordinator._expected_buy_slots
@@ -981,3 +981,206 @@ class TestScheduledOnPlugIn:
         assert not self._tick_stored(c, True)
         assert c._ev_active_mode == "full"
         assert c._stored["ev_prev_connected"] is True
+
+
+class TestSellAndBuyBack:
+    """v1.24.0 — buy windows sized by the sustained charge rate; the night
+    floor credits a buy-back that beats the sale."""
+
+    TZ = timezone(timedelta(hours=2))
+
+    def _t(self, h, m=0, day=0):
+        return datetime(2026, 10, 17, h, m, tzinfo=self.TZ) + timedelta(days=day)
+
+    def test_window_widens_for_a_slow_battery(self):
+        lim = BatteryArbitrageCoordinator._buy_window_limit
+        slots = [(self._t(1), 0.25, 1.00), (self._t(2), 0.25, 1.10), (self._t(3), 0.25, 1.30)]
+        # 2 kWh at 8 kWh/h: one quarter hour does it -> cheapest x 1.05
+        assert lim(slots, 2.0, 8.0) == pytest.approx(1.05)
+        # same 2 kWh at 4 kWh/h (cold battery): two slots needed
+        assert lim(slots, 2.0, 4.0) == pytest.approx(1.10)
+        # more than all slots can take: every slot
+        assert lim(slots, 9.0, 4.0) == pytest.approx(1.30)
+        assert lim([], 2.0, 4.0) is None
+
+    def test_negative_prices_are_bought(self):
+        lim = BatteryArbitrageCoordinator._buy_window_limit
+        slots = [(self._t(1), 0.25, -0.40), (self._t(2), 0.25, -0.30), (self._t(3), 0.25, 0.20)]
+        # cheapest -0.40, allowance 5 % of its size upward: -0.38
+        assert lim(slots, 1.0, 8.0) == pytest.approx(-0.38)
+        assert -0.40 <= lim(slots, 1.0, 8.0)          # the cheapest slot qualifies
+        assert lim(slots, 2.0, 4.0) == pytest.approx(-0.30)   # two 1 kWh quarter hours
+        ok = BatteryArbitrageCoordinator._peak_cover_price_ok
+        assert ok(-0.40, -0.38, [1.5] * 16, 0.9, 0.05)
+
+    def _coord(self):
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {}
+        c.get_house_load_profile = lambda *a, **k: [0.5] * 24
+        c._refill_buy_price = None
+        return c
+
+    def _refill(self, sell, night_price=1.0, ev_kw=0.0):
+        slots = []
+        t = self._t(18)
+        while t < self._t(8, day=1):
+            p = night_price if self._t(0, day=1) <= t < self._t(4, day=1) else 2.0
+            slots.append((t, 0.25, p))
+            t += timedelta(minutes=15)
+        return {"sell": sell, "wear": 0.05, "rate_kw": 8.0, "grid_max_kw": 17.0,
+                "ev_kw_by_hour": [ev_kw] * 24, "slots": slots}
+
+    def _bridge_slots(self):
+        out, t = [], self._t(18)
+        while t < self._t(8, day=1):
+            out.append((t, 0.5, 0.25, False, False, 0.0))
+            t += timedelta(minutes=15)
+        return out
+
+    def test_credit_when_the_night_price_beats_the_sale(self):
+        c = self._coord()
+        credit, need = c._night_refill_credit(
+            self._t(18), self._bridge_slots(), 0, self._t(8, day=1), 0.9, self._refill(2.2))
+        assert credit >= 14 * 0.57 / 0.9 ** 0.5               # covers the night's need
+        assert need == pytest.approx(6 * 0.57 / 0.9 ** 0.5, rel=0.01)   # 18:00-00:00
+        assert c._refill_buy_price == pytest.approx(1.0)
+
+    def test_no_credit_when_buying_back_does_not_pay(self):
+        c = self._coord()
+        # selling at 1.20 allows a buy-back up to (1.20 x 0.949 - 0.05) x 0.949 = 1.03
+        credit, _ = c._night_refill_credit(
+            self._t(18), self._bridge_slots(), 0, self._t(8, day=1), 0.9,
+            self._refill(1.2, night_price=1.1))
+        assert credit == 0.0
+
+    def test_car_at_night_limits_the_buy_back(self):
+        c = self._coord()
+        full, _ = c._night_refill_credit(
+            self._t(18), self._bridge_slots(), 0, self._t(8, day=1), 0.9, self._refill(2.2))
+        with_car, _ = c._night_refill_credit(
+            self._t(18), self._bridge_slots(), 0, self._t(8, day=1), 0.9,
+            self._refill(2.2, ev_kw=15.5))   # leaves 0.5 kW of the 17 kW limit
+        assert with_car < full
+
+    def _floor_coord(self):
+        c = self._coord()
+        c.get_solar_confidence_factor_for_hour = lambda h: 1.0
+        c._bridge_solar_kw = lambda st, kw: kw
+        c._physical_floor_soc = lambda: 13.0
+        c._reserve_factor = lambda: 1.0
+        c._optimizer_plan = []
+        c._size_peak_cover = lambda *a: None
+        return c
+
+    def _solar(self):
+        out, t = [], self._t(18)
+        while t < self._t(14, day=1):
+            out.append((t, 0.25, t.hour, t.minute, 3000.0 if 9 <= t.hour < 14 and t.day != 17 else 0.0))
+            t += timedelta(minutes=15)
+        return out
+
+    def test_floor_keeps_only_the_need_until_the_buy_back(self):
+        kw = dict(now=self._t(18), capacity_kwh=10.0, efficiency=0.9,
+                  solar_slot_data=self._solar(), grid_charge_kw=8.0)
+        without = self._floor_coord()._compute_dynamic_floor_soc(**kw)
+        selling = self._floor_coord()._compute_dynamic_floor_soc(**kw, refill=self._refill(2.2))
+        cheap_sale = self._floor_coord()._compute_dynamic_floor_soc(
+            **kw, refill=self._refill(1.2, night_price=1.1))
+        assert without == 85.0                     # whole night does not fit: capped
+        # 18:00-00:00 at 0.57 kW / 0.949 = 3.6 kWh on 10 kWh above a 13 % floor
+        assert selling == pytest.approx(13 + 36.0, abs=1.0)
+        assert cheap_sale == without               # buy-back would not pay
+
+    def test_floor_reports_whether_grid_buys_hold_the_night(self):
+        kw = dict(now=self._t(18), capacity_kwh=10.0, efficiency=0.9,
+                  solar_slot_data=self._solar(), grid_charge_kw=8.0)
+        c = self._floor_coord()
+        c._compute_dynamic_floor_soc(**kw)
+        assert c._floor_grid_credited is False     # whole night held in the battery
+        c = self._floor_coord()
+        c._compute_dynamic_floor_soc(**kw, refill=self._refill(2.2))
+        assert c._floor_grid_credited is True      # buy-back counted
+
+    def test_need_counts_until_the_slot_the_top_up_will_actually_use(self):
+        # 22:00 pays (1.90) but 03:00-05:00 is cheaper (1.00) and covers the
+        # night: the top-up buys at 03:00, so the house runs on the battery
+        # until then, not until 22:00.
+        c = self._coord()
+        r = self._refill(2.2)
+        r["slots"] = [(st, d, 1.90 if st == self._t(22) else
+                       (1.00 if self._t(3, day=1) <= st < self._t(5, day=1) else 2.0))
+                      for st, d, _p in r["slots"]]
+        credit, need = c._night_refill_credit(
+            self._t(18), self._bridge_slots(), 0, self._t(8, day=1), 0.9, r)
+        assert need == pytest.approx(9 * 0.57 / 0.9 ** 0.5, rel=0.01)   # 18:00-03:00
+        assert c._refill_buy_price == pytest.approx(1.00)
+
+    def test_throttled_force_charge_does_not_teach_the_rate(self):
+        from custom_components.battery_arbitrage.const import WORK_MODE_FORCE_CHARGE
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {"charge_samples": {}, "charge_rates": {}}
+        c._calibrate_charge_rate(18.0, 5.0, 50.0, WORK_MODE_FORCE_CHARGE, throttled=True)
+        assert c._stored["charge_samples"] == {}
+        c._calibrate_charge_rate(18.0, 7.0, 50.0, WORK_MODE_FORCE_CHARGE)
+        assert sum(len(v) for v in c._stored["charge_samples"].values()) == 1
+
+
+    def test_buy_back_needs_the_minimum_arbitrage_spread(self):
+        c = self._coord()
+        r = self._refill(2.2)                     # 2.2 - 1.0 / 0.949 = 1.15
+        r["min_spread"] = 1.8
+        assert c._night_refill_credit(
+            self._t(18), self._bridge_slots(), 0, self._t(8, day=1), 0.9, r)[0] == 0.0
+        r["min_spread"] = 0.3
+        assert c._night_refill_credit(
+            self._t(18), self._bridge_slots(), 0, self._t(8, day=1), 0.9, r)[0] > 0.0
+
+
+class TestSolarRefilledSale:
+    """v1.24.0 — energy the sun will replace sells above the minimum export
+    price; the minimum arbitrage spread does not block it."""
+
+    TZ = timezone(timedelta(hours=2))
+
+    def test_sun_refilled_sale_ignores_a_high_minimum_spread(self):
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {"battery_degradation_cost": 0.05}
+        c.get_solar_hour_percentile = lambda h, p: None
+        c.get_short_term_solar_factor = lambda h: 1.0
+        c._compute_buy_price = lambda **k: 1.0
+        now = datetime(2026, 10, 17, 18, 0, tzinfo=self.TZ)
+        # sell 1.0 for the first hour, 0.2 after; sun from 08:00 next day
+        grid = [(now + timedelta(minutes=15 * i), 0.25,
+                 (now + timedelta(minutes=15 * i)).hour,
+                 (now + timedelta(minutes=15 * i)).minute,
+                 1.0 if i < 4 else 0.2) for i in range(96)]
+        solar = [(now + timedelta(minutes=15 * i), 0.25, 0, 0,
+                  4000.0 if 14 * 4 <= i < 20 * 4 else 0.0) for i in range(96)]
+        plan = c._dp_solve(
+            now, grid, solar, 1.0, 100.0, 10.0, 40, 10, 0, 100, 1.0, 5.0, 17.0,
+            [0.3] * 24, [0.0] * 24, 0.0, 1.25, [0.0] * 24, 0.0, 0.0,
+            0.0, 0.0, 0.03, 1.8, 10.0,
+        )
+        assert any(s["action"] == "EXPORT" for s in plan[:4])
+
+    def test_low_price_sale_needs_the_spread_when_grid_buys_hold_the_night(self):
+        # Night grid buys counted against the reserve: the "solar" sale would be
+        # refilled from the grid, so the user's spread applies again.
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {"battery_degradation_cost": 0.05}
+        c.get_solar_hour_percentile = lambda h, p: None
+        c.get_short_term_solar_factor = lambda h: 1.0
+        c._compute_buy_price = lambda **k: 1.0
+        now = datetime(2026, 10, 17, 18, 0, tzinfo=self.TZ)
+        grid = [(now + timedelta(minutes=15 * i), 0.25,
+                 (now + timedelta(minutes=15 * i)).hour,
+                 (now + timedelta(minutes=15 * i)).minute,
+                 1.0 if i < 4 else 0.2) for i in range(96)]
+        solar = [(now + timedelta(minutes=15 * i), 0.25, 0, 0,
+                  4000.0 if 14 * 4 <= i < 20 * 4 else 0.0) for i in range(96)]
+        plan = c._dp_solve(
+            now, grid, solar, 1.0, 100.0, 10.0, 40, 10, 0, 100, 1.0, 5.0, 17.0,
+            [0.3] * 24, [0.0] * 24, 0.0, 1.25, [0.0] * 24, 0.0, 0.0,
+            0.0, 0.0, 0.03, 1.8, 10.0, solar_sale_needs_spread=True,
+        )
+        assert not any(s["action"] == "EXPORT" for s in plan[:4])
