@@ -641,12 +641,15 @@ views:
       show_header_toggle: false
       entities:
       - entity: number.solar_ai_moms_pa_kob
+        unavailable_text: Indregnet i leverandørprisen
         name: Moms (%)
         help: 'Momssats på køb af strøm. Bruges kun i manuel prismodel, og i Strømligning-tilstand hvis "manuelle moms-/tillæg-/elafgift-overrides" er slået til under opsætning. Ved ren Octopus- eller Strømligning-prisning er moms allerede indregnet i den pris, der hentes direkte fra leverandøren, og denne indstilling bruges ikke.'
       - entity: number.solar_ai_elafgift_dkk_kwh
+        unavailable_text: Indregnet i leverandørprisen
         name: Elafgift
         help: 'Den danske elafgift pr. kWh, lagt oven på købsprisen i manuel prismodel og i Strømligning med manuelle overrides. Ved ren Octopus- eller Strømligning-prisning er elafgiften allerede indregnet i leverandørens pris, og denne indstilling bruges ikke.'
       - entity: number.solar_ai_spotpris_tillaeg_elhandlertillaeg
+        unavailable_text: Indregnet i leverandørprisen
         name: Spotpris-tillæg
         help: 'Din elhandlers faste tillæg pr. kWh oven på spotprisen (f.eks. abonnement omregnet til øre/kWh, eller et fast markup). Bruges i manuel prismodel og i Strømligning med manuelle overrides. Ved ren Octopus- eller Strømligning-prisning er leverandørens eget tillæg allerede indregnet i deres pris, og denne indstilling bruges ikke.'
       - entity: number.solar_ai_salgsgebyr_pr_kwh

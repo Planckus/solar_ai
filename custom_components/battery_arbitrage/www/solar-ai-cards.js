@@ -1094,7 +1094,13 @@
         const domain = (row.entity || '').split('.')[0];
         const icon = row.icon || (st && st.attributes && st.attributes.icon) || DOMAIN_ICONS[domain] || 'mdi:help-circle-outline';
         const rowColor = NAMED_COLORS[row.icon_color] || row.icon_color || cardColorRaw;
-        const { text, pill } = this._rowValue(hass, row.entity);
+        let { text, pill } = this._rowValue(hass, row.entity);
+        // A row may name what to show while its entity is unavailable on
+        // purpose, e.g. a price setting the supplier's price already covers.
+        if (row.unavailable_text && st && st.state === 'unavailable') {
+          text = row.unavailable_text;
+          pill = null;
+        }
         const valueHtml = pill
           ? `<span style="font-size:13px;padding:2px 10px;border-radius:10px;background:${pill.on ? 'var(--success-color)' : 'var(--secondary-background-color, rgba(127,127,127,0.15))'};color:${pill.on ? 'white' : 'var(--secondary-text-color)'};">${pill.label}</span>`
           : `<span style="font-size:15px;">${escapeHtml(text)}</span>`;

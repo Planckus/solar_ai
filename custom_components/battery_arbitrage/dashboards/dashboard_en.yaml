@@ -641,12 +641,15 @@ views:
       show_header_toggle: false
       entities:
       - entity: number.solar_ai_moms_pa_kob
+        unavailable_text: Included in the supplier price
         name: VAT (%)
         help: 'VAT rate on buying electricity. Only used in manual price mode, and in Strømligning mode if "manual VAT/markup/duty overrides" is enabled during setup. With plain Octopus or Strømligning pricing, VAT is already included in the all-in price fetched directly from the supplier, and this setting has no effect.'
       - entity: number.solar_ai_elafgift_dkk_kwh
+        unavailable_text: Included in the supplier price
         name: Electricity duty
         help: 'The Danish electricity duty (elafgift) per kWh, added on top of the buy price in manual price mode and in Strømligning with manual overrides. With plain Octopus or Strømligning pricing, the duty is already included in the supplier''s price, and this setting has no effect.'
       - entity: number.solar_ai_spotpris_tillaeg_elhandlertillaeg
+        unavailable_text: Included in the supplier price
         name: Spot-price markup
         help: 'Your retailer''s fixed markup per kWh on top of the spot price (e.g. a subscription fee converted to øre/kWh, or a flat markup). Used in manual price mode and in Strømligning with manual overrides. With plain Octopus or Strømligning pricing, the retailer''s own markup is already included in their price, and this setting has no effect.'
       - entity: number.solar_ai_salgsgebyr_pr_kwh

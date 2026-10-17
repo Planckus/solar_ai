@@ -358,6 +358,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.24.2 — price settings no longer read "unavailable"
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **VAT, electricity duty and spot markup show *Included in the supplier price*** on the settings page when the supplier's price already contains them.
+
 ### v1.24.1 — settings screenshots
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
