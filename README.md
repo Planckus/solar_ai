@@ -68,7 +68,7 @@ Everything runs locally in Home Assistant, on top of your existing FoxESS Modbus
 
 ## Customisable
 
-Solar AI decides within limits you set. Each one is a number, switch or picker on the dashboard, applies within 15 minutes and needs no restart. The defaults suit a typical install; change any of them to match your own priorities.
+Solar AI decides within limits you set. Each one is a number, switch or picker on the dashboard's settings page ([screenshots](#screenshots)), applies within 15 minutes and needs no restart. The defaults suit a typical install; change any of them to match your own priorities.
 
 **Selling**
 
@@ -125,6 +125,10 @@ The bundled dashboard, Danish edition, on a FoxESS H3 install. Savings totals an
 | Prices & Plan: today's plan, price chart and price matrices | History: savings, trading gain and battery SoC |
 |---|---|
 | ![Today's plan with buy and sell times, 24 hour price chart and buy and sell price matrices](docs/images/prices-plan.png) | ![Total savings, trading gain and a 24 hour battery state-of-charge chart](docs/images/history.png) |
+
+| Settings: master switches and battery limits | Settings: optimiser and notifications |
+|---|---|
+| ![Settings page with master switches, battery capacity, minimum and maximum SoC, export cap, grid import limit, dynamic floor and reserve settings](docs/images/settings-limits.png) | ![Settings page with minimum profit per kWh, battery wear cost and notification switches](docs/images/settings-optimizer-notifications.png) |
 
 EV page: charge mode and default mode on connect.
 
@@ -353,6 +357,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.24.1 — settings screenshots
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Two screenshots of the settings page** in the [Screenshots](#screenshots) section: master switches and battery limits, and the optimiser and notification settings.
 
 ### v1.24.0 — sell in the evening, buy back in the night
 
