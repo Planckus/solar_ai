@@ -358,6 +358,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.24.3 — no midday night-bridge buy when the sun fills the battery
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The night bridge compared the afternoon sun with the whole night shortfall.** It now compares it with the room left in the battery when that is smaller, so a sunny afternoon fills the battery from solar instead of the grid.
+
 ### v1.24.2 — price settings no longer read "unavailable"
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
