@@ -661,6 +661,10 @@ PLAN_REFRESH_SECONDS = 900            # 15 min
 # a hardcoded 20 while a real on-grid Min-SoC is typically 10-13. The reserve now
 # sits on the inverter's actual value, read live by _physical_floor_soc().
 DYNAMIC_FLOOR_MAX_SOC = 85            # never reserve above this (leave room to arbitrage)
+# v1.30.2 — local time by which the next day's prices are expected (Nord Pool
+# day-ahead publishes about 13:00; the price sources refresh shortly after).
+# Before it, a midday night-bridge buy waits for them.
+NEXT_DAY_PRICES_LOCAL = (13, 30)
 # v1.15.0 — the PHYSICAL floor is a different quantity from the export floor
 # above: it is the SoC the inverter actually stops discharging at, so it bounds
 # the battery's real state space. Used when the inverter's own on-grid Min-SoC

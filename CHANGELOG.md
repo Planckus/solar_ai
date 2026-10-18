@@ -9,6 +9,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.30.2] — 2026-10-18
+
+Fixes from an audit of 10 days of recorded decisions against the settings, and of every place each setting is enforced.
+
+### Fixed
+
+- **Energy bought from the grid was sold below the minimum gain.** *Minimum arbitrage spread* (Danish: *Minimum gevinst pr. kWh*) applied only to a sale bought back afterwards, not to energy charged from the grid and sold later, which is what the setting describes. Solar AI now tracks the energy charged from the grid that is still in the battery and its average buy price. Selling it needs the minimum gain over that price, in the plan and when a sale starts. Grid energy counts as the first to leave the battery, so once the house has used it, spare solar sells as before.
+- **The night bridge bought at midday before the next day's prices were out.** Until about 13:00 the known prices end at midnight, so a midday slot could look like the cheapest before the bridge ends when the night turned out cheaper. The bridge now waits until 13:30 while the prices do not reach the end of the bridge, unless the battery would not cover the house's forecast use until then.
+- **The optimiser read the battery-first threshold as 0 % until the slider was moved.** The EV controller used the default of 80 %. The optimiser now uses the same default.
+- **The reason for a charge the optimiser planned showed a cheapest-quarter test it had not passed**, for example "1.49 ≤ p25 1.48". It now reads "Optimiser plan: buying at … DKK/kWh".
+
+### Documentation
+
+- **Solar AI switch:** the help text now says it stops battery control only. Car charging (EV mode, Auto-Full) and the minimum export price stay active while it is off.
+- **Auto-Full on negative price:** the help text now says it triggers on the all-in buy price at or below 0, not on the spot price.
+
+### Tests
+
+- Removed the tests for the self-learning discharge margin, removed in v0.75.x. Updated the temperature-bucket tests to the seven buckets introduced in May.
+
+---
+
 ## [1.30.1] — 2026-10-18 — Hotfix
 
 ### Fixed — battery sales below the minimum gain

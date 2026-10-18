@@ -585,7 +585,7 @@ views:
       entities:
       - entity: switch.battery_arbitrage_arbitrage_aktiv
         name: Solar AI on/off
-        help: Turns off all automatic control. The battery and charger stay in whatever mode they were last in — they are not reset.
+        help: Turns off battery control. The battery stays in whatever mode it was last in — it is not reset. Car charging is still controlled (EV mode and Auto-Full), and the minimum export price is still enforced.
       - entity: switch.solar_ai_notifikationer_ved_tilstandsskift
         name: Notifications on mode change
         help: Send a notification every time Solar AI switches between export, grid charging, and self-consumption.
@@ -594,7 +594,7 @@ views:
         help: Use 15-minute electricity prices instead of hourly prices, if your supplier provides them. Gives more precise planning around price jumps.
       - entity: switch.solar_ai_auto_fuld_ved_negativ_pris
         name: 'EV: Auto-Full on negative price'
-        help: Automatically switches the EV to Full mode whenever the spot price goes negative, and switches back to the previous mode once the price is positive again.
+        help: Automatically switches the EV to Full mode whenever the all-in buy price (incl. tariffs and VAT) is 0 or negative, so you are paid to use power, and switches back to the previous mode once the price is positive again.
     - type: custom:solar-ai-entities-card
       title: Battery limits
       icon_color: blue
