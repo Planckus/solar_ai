@@ -106,7 +106,7 @@ Solar AI decides within limits you set. Each one is a number, switch or picker o
 |---|---|---|
 | Charge mode | Locked, Solar only, Solar + battery, Full power or Scheduled | — |
 | Default mode on connect | The mode a newly plugged-in car starts in | Locked |
-| Battery-first threshold | The car waits for solar until the house battery reaches this SoC | 80 % |
+| Battery-first threshold | The car waits for solar until the house battery reaches this SoC. Not in Solar + battery mode, where solar above the 4.14 kW baseline goes to the car | 80 % |
 | Schedules 1–4 | Weekday time windows, each with its own charge mode | off |
 | Minimum / maximum charge rate | Limits for the charge current | 6 A / 16 A, three-phase |
 
@@ -357,6 +357,19 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.30.0 — major update: decision logic review
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+A review of the buy, sell and car-charging decisions, with fixes for the cases where Solar AI bought, sold or held at the wrong time.
+
+- **Night reserve:** the night bridge and peak cover no longer count the discharge loss twice, the Solcast low-estimate rule now applies the learned forecast correction consistently, and the night bridge's fill-up now fills the battery as documented.
+- **Optimiser:** pays only for the room left in the battery, so a last top-up before the 17-21 h peak is no longer rejected; a car on Full that has stopped drawing, or a car that is not plugged in, no longer takes the sun in the plan.
+- **Manual export** runs until nothing is left above the floor. It was cancelled on its first tick most of the winter.
+- **Auto-Full on negative price** works with the FoxESS Modbus charger.
+- **Solar + battery mode:** solar above the 4.14 kW baseline goes to the car at any battery SoC.
+- **Restart:** an auto-Full promotion and the Full-mode battery lock are kept across a Home Assistant restart.
 
 ### v1.24.3 — no midday night-bridge buy when the sun fills the battery
 
@@ -1042,8 +1055,8 @@ These build the buy- and sell-side prices the optimiser uses. (The DSO + Energin
 |---|---|---|---|
 | **EV minimum charge rate**<br>_EV minimum opladningshastighed_ | 1.4–11 kW | 4.14 | Lowest rate the controller will run the car at — your charger's minimum (4.14 kW ≈ 3-phase 6 A). |
 | **EV maximum charge rate**<br>_EV maksimum opladningshastighed_ | 1.4–22 kW | 11.0 | Cap on the EV charge rate (11 kW ≈ 3-phase 16 A). |
-| **Battery-first threshold**<br>_Batteri-først tærskel_ | 50–100 % | 80 % | In solar modes, the EV waits until the house battery reaches this SoC before it starts consuming solar surplus. |
-| **Auto-Full on negative price**<br>_Auto-Fuld ved negativ pris_ | on/off | off | When on, automatically promotes the EV to Full charging while the buy price is negative (paid to consume), then restores the previous mode afterwards. |
+| **Battery-first threshold**<br>_Batteri-først tærskel_ | 50–100 % | 80 % | In Solar only mode, the EV waits until the house battery reaches this SoC before it starts consuming solar surplus. In Solar + battery mode solar above the 4.14 kW baseline goes to the car at any SoC (v1.30.0). |
+| **Auto-Full on negative price**<br>_Auto-Fuld ved negativ pris_ | on/off | off | When on, automatically promotes the EV to Full charging while the buy price is negative (paid to consume), then restores the previous mode afterwards. Works with the OCPP and the FoxESS Modbus charger, and the previous mode is restored after a restart (v1.30.0). |
 
 #### Charge rates by temperature (auto-learned)
 
