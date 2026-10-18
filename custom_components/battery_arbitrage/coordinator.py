@@ -2556,13 +2556,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 * capacity_kwh * (efficiency ** 0.5),
             )
             bridge_shortfall_kwh = max(0.0, self._bridge_reserve_kwh - usable_kwh)
+        # v1.24.3 — the sun only has to fill the room left in the battery. A
+        # night need larger than that room cannot be stored now from either
+        # source, so comparing the solar surplus with the whole shortfall
+        # bought at midday what the afternoon sun would have filled anyway.
+        bridge_room_kwh = max(0.0, (max_soc - battery_soc) / 100.0 * capacity_kwh)
+        bridge_sun_short = (
+            self._bridge_solar_surplus_kwh * (efficiency ** 0.5)
+            < min(bridge_shortfall_kwh, bridge_room_kwh)
+        )
         if (
             bridge_shortfall_kwh > 0.0
             and bool(grid_slot_data)
             and price_data_sufficient
             and not should_export
-            and (self._bridge_solar_surplus_kwh * (efficiency ** 0.5)
-                 < bridge_shortfall_kwh)
+            and bridge_sun_short
             and importable_kwh >= MIN_GRID_CHARGE_KWH
             and battery_soc < max_soc
             and not evcc_managing_battery
@@ -2670,8 +2678,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 or (bridge_shortfall_kwh > 0.0 and self._bridge_buy_until is not None
                     and now < self._bridge_buy_until)
             )
-            if (bridge_due and self._bridge_end is not None
-                    and self._bridge_solar_surplus_kwh * efficiency ** 0.5 < bridge_shortfall_kwh):
+            if bridge_due and self._bridge_end is not None and bridge_sun_short:
                 window = [p for p in priced if p[0] < self._bridge_end]
                 if window:
                     limit = self._buy_window_limit(window, bridge_shortfall_kwh, per_h)

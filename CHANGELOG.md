@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.24.3] — 2026-10-18
+
+### Fixed — night bridge bought at midday when the sun would fill the battery
+
+Before buying for the night, the night bridge checks whether the solar surplus expected before dark covers the shortfall. It compared the surplus with the whole night shortfall, even when that was larger than the room left in the battery. A night need the battery cannot hold cannot be stored from either source, so the check failed on a sunny afternoon and the battery was filled from the grid while the sun would have filled it, pushing that solar out to export. The check now compares the surplus with the smaller of the shortfall and the battery's free room. The rest of the night need is bought by the night top-up, after the evening has drawn the battery down. Today's plan uses the same test.
+
+---
+
 ## [1.24.2] — 2026-10-17
 
 ### Fixed — price settings read "unavailable" on the settings page
