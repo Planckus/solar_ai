@@ -9,6 +9,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.30.1] — 2026-10-18 — Hotfix
+
+### Fixed — battery sales below the minimum gain
+
+Two gaps let the battery sell in the evening at a price below *Minimum arbitrage spread* (Danish: *Minimum gevinst pr. kWh*), with the energy bought back from the grid the same night. With the setting at 1.50 DKK/kWh it sold at 1.38 and planned a sale at 1.61, with a buy-back at about 1.92.
+
+- **A night need larger than the battery was not counted as a grid buy-back.** The night reserve is capped at 85 % SoC. When the reserve does not fit under the cap, the night bridge buys what the battery cannot hold, so energy above the capped floor is bought back from the grid. The sale was treated as spare solar and checked only against *Minimum export price*. It now needs the minimum gain.
+- **A sale bought back from the grid was checked against the sell price, not the gain.** When grid buys hold the night, the optimiser compared the sell price itself with the minimum gain, so any sell price above 1.50 passed. It now requires the sale to beat the grid buy-back by the minimum gain, as every other battery sale does.
+
+---
+
 ## [1.30.0] — 2026-10-18 — Major update
 
 A review of the buy, sell and car-charging decision logic. Each fix below corrects a case where Solar AI bought, sold or held at the wrong time. No settings change, and existing settings keep their meaning.
