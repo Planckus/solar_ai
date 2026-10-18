@@ -358,6 +358,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.30.1 — hotfix: battery sales below the minimum gain
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Evening sales ignored *Minimum arbitrage spread* when the night needs grid buys.** A sale bought back from the grid the same night now has to beat that buy-back by the configured gain.
+
 ### v1.30.0 — major update: decision logic review
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
@@ -1045,7 +1051,7 @@ These build the buy- and sell-side prices the optimiser uses. (The DSO + Energin
 
 | Setting | Range | Default | What it does |
 |---|---|---|---|
-| **Minimum arbitrage spread**<br>_Minimum arbitrage-spread_ | 0.00–3.00 DKK/kWh | 0.30 | Required gap between selling now and buying back later (after round-trip losses) before the optimiser will export-and-rebuy. Higher = more conservative, fewer cycles. Energy the sun will replace is not subject to it while the dynamic floor holds the whole night's need in the battery: that sells at any price above *Minimum export price* (v1.24.0). |
+| **Minimum arbitrage spread**<br>_Minimum arbitrage-spread_ | 0.00–3.00 DKK/kWh | 0.30 | Required gap between selling now and buying back later (after round-trip losses) before the optimiser will export-and-rebuy. Higher = more conservative, fewer cycles. Energy the sun will replace is not subject to it while the dynamic floor holds the whole night's need in the battery: that sells at any price above *Minimum export price* (v1.24.0). When the night need is larger than the battery, or grid buys hold the night, a sale must beat the grid buy-back by this amount (v1.30.1). |
 | **Battery wear cost**<br>_Batteri-slidomkostning_ | 0.00–1.00 DKK/kWh | 0.10 | Estimated battery degradation per kWh cycled. Subtracted from both charge and export rewards so the optimiser won't cycle the battery for tiny gains. Higher = less cycling. |
 | **Solar confidence**<br>_Sol-konfidens_ | 10–90 % | 50 | The percentile of each hour's solar forecast the optimiser plans against. 50 = median (neutral, = previous behaviour). Lower = assume less solar (more conservative — grid-charges more readily in cheap windows, holds back more battery). |
 

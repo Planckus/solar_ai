@@ -1095,8 +1095,11 @@ class TestSellAndBuyBack:
         kw = dict(now=self._t(18), capacity_kwh=10.0, efficiency=0.9,
                   solar_slot_data=self._solar(), grid_charge_kw=8.0)
         c = self._floor_coord()
-        c._compute_dynamic_floor_soc(**kw)
+        c._compute_dynamic_floor_soc(**{**kw, "capacity_kwh": 20.0})
         assert c._floor_grid_credited is False     # whole night held in the battery
+        c = self._floor_coord()
+        c._compute_dynamic_floor_soc(**kw)
+        assert c._floor_grid_credited is True      # v1.30.1: capped, the bridge buys the rest
         c = self._floor_coord()
         c._compute_dynamic_floor_soc(**kw, refill=self._refill(2.2))
         assert c._floor_grid_credited is True      # buy-back counted
@@ -1176,6 +1179,28 @@ class TestSolarRefilledSale:
                  (now + timedelta(minutes=15 * i)).hour,
                  (now + timedelta(minutes=15 * i)).minute,
                  1.0 if i < 4 else 0.2) for i in range(96)]
+        solar = [(now + timedelta(minutes=15 * i), 0.25, 0, 0,
+                  4000.0 if 14 * 4 <= i < 20 * 4 else 0.0) for i in range(96)]
+        plan = c._dp_solve(
+            now, grid, solar, 1.0, 100.0, 10.0, 40, 10, 0, 100, 1.0, 5.0, 17.0,
+            [0.3] * 24, [0.0] * 24, 0.0, 1.25, [0.0] * 24, 0.0, 0.0,
+            0.0, 0.0, 0.03, 1.8, 10.0, solar_sale_needs_spread=True,
+        )
+        assert not any(s["action"] == "EXPORT" for s in plan[:4])
+
+    def test_grid_refilled_sale_needs_a_gain_not_a_sell_price(self):
+        # v1.30.1 — sell 2.0 is above a 1.8 minimum, but buying it back at
+        # 1.0 gains only 1.0. With grid buys holding the night it must not sell.
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {"battery_degradation_cost": 0.05}
+        c.get_solar_hour_percentile = lambda h, p: None
+        c.get_short_term_solar_factor = lambda h: 1.0
+        c._compute_buy_price = lambda **k: 1.0
+        now = datetime(2026, 10, 17, 18, 0, tzinfo=self.TZ)
+        grid = [(now + timedelta(minutes=15 * i), 0.25,
+                 (now + timedelta(minutes=15 * i)).hour,
+                 (now + timedelta(minutes=15 * i)).minute,
+                 2.0 if i < 4 else 0.2) for i in range(96)]
         solar = [(now + timedelta(minutes=15 * i), 0.25, 0, 0,
                   4000.0 if 14 * 4 <= i < 20 * 4 else 0.0) for i in range(96)]
         plan = c._dp_solve(

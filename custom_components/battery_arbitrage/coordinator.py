@@ -4657,20 +4657,25 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if refill_kwh > charge_kwh:
             reserve_kwh = max(
                 need_before_refill_kwh, house_need_kwh - refill_kwh) * margin
+        # The battery only delivers down to the hardware minimum SoC, so the
+        # reserve must sit ON TOP of it: export floor = hardware_floor +
+        # reserve%. Otherwise only (floor − hardware_floor) would actually be
+        # usable overnight.
+        floor_soc = hw_floor + reserve_kwh / capacity_kwh * 100.0
         # Grid buys counted against the reserve: energy above this floor is
         # refilled from the grid, so a sale needs the user's spread.
-        self._floor_grid_credited = (charge_kwh > 0.0 or refill_kwh > charge_kwh)
+        # v1.30.1 — also when the reserve does not fit under the floor cap: the
+        # night bridge then buys what the battery cannot hold, so energy above
+        # the capped floor is bought back from the grid, not spare solar.
+        self._floor_grid_credited = (
+            charge_kwh > 0.0 or refill_kwh > charge_kwh
+            or floor_soc > float(DYNAMIC_FLOOR_MAX_SOC))
         # v1.17.0 — publish the sized bridge for the overnight bridge buy. The
         # need is BEFORE the planned-charge credit: the buy decision is what
         # schedules that charge, so netting it off here would hide the shortfall
         # the moment a charge appeared in the plan.
         self._bridge_reserve_kwh = house_need_kwh * margin
         self._bridge_end = bridge_end
-        # The battery only delivers down to the hardware minimum SoC, so the
-        # reserve must sit ON TOP of it: export floor = hardware_floor +
-        # reserve%. Otherwise only (floor − hardware_floor) would actually be
-        # usable overnight.
-        floor_soc = hw_floor + reserve_kwh / capacity_kwh * 100.0
         return min(float(DYNAMIC_FLOOR_MAX_SOC), floor_soc)
 
     def _update_daily_solar(self, pv_power_w: float) -> None:
@@ -10277,9 +10282,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # When grid buys were counted against the night reserve
             # (`solar_sale_needs_spread`), energy above the floor is refilled
             # from the grid, not the sun, and the sale needs min_spread.
+            # v1.30.1 — measured as a gain over the grid buy-back
+            # (grid_spread_ok), not as the sell price: comparing the sell price
+            # with min_spread sold at 1.6 to buy back at 1.9 with 1.5 set.
             solar_refill_ok = (
                 solar_kwh_after[t] >= MIN_EXPORTABLE_KWH
-                and (not solar_sale_needs_spread or sell_h >= min_spread)
+                and not solar_sale_needs_spread
             )
             spread_ok = grid_spread_ok or solar_refill_ok
 
