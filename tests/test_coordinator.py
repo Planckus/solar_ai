@@ -58,22 +58,25 @@ class TestTempBucket:
         assert _temp_bucket(-5.0) == "below_0"
 
     def test_zero_boundary(self):
-        assert _temp_bucket(0.0) == "0_to_10"
+        assert _temp_bucket(0.0) == "0_to_5"
+
+    def test_boundary_6(self):
+        assert _temp_bucket(6.0) == "6_to_15"
 
     def test_mid_bucket(self):
-        assert _temp_bucket(15.0) == "10_to_20"
+        assert _temp_bucket(15.0) == "6_to_15"
+
+    def test_boundary_16(self):
+        assert _temp_bucket(16.0) == "16_to_21"
 
     def test_upper_bucket(self):
-        assert _temp_bucket(25.0) == "20_to_35"
-
-    def test_above_35(self):
-        assert _temp_bucket(40.0) == "above_35"
+        assert _temp_bucket(25.0) == "21_to_35"
 
     def test_boundary_35(self):
-        assert _temp_bucket(35.0) == "above_35"
+        assert _temp_bucket(35.0) == "35_to_50"
 
-    def test_boundary_10(self):
-        assert _temp_bucket(10.0) == "10_to_20"
+    def test_above_50(self):
+        assert _temp_bucket(55.0) == "above_50"
 
 
 # ------------------------------------------------------------------ #
@@ -391,71 +394,6 @@ class TestHouseLoadProfileSplit:
         stored = {"load_history": [0.4] * 50}
         # No profiles at all → short-term rolling mean (0.4).
         assert self._call(stored, weekend=False)[8] == 0.4
-
-
-# ------------------------------------------------------------------ #
-# v0.47.0 — dynamic discharge floor: self-learning margin              #
-# ------------------------------------------------------------------ #
-
-class TestDischargeMargin:
-    """_update_discharge_margin bumps the reserve margin up on a day where the
-    battery hit the hard floor, and relaxes it down on a clean day."""
-
-    def _run(self, stored, soc, now):
-        import types
-        from custom_components.battery_arbitrage.coordinator import (
-            BatteryArbitrageCoordinator,
-        )
-        stub = types.SimpleNamespace(_stored=stored)
-        BatteryArbitrageCoordinator._update_discharge_margin(stub, now, soc)
-        return stored
-
-    def test_first_observation_no_change(self):
-        import datetime as dt
-        stored = {"discharge_reserve_margin": 1.10}
-        self._run(stored, 60.0, dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc))
-        assert stored["discharge_reserve_margin"] == 1.10  # no prior day → no adjust
-        assert stored["dynamic_floor_day"] == \
-            dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc).astimezone().date().isoformat()
-
-    def test_undershoot_bumps_margin_up(self):
-        import datetime as dt
-        stored = {
-            "discharge_reserve_margin": 1.10,
-            "dynamic_floor_day": "2000-01-01",
-            "dynamic_floor_undershot": True,
-        }
-        self._run(stored, 60.0, dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc))
-        assert stored["discharge_reserve_margin"] == round(1.10 * 1.05, 3)
-        assert stored["dynamic_floor_undershot"] is False
-
-    def test_clean_day_relaxes_margin_down(self):
-        import datetime as dt
-        stored = {
-            "discharge_reserve_margin": 1.10,
-            "dynamic_floor_day": "2000-01-01",
-            "dynamic_floor_undershot": False,
-        }
-        self._run(stored, 60.0, dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc))
-        assert stored["discharge_reserve_margin"] == round(1.10 * 0.98, 3)
-
-    def test_low_soc_sets_undershoot_flag(self):
-        import datetime as dt
-        # Same day (no rollover) but SoC at the hard floor → flag set.
-        today = dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc).astimezone().date().isoformat()
-        stored = {"discharge_reserve_margin": 1.10, "dynamic_floor_day": today}
-        self._run(stored, 21.0, dt.datetime(2026, 6, 1, 13, tzinfo=dt.timezone.utc))
-        assert stored["dynamic_floor_undershot"] is True
-
-    def test_margin_clamped(self):
-        import datetime as dt
-        stored = {
-            "discharge_reserve_margin": 1.58,
-            "dynamic_floor_day": "2000-01-01",
-            "dynamic_floor_undershot": True,
-        }
-        self._run(stored, 60.0, dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc))
-        assert stored["discharge_reserve_margin"] <= 1.60  # clamped at MAX
 
 
 class TestPredictionScorecard:
@@ -1247,3 +1185,59 @@ class TestDecisionFixes1244:
             **kw, drew_recently=False) == 0.0
         assert BatteryArbitrageCoordinator._ev_session_demand_kw(
             **kw, drew_recently=True) == 10.4
+
+    def test_grid_energy_is_tracked_and_used_first(self):
+        from custom_components.battery_arbitrage.const import MODE_GRID_CHARGING, MODE_NORMAL
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {}
+        c._grid_track_soc = None
+        c._physical_floor_soc = lambda: 13.0
+        c._current_mode = MODE_GRID_CHARGING
+        c._track_grid_energy(50.0, 10.0, 1.0, True)
+        c._track_grid_energy(70.0, 10.0, 1.2, True)
+        assert c._stored["grid_kwh"] == pytest.approx(2.0)
+        assert c._stored["grid_kwh_cost"] == pytest.approx(1.2)
+        c._current_mode = MODE_NORMAL
+        c._track_grid_energy(65.0, 10.0, 2.0, True)
+        assert c._stored["grid_kwh"] == pytest.approx(1.5)
+        assert c._stored["grid_kwh_cost"] == pytest.approx(1.2)
+
+    def test_grid_bought_energy_needs_the_minimum_gain_to_sell(self):
+        # The sun refills tomorrow, so the sale at 1.0 would pass as spare
+        # solar; 4 kWh in the battery came from the grid and need 1.5.
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {"battery_degradation_cost": 0.05}
+        c.get_solar_hour_percentile = lambda h, p: None
+        c.get_short_term_solar_factor = lambda h: 1.0
+        c._compute_buy_price = lambda **k: 1.0
+        now = datetime(2026, 10, 17, 18, 0, tzinfo=self.TZ)
+        grid = [(now + timedelta(minutes=15 * i), 0.25,
+                 (now + timedelta(minutes=15 * i)).hour,
+                 (now + timedelta(minutes=15 * i)).minute,
+                 1.0 if i < 4 else 0.2) for i in range(96)]
+        solar = [(now + timedelta(minutes=15 * i), 0.25, 0, 0,
+                  4000.0 if 14 * 4 <= i < 20 * 4 else 0.0) for i in range(96)]
+        args = (now, grid, solar, 1.0, 100.0, 10.0, 40, 10, 0, 100, 1.0, 5.0, 17.0,
+                [0.3] * 24, [0.0] * 24, 0.0, 1.25, [0.0] * 24, 0.0, 0.0,
+                0.0, 0.0, 0.03, 1.8, 10.0)
+        plan = c._dp_solve(*args)
+        assert any(s["action"] == "EXPORT" for s in plan[:4])
+        plan = c._dp_solve(*args, grid_min_sell=1.5, grid_sell_floor_soc=60.0,
+                           grid_gate_until=now + timedelta(hours=12))
+        assert not any(s["action"] == "EXPORT" for s in plan[:4])
+
+    def test_midday_bridge_waits_for_tomorrows_prices(self):
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._physical_floor_soc = lambda: 13.0
+        c.get_house_load_profile = lambda weekend=False: [0.5] * 24
+        day = datetime(2026, 10, 19, 0, 0, tzinfo=self.TZ)
+        c._bridge_end = day + timedelta(days=1, hours=9)
+        today = [(day + timedelta(minutes=15 * i), 0.25, 0, 0, 1.0) for i in range(96)]
+        both = [(day + timedelta(minutes=15 * i), 0.25, 0, 0, 1.0) for i in range(192)]
+        eleven = day + timedelta(hours=11)
+        assert c._bridge_waits_for_prices(eleven, today, 50.0, 10.0, 0.93) is True
+        # after the prices are due, or once they cover the bridge: no wait
+        assert c._bridge_waits_for_prices(day + timedelta(hours=14), today, 50.0, 10.0, 0.93) is False
+        assert c._bridge_waits_for_prices(eleven, both, 50.0, 10.0, 0.93) is False
+        # the battery would run short before 13:30: buy now
+        assert c._bridge_waits_for_prices(eleven, today, 14.0, 10.0, 0.93) is False
