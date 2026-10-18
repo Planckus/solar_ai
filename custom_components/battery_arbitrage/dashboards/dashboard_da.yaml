@@ -585,7 +585,7 @@ views:
       entities:
       - entity: switch.battery_arbitrage_arbitrage_aktiv
         name: Solar AI til/fra
-        help: Slukker for al automatisk styring. Batteriet og opladeren fortsætter med den tilstand, de sidst var i — de bliver ikke nulstillet.
+        help: Slukker for styringen af batteriet. Batteriet fortsætter i den tilstand, det sidst var i — det bliver ikke nulstillet. Opladningen af bilen styres fortsat (EV-tilstand og Auto-Fuld), og minimum eksportpris håndhæves fortsat.
       - entity: switch.solar_ai_notifikationer_ved_tilstandsskift
         name: Notifikationer ved tilstandsskift
         help: Send en notifikation, hver gang Solar AI skifter mellem eksport, netopladning og selvforbrug.
@@ -594,7 +594,7 @@ views:
         help: Brug 15-minutters elpriser i stedet for timepriser, hvis din elleverandør leverer dem. Giver mere præcis planlægning omkring pris-spring.
       - entity: switch.solar_ai_auto_fuld_ved_negativ_pris
         name: 'EV: Auto-Fuld ved negativ pris'
-        help: Skifter automatisk EV til Fuld-tilstand, når spotprisen bliver negativ, og skifter tilbage til den forrige tilstand, når prisen igen er positiv.
+        help: Skifter automatisk EV til Fuld-tilstand, når den samlede købspris (inkl. tariffer og moms) er 0 eller negativ, så du får penge for at bruge strøm, og skifter tilbage til den forrige tilstand, når prisen igen er positiv.
     - type: custom:solar-ai-entities-card
       title: Batteri-grænser
       icon_color: blue
