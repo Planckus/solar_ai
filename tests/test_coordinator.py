@@ -1184,3 +1184,41 @@ class TestSolarRefilledSale:
             0.0, 0.0, 0.03, 1.8, 10.0, solar_sale_needs_spread=True,
         )
         assert not any(s["action"] == "EXPORT" for s in plan[:4])
+
+
+class TestDecisionFixes1244:
+    """v1.24.4 — decision-logic fixes."""
+
+    TZ = timezone(timedelta(hours=2))
+
+    def test_partial_slot_top_up_before_the_peak(self):
+        # 91 % full, a 15-min slot adds 21 %: only 9 % fits. Paying for the
+        # whole slot and selling the overshoot back made this top-up a loss.
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {"battery_degradation_cost": 0.05}
+        c.get_solar_hour_percentile = lambda h, p: None
+        c.get_short_term_solar_factor = lambda h: 1.0
+        now = datetime(2026, 10, 18, 16, 45, tzinfo=self.TZ)
+        c._compute_buy_price = lambda **k: 1.5 if k["slot_start_dt"] < now + timedelta(minutes=15) else 2.2
+        grid = [(now + timedelta(minutes=15 * i), 0.25,
+                 (now + timedelta(minutes=15 * i)).hour,
+                 (now + timedelta(minutes=15 * i)).minute,
+                 0.9) for i in range(24)]
+        solar = [(now + timedelta(minutes=15 * i), 0.25, 0, 0, 0.0) for i in range(24)]
+        load = [0.0] * 24
+        for h in (17, 18, 19, 20):
+            load[h] = 3.0
+        plan = c._dp_solve(
+            now, grid, solar, 1.0, 91.0, 10.0, 10, 10, 0, 100, 1.0, 8.4, 17.0,
+            load, [0.0] * 24, 0.0, 1.0, [0.0] * 24, 0.0, 0.0,
+            0.0, 0.0, 0.03, 1.8, 10.0, house_load_weekend=load,
+        )
+        assert plan[0]["action"] == "CHARGE"
+
+    def test_full_car_that_is_not_drawing_is_not_planned(self):
+        kw = dict(connected=True, charging_now=False, effective_mode="full",
+                  requested_mode="pv", live_kw=0.0, max_kw=10.4)
+        assert BatteryArbitrageCoordinator._ev_session_demand_kw(
+            **kw, drew_recently=False) == 0.0
+        assert BatteryArbitrageCoordinator._ev_session_demand_kw(
+            **kw, drew_recently=True) == 10.4

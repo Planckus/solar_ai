@@ -9,6 +9,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.30.0] — 2026-10-18 — Major update
+
+A review of the buy, sell and car-charging decision logic. Each fix below corrects a case where Solar AI bought, sold or held at the wrong time. No settings change, and existing settings keep their meaning.
+
+### Fixed — night reserve
+
+- **The night bridge and peak cover counted the discharge loss twice.** The need was in battery-side kWh, but the energy in the battery was reduced by the discharge leg again before the two were compared, so each buy was too large by the discharge loss. Both now compare battery-side kWh.
+- **The Solcast low-estimate rule mixed corrected and raw forecasts.** The 10th percentile is used for the night reserve when it is below 60 % of the median. The test compared the raw 10th percentile with the median after the learned accuracy correction, and then used the 10th percentile uncorrected, so the rule moved with each hour's correction. The choice is now made on Solcast's own figures and the correction applies to the figure used.
+- **The night bridge's fill-up stopped when the gap was covered.** Since v1.17.0, at a price in the day's cheapest quarter with little sun forecast, the bridge was documented to fill the battery, but the buy ended the tick the shortfall reached 0. It now keeps buying while the price and the forecast still qualify.
+
+### Fixed — optimiser
+
+- **A top-up that did not fit a whole 15-minute slot was priced as a loss.** The optimiser paid for the full slot and counted the part above the maximum SoC as sold back, although Force Charge stops at the maximum. A last top-up before the 17-21 h peak could be skipped. It now pays only for the room left.
+- **Grid import and solar spill were priced in battery-side kWh.** A deficit is now priced at what the meter imports and spill at what it exports.
+- **A car on Full that has stopped drawing was planned at its learned maximum.** A car left on Full after it is full drew nothing, but the plan reserved about 10 kW of the sun for it and could buy what the sun would have filled. The learned maximum now applies only to a car that drew recently.
+- **A car that is not plugged in took sun in the plan.** The learned hour-of-day car draw is no longer applied in the next two hours while no car is plugged in.
+- **The plan's SoC path used the full charge rate while the car was drawing.** It now uses the same reduced rate as the optimiser's own calculation.
+
+### Fixed — selling
+
+- **Manual export was cancelled on its first tick most of the winter.** The hold checked the energy above the floor minus the next 24 hours' net house need, which is 0 when the sun is low. It now runs until nothing is left above the floor.
+- **EVCC live-data mode: a charging car read as solar going to export.** EVCC's home power leaves out its loadpoints, so the car's draw is now subtracted before a planned sale is checked against the solar surplus.
+
+### Fixed — car charging
+
+- **Auto-Full on negative price never started on the FoxESS Modbus charger.** It read the plug state from the OCPP charger only. It now uses the plug state both charger backends keep.
+- **Solar + battery mode: solar above the 4.14 kW baseline went into the house battery** while it was below the battery-first threshold. It now goes to the car at any SoC.
+- **An auto-Full promotion and the Full-mode battery lock were lost on a restart.** A restart during a negative-price window left the car on Full with nothing to switch it back, and a restart with the lock engaged could leave the inverter's discharge current at 0 A. Both are now stored and picked up after a restart.
+
+---
+
 ## [1.24.3] — 2026-10-18
 
 ### Fixed — night bridge bought at midday when the sun would fill the battery

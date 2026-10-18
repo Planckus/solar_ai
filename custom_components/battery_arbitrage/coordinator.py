@@ -440,6 +440,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # v1.23.2 — end of the bridge a started bridge buy is completing; None
         # when no buy is under way.
         self._bridge_buy_until: datetime | None = None
+        # v1.24.4 — the running bridge buy is a fill-up (see fill_up below).
+        self._bridge_filling: bool = False
         # v1.23.2 — the next 17-21 h peak block as the dynamic floor sized it
         # (see _size_peak_cover), and the block a started peak-cover buy is for.
         self._peak_start: datetime | None = None
@@ -1150,6 +1152,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # is taken as the baseline, not as a plug-in.
         prev = self._stored.get("ev_prev_connected")
         self._ev_prev_connected = None if prev is None else bool(prev)
+        # v1.24.4 — an auto-Full promotion and a battery lock survive a
+        # restart. The price-floor block that ends auto-Full is not stored, so
+        # it is taken as open: the first tick without one switches the car back.
+        since = self._stored.get("ev_auto_full_since")
+        if since:
+            try:
+                self._ev_auto_full_active_since_ts = datetime.fromisoformat(since)
+                self._ev_pre_auto_full_mode = self._stored.get("ev_pre_auto_full_mode")
+                self._ev_prev_floor_block_active = True
+            except (TypeError, ValueError):
+                pass
+        if self._stored.get("ev_battery_locked"):
+            self._ev_battery_locked = True
+            self._ev_battery_lock_prev_a = self._stored.get("ev_battery_lock_prev_a")
         # Restore enabled state — default OFF so user must consciously turn on
         self._enabled = self._stored.get("enabled", False)
         # v0.49.1 — restore the last good feed-in tariff so the export price is
@@ -2231,6 +2247,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             requested_mode=ev_mode,
             live_kw=max(0.0, float(ev_charge_power_w or 0) / 1000.0),
             max_kw=float(self._stored.get("ev_max_kw", 0.0)),
+            drew_recently=ev_drew_recently,
         )
         # v1.22.2 — a PV+battery session is not planned for. The car takes the
         # sun first and the battery only covers the rest, so reserving its
@@ -2301,7 +2318,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 ev_charge_hourly=list(self._stored.get("ev_charge_hourly", [0.0] * 24)),
                 ev_max_kw=float(self._stored.get("ev_max_kw", 0.0)),
                 ev_pv_stop_kw=self._ev_pv_stop_kw(),
-                ev_ignore_session=ev_pv_battery_session,
+                # v1.24.4 — nor a car that is not plugged in: within the
+                # session horizon the learned hour-of-day car draw only took
+                # sun from the battery for a car that was not there.
+                ev_ignore_session=ev_pv_battery_session or not ev_connected,
                 house_today_factor=self._house_today_factor(),
                 solar_sale_needs_spread=self._floor_grid_credited,
                 vat_factor=vat_factor,
@@ -2482,7 +2502,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # requires a peak, so this only bites a plan that scheduled a sub-peak
         # export while solar was covering. When solar isn't covering (no surplus)
         # or the battery is full (must make room), the export is unaffected.
-        solar_surplus_kw = max(0.0, (pv_power_w - home_power_w) / 1000.0)
+        # v1.24.4 — in EVCC live-data mode homePower leaves out EVCC's own
+        # loadpoints, so a car taking the sun is subtracted here too; it used
+        # to read as surplus going to export.
+        evcc_car_w = (
+            float(evcc_charge_w or 0)
+            if self._setting(CONF_LIVE_DATA_SOURCE, DEFAULT_LIVE_DATA_SOURCE) == LIVE_SOURCE_EVCC
+            else 0.0
+        )
+        solar_surplus_kw = max(0.0, (pv_power_w - home_power_w - evcc_car_w) / 1000.0)
         at_day_peak = price_p75 > 0 and export_price >= price_p75
         if (
             should_export
@@ -2550,10 +2578,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             planner_headroom_kw,
         ) * efficiency ** 0.5
         if self._bridge_reserve_kwh > 0 and self._bridge_end is not None and now < self._bridge_end:
+            # v1.24.4 — battery-side kWh, as the reserve is (it already
+            # divides the house need by the discharge leg). Multiplying by
+            # √eff here as well counted that loss twice and over-bought.
             usable_kwh = max(
                 0.0,
-                (battery_soc - self._physical_floor_soc()) / 100.0
-                * capacity_kwh * (efficiency ** 0.5),
+                (battery_soc - self._physical_floor_soc()) / 100.0 * capacity_kwh,
             )
             bridge_shortfall_kwh = max(0.0, self._bridge_reserve_kwh - usable_kwh)
         # v1.24.3 — the sun only has to fill the room left in the battery. A
@@ -2565,12 +2595,26 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._bridge_solar_surplus_kwh * (efficiency ** 0.5)
             < min(bridge_shortfall_kwh, bridge_room_kwh)
         )
+        # "Really cheap and the sun will not do it": at a price in the day's
+        # cheapest quarter, with the 24 h solar forecast below the house's
+        # own 24 h need, fill the battery rather than buying the gap alone.
+        fill_up = (
+            buy_price_next_slot <= buy_price_p25
+            and solar_kwh < predicted_house_load_24h
+        )
+        # v1.24.4 — a fill-up keeps going after the gap is covered, while the
+        # price and the forecast still qualify. Since v1.17.0 the buy stopped
+        # the tick the shortfall reached 0, so it never filled.
+        bridge_filling = (
+            fill_up and self._bridge_filling
+            and self._bridge_end is not None
+            and self._bridge_buy_until is not None and now < self._bridge_buy_until
+        )
         if (
-            bridge_shortfall_kwh > 0.0
+            ((bridge_shortfall_kwh > 0.0 and bridge_sun_short) or bridge_filling)
             and bool(grid_slot_data)
             and price_data_sufficient
             and not should_export
-            and bridge_sun_short
             and importable_kwh >= MIN_GRID_CHARGE_KWH
             and battery_soc < max_soc
             and not evcc_managing_battery
@@ -2588,13 +2632,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 bridge_slots, bridge_shortfall_kwh, window_kwh_per_h)
             # Prices can be negative: no "> 0" guard on the limit.
             at_cheapest = bridge_limit is not None and buy_price_next_slot <= bridge_limit
-            # "Really cheap and the sun will not do it": at a price in the day's
-            # cheapest quarter, with the 24 h solar forecast below the house's
-            # own 24 h need, fill the battery rather than buying the gap alone.
-            fill_up = (
-                buy_price_next_slot <= buy_price_p25
-                and solar_kwh < predicted_house_load_24h
-            )
             if self._shortfall_buy_wanted(
                 self._bridge_buy_until, now, bridge_shortfall_kwh, at_cheapest, fill_up,
             ):
@@ -2603,8 +2640,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 bridge_buy_fill_up = fill_up
         if bridge_buy_active:
             self._bridge_buy_until = self._bridge_end
+            self._bridge_filling = fill_up
         elif bridge_shortfall_kwh <= 0.0:
             self._bridge_buy_until = None
+            self._bridge_filling = False
 
         # v1.23.2 — peak cover. The night bridge buys at the cheapest price
         # before the morning, which can come after the 17-21 h peak. Before the
@@ -2616,11 +2655,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         peak_buy_active = False
         peak_shortfall_kwh = 0.0
         if self._peak_start is not None and now < self._peak_start:
-            se = efficiency ** 0.5
+            # v1.24.4 — battery-side kWh, like the need and the slot deltas.
             phys_floor = self._physical_floor_soc()
             peak_shortfall_kwh = self._peak_shortfall_kwh(
-                max(0.0, (battery_soc - phys_floor) / 100.0 * capacity_kwh * se),
-                max(0.0, (max_soc - phys_floor) / 100.0 * capacity_kwh * se),
+                max(0.0, (battery_soc - phys_floor) / 100.0 * capacity_kwh),
+                max(0.0, (max_soc - phys_floor) / 100.0 * capacity_kwh),
             )
         if (
             peak_shortfall_kwh > 0.0
@@ -3290,7 +3329,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._manual_mode = None
         elif self._manual_mode == MODE_EXPORTING:
             # v1.24.0 — runs until nothing is left above the floor.
-            if exportable_kwh > 0.0:
+            # v1.24.4 — above_floor_kwh: `exportable_kwh` here is the energy
+            # above the floor less the 24 h net house need, which is 0 most of
+            # the winter and cancelled a manual sale on its first tick.
+            if above_floor_kwh > 0.0:
                 await self._transition_or_hold(
                     MODE_EXPORTING, capped_charge_rate_kw,
                     self._msg("Manual export — running until you stop it",
@@ -3334,6 +3376,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 )
                 if bridge_fill_up:
                     reason += " (filling up: price in the cheapest quarter, little sun forecast)"
+            elif bridge_fill_up:
+                reason = self._msg(
+                    f"Night bridge: filling up at {buy_price_next_slot:.2f} DKK/kWh — "
+                    f"price in the cheapest quarter, little sun forecast",
+                    f"Natbro: fylder op til {buy_price_next_slot:.2f} DKK/kWh — "
+                    f"prisen er i den billigste fjerdedel, lidt sol i prognosen",
+                )
             elif peak_shortfall_kwh > 0.0:
                 reason = self._msg(
                     f"Peak cover: battery {peak_shortfall_kwh:.1f} kWh short of the "
@@ -4489,8 +4538,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # percentile this is numerically identical to before; lowering
             # solar_confidence_pct now makes the floor more conservative too,
             # not just the DP's own price plan.
-            solar_kw = (s[4] / 1000.0) * self.get_solar_confidence_factor_for_hour(loc.hour)
-            solar_kw = self._bridge_solar_kw(slot_start, solar_kw)
+            # v1.24.4 — pick median or p10 on Solcast's own raw figures, then
+            # apply the learned correction to whichever is used. Comparing the
+            # raw p10 with the corrected median, and returning it uncorrected,
+            # moved the 60 % test with the hour's correction factor.
+            solar_kw = self._bridge_solar_kw(slot_start, s[4] / 1000.0)
+            solar_kw *= self.get_solar_confidence_factor_for_hour(loc.hour)
             solar_covers = house_kw > 0 and solar_kw >= onset * house_kw
             slot_end = slot_start + timedelta(hours=float(dur_h))
             charge_here = any(slot_start <= pc < slot_end for pc in planned_charge_dts)
@@ -6432,12 +6485,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             "ev_battery_priority_soc",
             self.config.get(CONF_EV_BATTERY_PRIORITY_SOC, DEFAULT_EV_BATTERY_PRIORITY_SOC),
         ))
+        # Resolve the active mode (needed by the phase decision + anti-flap).
+        effective_mode, active_link = self._resolve_effective_ev_mode(self._ev_active_mode)
+        self._ev_effective_mode = effective_mode
+        self._ev_active_schedule_link = active_link
+
         # Above the EV battery-priority SoC, power going INTO the house battery
         # also counts as available, so the car takes priority over topping the
         # battery past that point (your "prioritise the car above 80%").
+        # v1.24.4 — in PV+battery mode at any SoC: solar above the 4.14 kW
+        # baseline goes to the car, not into the house battery.
         available_kw = self._ev_available_surplus_kw(
             ev_current_kw, grid_export_kw, grid_import_kw,
-            battery_charge_kw, battery_discharge_kw, battery_soc, priority_soc,
+            battery_charge_kw, battery_discharge_kw, battery_soc,
+            0.0 if effective_mode == EV_MODE_PV_BATTERY else priority_soc,
         )
         # Fallback to the solar-minus-load estimate only if the grid-flow signal
         # is unusable (no draw, no export and no import — e.g. grid sensors
@@ -6465,11 +6526,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._ev_modbus_import_hist.append(grid_import_kw)
         self._ev_modbus_import_hist = self._ev_modbus_import_hist[-3:]
         grid_import_med = sorted(self._ev_modbus_import_hist)[len(self._ev_modbus_import_hist) // 2]
-
-        # Resolve the active mode (needed by the phase decision + anti-flap).
-        effective_mode, active_link = self._resolve_effective_ev_mode(self._ev_active_mode)
-        self._ev_effective_mode = effective_mode
-        self._ev_active_schedule_link = active_link
 
         # ── Phase decision: single vs three-phase ────────────────────────────
         # Hysteresis on a ROLLING AVERAGE of the available surplus (v0.59.6),
@@ -7141,6 +7197,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         requested_mode: str,
         live_kw: float,
         max_kw: float,
+        drew_recently: bool = True,
     ) -> float:
         """Live EV demand the optimiser should treat as near-certain (v0.45.0, E1).
 
@@ -7148,7 +7205,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         actively charging, the controller's effective mode is pv+battery or full
         (fast), or the requested EVCC mode is now/minpv. Pure-PV charging returns
         0.0 because the solar→EV idle dynamics already account for it. When a
-        session is forced, prefer the live charge power, else the learned max."""
+        session is forced, prefer the live charge power, else the learned max.
+
+        v1.24.4 — the learned max only for a car that drew within
+        EV_REQUEST_STALE_SECONDS. A car left on Full after it is full draws
+        nothing; planning it at ~10 kW made the sun look spoken for and let the
+        optimiser buy what the sun would fill (the live headroom already
+        ignores such a car)."""
         forced = bool(connected) and (
             bool(charging_now)
             or effective_mode in (EV_MODE_PV_BATTERY, EV_MODE_FULL)
@@ -7156,7 +7219,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         )
         if not forced:
             return 0.0
-        return live_kw if live_kw > 0.0 else max(0.0, float(max_kw))
+        if live_kw > 0.0:
+            return live_kw
+        return max(0.0, float(max_kw)) if drew_recently else 0.0
 
     def _ev_pv_stop_kw(self) -> float:
         """v1.21.1 — the surplus below which a PV-mode car stops charging.
@@ -7689,6 +7754,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     f" — failures: {'; '.join(mechanisms_failed)}" if mechanisms_failed else "",
                 )
                 self._ev_battery_locked = True
+                self._persist_battery_lock()
             else:
                 _LOGGER.error(
                     "EV controller: house battery LOCK FAILED on all mechanisms: %s",
@@ -7737,6 +7803,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
             self._ev_battery_lock_prev_a = None
             self._ev_battery_locked = False
+            self._persist_battery_lock()
+
+    def _persist_battery_lock(self) -> None:
+        """v1.24.4 — keep the battery lock across a restart, so the first tick
+        after it releases a lock the car no longer needs instead of leaving the
+        inverter's discharge current at 0 A."""
+        self._stored["ev_battery_locked"] = self._ev_battery_locked
+        self._stored["ev_battery_lock_prev_a"] = self._ev_battery_lock_prev_a
+        if self._store is not None:
+            self.hass.async_create_task(self._store.async_save(self._stored))
 
     def set_ev_battery_priority_soc(self, value: float) -> None:
         """Public setter for the battery-priority SoC slider (v0.26.4).
@@ -8708,6 +8784,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 return i
         return None
 
+    def _set_auto_full(self, since: datetime | None, pre_mode: str | None) -> None:
+        """v1.24.4 — record the auto-Full promotion for this run and across a
+        restart. Without it a restart during a negative-price window left the
+        car on Full with nothing to switch it back."""
+        if since == self._ev_auto_full_active_since_ts and pre_mode == self._ev_pre_auto_full_mode:
+            return
+        self._ev_auto_full_active_since_ts = since
+        self._ev_pre_auto_full_mode = pre_mode
+        self._stored["ev_auto_full_since"] = since.isoformat() if since else None
+        self._stored["ev_pre_auto_full_mode"] = pre_mode
+        if self._store is not None:
+            self.hass.async_create_task(self._store.async_save(self._stored))
+
     def _set_ev_prev_connected(self, ev_connected: bool) -> None:
         """Record the plug state for the next tick and across a restart."""
         self._ev_prev_connected = ev_connected
@@ -8769,8 +8858,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "manually changed master mode (%s → %s).",
                 self._ev_active_mode, new_mode,
             )
-            self._ev_auto_full_active_since_ts = None
-            self._ev_pre_auto_full_mode = None
+            self._set_auto_full(None, None)
         # v0.75.4 — flag an actual change so the next control tick bypasses
         # the anti-flap windows instead of holding the old rate for up to a
         # full stop_window. Applies whether the change is manual or the
@@ -8816,24 +8904,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if not enabled:
             # Feature off — clear any lingering state but otherwise no-op.
             if self._ev_auto_full_active_since_ts is not None:
-                self._ev_auto_full_active_since_ts = None
-                self._ev_pre_auto_full_mode = None
+                self._set_auto_full(None, None)
             self._ev_neg_price_seen_since_ts = None
             self._ev_prev_floor_block_active = self._current_floor_block is not None
             return
 
-        # EV plug state — read same way as the EV controller.
-        charger_id = self.config.get(CONF_EV_OCPP_CHARGE_POINT_ID, "")
-        ev_connected = False
-        if charger_id:
-            try:
-                status = self._get_ocpp_status(charger_id)
-                ev_connected = status in (
-                    "Preparing", "Charging", "SuspendedEV",
-                    "SuspendedEVSE", "Finishing",
-                )
-            except Exception:  # noqa: BLE001
-                ev_connected = False
+        # EV plug state — v1.24.4: the flag both charger controllers (OCPP and
+        # FoxESS Modbus) maintain. Reading the OCPP status alone left the car
+        # unplugged on every tick on the Modbus backend, so auto-Full never ran.
+        ev_connected = bool(self._ev_prev_connected)
         if not ev_connected:
             # Clear all auto state on disconnect — next plug-in starts clean.
             if (self._ev_auto_full_active_since_ts is not None
@@ -8841,8 +8920,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 _LOGGER.info(
                     "Auto-Full: EV disconnected — clearing auto state.",
                 )
-            self._ev_auto_full_active_since_ts = None
-            self._ev_pre_auto_full_mode = None
+            self._set_auto_full(None, None)
             self._ev_neg_price_seen_since_ts = None
             self._ev_prev_floor_block_active = self._current_floor_block is not None
             return
@@ -8859,8 +8937,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 restore_mode, self._ev_pre_auto_full_mode,
                 self._ev_auto_full_active_since_ts.isoformat(timespec="seconds"),
             )
-            self._ev_auto_full_active_since_ts = None
-            self._ev_pre_auto_full_mode = None
+            self._set_auto_full(None, None)
             self.set_ev_mode(restore_mode, _from_auto_full=True)
             # Don't return — still update prev_floor + maybe re-promote.
 
@@ -8890,8 +8967,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
 
         # All gates passed — promote.
         prev_mode = self._ev_active_mode
-        self._ev_pre_auto_full_mode = prev_mode
-        self._ev_auto_full_active_since_ts = now_local
+        self._set_auto_full(now_local, prev_mode)
         _LOGGER.info(
             "Auto-Full: buy_price=%.4f DKK/kWh has been ≤ 0 for %.0fs "
             "(threshold %ds) — promoting master mode %s → Full. Will "
@@ -10226,15 +10302,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 #   above max    → solar surplus exported to grid at sell_h
                 #   in range     → SoC drifts within bounds; no extra grid flow
                 unclamped = s + idle_delta
+                # v1.24.4 — SoC steps are battery-side kWh. A deficit the house
+                # imports is that × discharge_eff at the meter; solar spilled
+                # past full is that / charge_eff.
                 if unclamped < phys_floor:
                     deficit_pct = phys_floor - unclamped
-                    deficit_kwh = deficit_pct / 100.0 * capacity_kwh
+                    deficit_kwh = deficit_pct / 100.0 * capacity_kwh * discharge_eff
                     grid_import_cost = deficit_kwh * buy_h
                     s_idle = phys_floor
                     val_idle = V[s_idle] - grid_import_cost
                 elif unclamped > soc_max:
                     overflow_pct = unclamped - soc_max
-                    overflow_kwh = overflow_pct / 100.0 * capacity_kwh
+                    overflow_kwh = overflow_pct / 100.0 * capacity_kwh / charge_eff
                     # Solar surplus exported — no degradation cost since the
                     # battery is not cycled (surplus bypasses storage).
                     solar_export_revenue = overflow_kwh * sell_h
@@ -10257,16 +10336,22 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 sun_fills = sun_fills_from[t][s] and buy_h >= 0.0
                 if (s < soc_max and effective_charge_rate_kw >= GRID_MIN_CHARGE_KW
                         and not sun_fills):
-                    unclamped_ch = s + charge_delta_slot + idle_delta
-                    val_ch = -charge_kwh_slot * (buy_h + degradation_cost)
+                    # v1.24.4 — Force Charge stops at max SoC, so only the room
+                    # left after the slot's own solar is bought. Paying for the
+                    # whole slot and selling the overshoot back made a last
+                    # top-up before the peak look like a loss.
+                    ch_pct = min(charge_delta_slot, max(0.0, soc_max - (s + idle_delta)))
+                    unclamped_ch = s + ch_pct + idle_delta
+                    val_ch = -(ch_pct / charge_delta_slot * charge_kwh_slot
+                               if charge_delta_slot > 0 else 0.0) * (buy_h + degradation_cost)
                     if unclamped_ch < phys_floor:
                         deficit_pct = phys_floor - unclamped_ch
-                        deficit_kwh = deficit_pct / 100.0 * capacity_kwh
+                        deficit_kwh = deficit_pct / 100.0 * capacity_kwh * discharge_eff
                         val_ch -= deficit_kwh * buy_h
                         s_ch = phys_floor
                     elif unclamped_ch > soc_max:
                         overflow_pct = unclamped_ch - soc_max
-                        overflow_kwh = overflow_pct / 100.0 * capacity_kwh
+                        overflow_kwh = overflow_pct / 100.0 * capacity_kwh / charge_eff
                         val_ch += overflow_kwh * sell_h
                         s_ch = soc_max
                     else:
@@ -10291,12 +10376,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     unclamped_ex = s - actual_exp_pct + idle_delta
                     if unclamped_ex < phys_floor:
                         deficit_pct = phys_floor - unclamped_ex
-                        deficit_kwh = deficit_pct / 100.0 * capacity_kwh
+                        deficit_kwh = deficit_pct / 100.0 * capacity_kwh * discharge_eff
                         val_ex -= deficit_kwh * buy_h
                         s_ex = phys_floor
                     elif unclamped_ex > soc_max:
                         overflow_pct = unclamped_ex - soc_max
-                        overflow_kwh = overflow_pct / 100.0 * capacity_kwh
+                        overflow_kwh = overflow_pct / 100.0 * capacity_kwh / charge_eff
                         val_ex += overflow_kwh * sell_h
                         s_ex = soc_max
                     else:
@@ -10333,7 +10418,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "iso": sd["slot_start"].isoformat() if hasattr(sd["slot_start"], "isoformat") else str(sd["slot_start"]),
             })
 
-            charge_delta_slot = charge_rate_kw * charge_eff * dur_h / capacity_kwh * 100.0
+            # v1.24.4 — the same EV-reduced rate the backward pass planned with.
+            effective_charge_rate_kw = max(
+                0.0, min(charge_rate_kw, grid_headroom_kw - sd["ev_kw"]))
+            charge_delta_slot = effective_charge_rate_kw * charge_eff * dur_h / capacity_kwh * 100.0
             export_delta_slot = export_rate_kw * dur_h / capacity_kwh * 100.0
             # Same SoC-dependent solar split as the backward induction above.
             idle_delta = (
