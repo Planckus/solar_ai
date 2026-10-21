@@ -666,7 +666,7 @@ views:
       entities:
       - entity: number.solar_ai_minimum_arbitrage_spread
         name: Minimum gevinst pr. kWh
-        help: Hvor stor forskellen mellem købs- og salgspris mindst skal være, før systemet oplader batteriet fra nettet for at sælge det igen senere. Højere værdi = færre, men mere sikre handler.
+        help: Batteriets strøm sælges aldrig under denne pris. Et salg, der købes tilbage fra nettet, skal også slå tilbagekøbet med mindst dette beløb, og strøm opladet fra nettet skal sælges mindst så meget over, hvad den kostede. Sol, der eksporteres fordi batteriet er fuldt, styres i stedet af minimum eksportpris.
       - entity: number.solar_ai_batteri_slidomkostning_dkk_kwh_cyklet
         name: Batteri-slidomkostning
         help: Anslået slid på batteriet pr. kWh der lades/aflades, indregnet som en omkostning i alle arbitrage-beregninger. Trækkes fra på både opladnings- og salgssiden af en cyklus, så den reelle tærskel for en handel er højere end "Minimum gevinst" alene antyder.
