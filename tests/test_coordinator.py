@@ -1083,7 +1083,9 @@ class TestSolarRefilledSale:
 
     TZ = timezone(timedelta(hours=2))
 
-    def test_sun_refilled_sale_ignores_a_high_minimum_spread(self):
+    def test_sun_refilled_sale_sells_at_the_minimum_gain_as_a_price(self):
+        # v1.30.3 — spare solar sells when the price reaches the minimum gain
+        # (1.0 with 0.9 set), and not below it (1.0 with 1.8 set, below).
         c = object.__new__(BatteryArbitrageCoordinator)
         c._stored = {"battery_degradation_cost": 0.05}
         c.get_solar_hour_percentile = lambda h, p: None
@@ -1100,9 +1102,15 @@ class TestSolarRefilledSale:
         plan = c._dp_solve(
             now, grid, solar, 1.0, 100.0, 10.0, 40, 10, 0, 100, 1.0, 5.0, 17.0,
             [0.3] * 24, [0.0] * 24, 0.0, 1.25, [0.0] * 24, 0.0, 0.0,
-            0.0, 0.0, 0.03, 1.8, 10.0,
+            0.0, 0.0, 0.03, 0.9, 10.0,
         )
         assert any(s["action"] == "EXPORT" for s in plan[:4])
+        plan = c._dp_solve(
+            now, grid, solar, 1.0, 100.0, 10.0, 40, 10, 0, 100, 1.0, 5.0, 17.0,
+            [0.3] * 24, [0.0] * 24, 0.0, 1.25, [0.0] * 24, 0.0, 0.0,
+            0.0, 0.0, 0.03, 1.8, 10.0,
+        )
+        assert not any(s["action"] == "EXPORT" for s in plan[:4])
 
     def test_low_price_sale_needs_the_spread_when_grid_buys_hold_the_night(self):
         # Night grid buys counted against the reserve: the "solar" sale would be
@@ -1203,8 +1211,8 @@ class TestDecisionFixes1244:
         assert c._stored["grid_kwh_cost"] == pytest.approx(1.2)
 
     def test_grid_bought_energy_needs_the_minimum_gain_to_sell(self):
-        # The sun refills tomorrow, so the sale at 1.0 would pass as spare
-        # solar; 4 kWh in the battery came from the grid and need 1.5.
+        # The sun refills tomorrow, so the sale at 1.0 passes as spare solar
+        # with 0.3 set; 4 kWh in the battery came from the grid and need 1.5.
         c = object.__new__(BatteryArbitrageCoordinator)
         c._stored = {"battery_degradation_cost": 0.05}
         c.get_solar_hour_percentile = lambda h, p: None
@@ -1219,7 +1227,7 @@ class TestDecisionFixes1244:
                   4000.0 if 14 * 4 <= i < 20 * 4 else 0.0) for i in range(96)]
         args = (now, grid, solar, 1.0, 100.0, 10.0, 40, 10, 0, 100, 1.0, 5.0, 17.0,
                 [0.3] * 24, [0.0] * 24, 0.0, 1.25, [0.0] * 24, 0.0, 0.0,
-                0.0, 0.0, 0.03, 1.8, 10.0)
+                0.0, 0.0, 0.03, 0.3, 10.0)
         plan = c._dp_solve(*args)
         assert any(s["action"] == "EXPORT" for s in plan[:4])
         plan = c._dp_solve(*args, grid_min_sell=1.5, grid_sell_floor_soc=60.0,
@@ -1241,3 +1249,67 @@ class TestDecisionFixes1244:
         assert c._bridge_waits_for_prices(eleven, both, 50.0, 10.0, 0.93) is False
         # the battery would run short before 13:30: buy now
         assert c._bridge_waits_for_prices(eleven, today, 14.0, 10.0, 0.93) is False
+
+    def test_falling_night_floor_waits_for_the_best_price(self):
+        # v1.30.3 — the floor falls from 55 % at midnight to 41 % by 07:00.
+        # With today's floor held all night the only sale is now at 1.6;
+        # with the floor per slot it waits for 2.0 at 07:00.
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {"battery_degradation_cost": 0.0}
+        c.get_solar_hour_percentile = lambda h, p: None
+        c.get_short_term_solar_factor = lambda h: 1.0
+        c._compute_buy_price = lambda **k: 2.2
+        now = datetime(2026, 10, 19, 0, 0, tzinfo=self.TZ)
+        def spot(i):
+            return 1.6 if i < 4 else (2.0 if 28 <= i < 32 else 1.0)
+        grid = [(now + timedelta(minutes=15 * i), 0.25,
+                 (now + timedelta(minutes=15 * i)).hour,
+                 (now + timedelta(minutes=15 * i)).minute,
+                 spot(i)) for i in range(48)]
+        solar = [(now + timedelta(minutes=15 * i), 0.25, 0, 0,
+                  4000.0 if 32 <= i < 48 else 0.0) for i in range(48)]
+        schedule = [(now + timedelta(minutes=30 * j), now + timedelta(minutes=30 * (j + 1)), 55 - 1 * j)
+                    for j in range(16)]
+        args = (now, grid, solar, 1.0, 60.0, 10.0, 55, 10, 0, 100, 1.0, 5.0, 17.0,
+                [0.1] * 24, [0.0] * 24, 0.0, 1.0, [0.0] * 24, 0.0, 0.0,
+                0.0, 0.0, 0.03, 1.5, 10.0)
+        old = c._dp_solve(*args, house_load_weekend=[0.1] * 24)
+        new = c._dp_solve(*args, house_load_weekend=[0.1] * 24, floor_schedule=schedule)
+        assert any(s["action"] == "EXPORT" for s in old[:4])
+        assert not any(s["action"] == "EXPORT" for s in new[:4])
+        assert any(s["action"] == "EXPORT" for s in new[28:32])
+
+    def test_plan_check_finds_grid_energy_sold_below_the_gain(self):
+        from custom_components.battery_arbitrage.coordinator import _grid_sales_below_gain
+        plan = [
+            {"action": "CHARGE", "soc": 50, "buy": 1.0, "sell": 0.5, "iso": "a"},
+            {"action": "IDLE", "soc": 70, "buy": 2.0, "sell": 1.2, "iso": "b"},
+            {"action": "EXPORT", "soc": 69, "buy": 2.5, "sell": 1.6, "iso": "c"},
+            {"action": "EXPORT", "soc": 55, "buy": 3.0, "sell": 2.6, "iso": "d"},
+            {"action": "IDLE", "soc": 40, "buy": 2.0, "sell": 1.0, "iso": "e"},
+        ]
+        # 2 kWh bought at 1.0 needs 1.0 + 1.5 = 2.5: the 1.6 sale is below it,
+        # the 2.6 sale is not.
+        assert set(_grid_sales_below_gain(plan, 10.0, 1.0, 1.5, 0.0, 0.0)) == {"c"}
+        # Without a grid buy in the plan nothing is flagged.
+        plan[0]["action"] = "IDLE"
+        assert not _grid_sales_below_gain(plan, 10.0, 1.0, 1.5, 0.0, 0.0)
+
+    def test_plan_check_catches_a_midday_buy_sold_in_the_evening(self):
+        # 10-16 in the simulation: buy at 1.75 at midday, the house uses
+        # about as much by the evening, then a sale at 2.00. Counted "grid
+        # first out" the sale looked like solar; it is a buy-to-sell trade
+        # with a gain of 0.18 against 1.50 set.
+        from custom_components.battery_arbitrage.coordinator import _grid_sales_below_gain
+        plan = [
+            {"action": "CHARGE", "soc": 36, "buy": 1.75, "sell": 1.08, "iso": "11:45"},
+            {"action": "IDLE", "soc": 52, "buy": 2.0, "sell": 1.2, "iso": "12:00"},
+            {"action": "IDLE", "soc": 40, "buy": 2.8, "sell": 1.9, "iso": "18:00"},
+            {"action": "EXPORT", "soc": 38, "buy": 3.0, "sell": 2.00, "iso": "19:30"},
+            {"action": "IDLE", "soc": 30, "buy": 2.0, "sell": 1.0, "iso": "20:00"},
+        ]
+        assert set(_grid_sales_below_gain(plan, 10.67, 0.963, 1.5, 0.0, 0.0)) == {"19:30"}
+        # Once the sun has filled the battery, the earlier buy no longer counts.
+        plan[2] = {"action": "IDLE", "soc": 100, "buy": 2.8, "sell": 1.9, "iso": "18:00"}
+        plan[1]["soc"] = 60
+        assert not _grid_sales_below_gain(plan, 10.67, 0.963, 1.5, 0.0, 0.0)

@@ -9,6 +9,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.30.3] — 2026-10-21
+
+### Fixed — battery sales below the minimum gain
+
+- **Spare solar in the battery sold below *Minimum arbitrage spread*.** Since v1.24.0, energy above the night reserve that the sun refills counted as spare solar and sold at any price above *Minimum export price*. With the setting at 1.50 DKK/kWh it sold at 1.31 at night. The setting is now also the lowest price battery energy sells at, in the plan and when a sale starts. Solar exported because the battery is full is not a battery sale and still follows *Minimum export price*.
+- **The plan could buy from the grid to sell later below the minimum gain.** When the plan bought at midday and sold in the evening, the house's use in between made the evening sale count as solar, so a 1.75 buy and a 2.00 sale passed. The optimiser now checks its own plan: a sale that follows a grid buy before the sun has filled the battery must beat that buy by the minimum gain. Sales that do not are removed and the plan is solved again.
+
+### Changed — sales wait for the best price through the night
+
+The optimiser planned with the current night floor for the whole night. As the night went on the floor fell, a little energy appeared above it at each step, and the optimiser sold it at once because it saw no later chance. It now gets the floor for each slot of the night (the reserve less the house's forecast use until then, never below *Minimum SoC* for export), so it can wait for the best price. While a planned night charge or a buy-back credit lowers the reserve, the flat floor is kept, because those credits only apply once the charge has happened.
+
+In a 10-day simulation on recorded prices, solar and house load, the change made no battery sale below 1.50 (the previous version made four, the lowest at 0.47) and bought 0.86 kWh from the grid instead of 4.62 kWh, at the same net cost within 0.10 DKK.
+
+### Documentation
+
+- *Minimum arbitrage spread* help text and README: battery energy is never sold below it; a sale bought back from the grid must beat the buy-back by it, and energy charged from the grid must sell at least this much above its cost.
+
+---
+
 ## [1.30.2] — 2026-10-18
 
 Fixes from an audit of 10 days of recorded decisions against the settings, and of every place each setting is enforced.

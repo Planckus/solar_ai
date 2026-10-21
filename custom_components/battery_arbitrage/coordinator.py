@@ -445,6 +445,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._bridge_filling: bool = False
         # v1.30.2 — SoC at the last grid-energy tracking tick.
         self._grid_track_soc: float | None = None
+        # v1.30.3 — (slot start, slot end, floor %) through the night bridge.
+        self._floor_schedule: list[tuple[datetime, datetime, float]] = []
         # v1.23.2 — the next 17-21 h peak block as the dynamic floor sized it
         # (see _size_peak_cover), and the block a started peak-cover buy is for.
         self._peak_start: datetime | None = None
@@ -1969,6 +1971,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 floor_soc, max_soc, max_soc,
             )
             floor_soc = max_soc
+        floor_schedule: list[tuple[datetime, datetime, int]] = []
 
         # Capacity: the GUI "Battery capacity" number is authoritative — the
         # value the user sets there is what the optimiser uses, full stop. It
@@ -2124,8 +2127,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 refill=refill_inputs,
             )
             if dyn_floor is not None:
+                slider_floor_soc = floor_soc
                 # Never below the user's slider — only raise the floor above it.
                 floor_soc = max(floor_soc, int(round(dyn_floor)))
+                floor_schedule = [
+                    (st, en, min(floor_soc, max(slider_floor_soc, int(round(f)))))
+                    for st, en, f in self._floor_schedule
+                ]
                 self._dynamic_floor_soc = float(floor_soc)
             # v0.61.0 — the self-learning margin (_update_discharge_margin) is
             # retired: the reserve now uses a fixed safety factor, so there is no
@@ -2361,6 +2369,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 grid_sell_floor_soc=battery_soc - grid_kwh / capacity_kwh * 100.0
                 if capacity_kwh > 0 else 0.0,
                 grid_gate_until=self._bridge_end or (now + timedelta(hours=12)),
+                floor_schedule=floor_schedule,
             )
 
         # Translate optimizer plan into flags for the current 15-min slot.
@@ -2552,6 +2561,20 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
         # v1.30.2 — grid-bought energy above the floor sells only at the
         # minimum gain over what it cost (see grid_min_sell above).
+        # v1.30.3 — the minimum gain is also the lowest price battery energy
+        # sells at, whatever refills it: the sun refills for free, so a sale
+        # of spare solar gains its sell price. Since v1.24.0 spare solar in
+        # the battery sold at any price above the minimum export price (sold
+        # at 1.31 with 1.50 set on 2026-10-19). Solar exported because the
+        # battery is full is not a battery sale and is unaffected.
+        if should_export and export_price < min_spread:
+            should_export = False
+            self._mode_reason = self._msg(
+                f"No sale: {export_price:.2f} DKK/kWh is below the minimum gain "
+                f"{min_spread:.2f}",
+                f"Intet salg: {export_price:.2f} DKK/kWh er under minimum gevinst "
+                f"{min_spread:.2f}",
+            )
         if should_export and grid_min_sell is not None and export_price < grid_min_sell:
             should_export = False
             self._mode_reason = self._msg(
@@ -4607,6 +4630,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Until a full night reserve is sized below, a sale needs the spread.
         self._floor_grid_credited = True
         self._clear_peak_cover()
+        self._floor_schedule = []
 
         if capacity_kwh <= 0 or not solar_slot_data:
             return None
@@ -4770,6 +4794,25 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # reserve%. Otherwise only (floor − hardware_floor) would actually be
         # usable overnight.
         floor_soc = hw_floor + reserve_kwh / capacity_kwh * 100.0
+        # v1.30.3 — the floor at each later slot of the bridge: the reserve
+        # less the house's use from now until that slot. The optimiser planned
+        # with today's floor for the whole night, so energy freed as the night
+        # went on looked sellable only at once — it sold at 01:00 for 1.31
+        # instead of waiting for the morning price.
+        # Only without grid credits: a planned charge or a buy-back credit
+        # lowers the reserve only until it has happened, so a schedule built on
+        # it would fall too early; the flat floor stays in that case.
+        used_kwh = 0.0
+        for i, (st, house_kw, dur_h, _covers, _charge, solar_kw) in enumerate(slots):
+            if charge_kwh > 0.0 or refill_kwh > charge_kwh or st >= bridge_end:
+                break
+            left_kwh = max(0.0, reserve_kwh - used_kwh / (eff ** 0.5) * margin)
+            self._floor_schedule.append((
+                st, min(st + timedelta(hours=float(dur_h)), bridge_end),
+                min(float(DYNAMIC_FLOOR_MAX_SOC),
+                    hw_floor + left_kwh / capacity_kwh * 100.0)))
+            if i >= start_idx:
+                used_kwh += (max(0.0, house_kw - solar_kw) + INVERTER_STANDBY_KW) * dur_h
         # Grid buys counted against the reserve: energy above this floor is
         # refilled from the grid, so a sale needs the user's spread.
         # v1.30.1 — also when the reserve does not fit under the floor cap: the
@@ -9915,6 +9958,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         grid_min_sell: float | None = None,
         grid_sell_floor_soc: float = 0.0,
         grid_gate_until: datetime | None = None,
+        floor_schedule: list | None = None,
     ) -> list[dict]:
         """Backward-induction dynamic programming optimizer.
 
@@ -9937,23 +9981,56 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if not grid_slot_data or capacity_kwh <= 0 or charge_rate_kw <= 0:
             return []
 
+        # v1.30.3 — energy the plan itself buys from the grid must not be sold
+        # below the minimum gain over its cost. The solver cannot tell grid
+        # energy from solar in a state, so the plan is followed forward with
+        # grid energy leaving the battery first (as the executor counts it),
+        # and a sale of grid energy below the gain is removed and the plan
+        # solved again.
+        blocked: set[str] = set()
+        plan: list[dict] = []
         try:
-            return self._dp_solve(
-                now, grid_slot_data, solar_slot_data, solar_accuracy_factor, current_soc,
-                capacity_kwh, floor_soc, physical_floor_soc, ev_priority_soc, max_soc, efficiency,
-                charge_rate_kw, grid_headroom_kw, house_load_profile, ev_charge_hourly, ev_max_kw,
-                vat_factor, tariff_sched, elafgift, spot_markup,
-                export_fee, feed_in_tariff, min_export_price, min_spread, max_export_kw,
-                ev_session_kw, ev_session_horizon_h,
-                house_load_weekend=house_load_weekend,
-                ev_pv_stop_kw=ev_pv_stop_kw,
-                ev_ignore_session=ev_ignore_session,
-                house_today_factor=house_today_factor,
-                solar_sale_needs_spread=solar_sale_needs_spread,
-                grid_min_sell=grid_min_sell,
-                grid_sell_floor_soc=grid_sell_floor_soc,
-                grid_gate_until=grid_gate_until,
-            )
+            for _ in range(6):
+                plan = self._dp_solve(
+                    now, grid_slot_data, solar_slot_data, solar_accuracy_factor, current_soc,
+                    capacity_kwh, floor_soc, physical_floor_soc, ev_priority_soc, max_soc, efficiency,
+                    charge_rate_kw, grid_headroom_kw, house_load_profile, ev_charge_hourly, ev_max_kw,
+                    vat_factor, tariff_sched, elafgift, spot_markup,
+                    export_fee, feed_in_tariff, min_export_price, min_spread, max_export_kw,
+                    ev_session_kw, ev_session_horizon_h,
+                    house_load_weekend=house_load_weekend,
+                    ev_pv_stop_kw=ev_pv_stop_kw,
+                    ev_ignore_session=ev_ignore_session,
+                    house_today_factor=house_today_factor,
+                    solar_sale_needs_spread=solar_sale_needs_spread,
+                    grid_min_sell=grid_min_sell,
+                    grid_sell_floor_soc=grid_sell_floor_soc,
+                    grid_gate_until=grid_gate_until,
+                    floor_schedule=floor_schedule,
+                    blocked_exports=frozenset(blocked),
+                )
+                se = efficiency ** 0.5 if efficiency > 0 else 1.0
+                bad = _grid_sales_below_gain(
+                    plan, capacity_kwh, se, min_spread,
+                    max(0.0, (current_soc - grid_sell_floor_soc) / 100.0 * capacity_kwh)
+                    if grid_min_sell is not None else 0.0,
+                    (grid_min_sell - min_spread) * se if grid_min_sell is not None else 0.0,
+                    full_soc=max_soc,
+                )
+                if not bad:
+                    return plan
+                # Block the flagged sale and every later slot that pays less
+                # than that energy needs, so the plan cannot move the same
+                # grid energy to the next slot at the same price.
+                for i, slot in enumerate(plan):
+                    if slot["iso"] in bad:
+                        need = bad[slot["iso"]]
+                        blocked.update(
+                            later["iso"] for later in plan[i:] if later["sell"] < need)
+            _LOGGER.warning(
+                "Optimizer: planned sales of grid energy below the minimum gain "
+                "remain after re-solving; the executor still blocks them")
+            return plan
         except Exception as err:
             _LOGGER.warning("Optimizer failed — returning empty plan: %s", err)
             return []
@@ -9995,6 +10072,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         grid_min_sell: float | None = None,
         grid_sell_floor_soc: float = 0.0,
         grid_gate_until: datetime | None = None,
+        floor_schedule: list | None = None,
+        blocked_exports: frozenset = frozenset(),
     ) -> list[dict]:
         """Core DP computation at native 15-min resolution.
 
@@ -10285,6 +10364,21 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # efficiency + degradation cost). Never above the export floor.
         soc_floor = int(max(0, round(floor_soc)))
         phys_floor = int(max(0, min(round(physical_floor_soc), soc_floor)))
+
+        # v1.30.3 — the export floor at a slot: the night floor falls as the
+        # night is used up (`floor_schedule`, never above today's floor); the
+        # current floor applies outside the schedule.
+        def _floor_at(slot_start) -> int:
+            if not floor_schedule:
+                return soc_floor
+            if slot_start < floor_schedule[0][0] or slot_start >= floor_schedule[-1][1]:
+                return soc_floor
+            value = soc_floor
+            for st, _en, f in floor_schedule:
+                if st > slot_start:
+                    break
+                value = f
+            return int(max(phys_floor, min(soc_floor, value)))
         # 0 disables the battery-first rule (any EV mode but PV, or a
         # session already charging), so `s < ev_priority_soc` never fires.
         ev_priority_soc = int(max(0, min(100, round(ev_priority_soc))))
@@ -10407,6 +10501,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 and not solar_sale_needs_spread
             )
             spread_ok = grid_spread_ok or solar_refill_ok
+            slot_floor = _floor_at(sd["slot_start"])
+            slot_iso = (sd["slot_start"].isoformat()
+                        if hasattr(sd["slot_start"], "isoformat") else str(sd["slot_start"]))
             # v1.30.2 — grid-bought energy still in the battery sells only at
             # the minimum gain over its cost. It is taken as the first energy
             # out, so states above `grid_sell_floor_soc` still hold it; the
@@ -10500,10 +10597,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 # v1.24.0 — only when at least MIN_EXPORTABLE_KWH is above the
                 # floor, the amount the executor needs to start a sale; smaller
                 # planned sales never ran and only showed up in the plan.
-                if ((s - soc_floor) / 100.0 * capacity_kwh * efficiency >= MIN_EXPORTABLE_KWH
+                if ((s - slot_floor) / 100.0 * capacity_kwh * efficiency >= MIN_EXPORTABLE_KWH
                         and sell_h > min_export_price and spread_ok
+                        # v1.30.3 — the minimum gain is a hard floor on the
+                        # sell price of battery energy (see the executor).
+                        and sell_h >= min_spread
+                        and slot_iso not in blocked_exports
                         and not (grid_gate and s > grid_sell_floor_soc + 0.5)):
-                    avail_pct = s - soc_floor
+                    avail_pct = s - slot_floor
                     actual_exp_pct = min(export_delta_slot, avail_pct)
                     actual_exp_kwh = actual_exp_pct / 100.0 * capacity_kwh
                     val_ex = actual_exp_kwh * (discharge_eff * sell_h - degradation_cost)
@@ -10568,7 +10669,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             if act_code == "C":
                 soc_f = soc_f + charge_delta_slot + idle_delta
             elif act_code == "E":
-                avail_pct = max(0.0, soc_f - soc_floor)
+                avail_pct = max(0.0, soc_f - _floor_at(sd["slot_start"]))
                 actual_exp_pct = min(export_delta_slot, avail_pct)
                 soc_f = soc_f - actual_exp_pct + idle_delta
             else:
@@ -10703,6 +10804,37 @@ def _covering_value(
     if i >= 0 and t < slots[i][0] + timedelta(hours=slots[i][1]):
         return slots[i][4] / 1000.0
     return default
+
+
+def _grid_sales_below_gain(
+    plan: list[dict], capacity_kwh: float, se: float, min_spread: float,
+    grid_kwh: float, grid_cost: float, full_soc: float = 100.0,
+) -> dict[str, float]:
+    """v1.30.3 — planned sales that follow a grid buy in the same plan, before
+    the sun has filled the battery, and pay less than the minimum gain over
+    that buy. Returns iso → the sell price they need.
+
+    Grid energy is not netted against the house's use in between: when the
+    plan buys at midday and sells in the evening, the energy sold is grid
+    energy in substance, however the kWh are counted (a 1.75 buy and a 2.00
+    sale passed when the house was taken to use the bought energy first).
+    The count resets when a slot without a buy fills the battery, i.e. when
+    the sun has refilled it. Counts from MIN_EXPORTABLE_KWH, as the executor.
+    """
+    bad: dict[str, float] = {}
+    for i, slot in enumerate(plan[:-1]):
+        nxt = plan[i + 1]["soc"]
+        delta = (nxt - slot["soc"]) / 100.0 * capacity_kwh
+        if slot["action"] == "EXPORT" and grid_kwh >= MIN_EXPORTABLE_KWH:
+            need = grid_cost / se + min_spread
+            if slot["sell"] < need:
+                bad[slot["iso"]] = need
+        if slot["action"] == "CHARGE" and delta > 0:
+            grid_cost = (grid_kwh * grid_cost + delta * slot["buy"]) / (grid_kwh + delta)
+            grid_kwh += delta
+        elif slot["action"] != "CHARGE" and delta > 0 and nxt >= full_soc - 1:
+            grid_kwh, grid_cost = 0.0, 0.0
+    return bad
 
 
 def _plan_run_starts(entries: list[dict], action: str) -> dict[date, list[str]]:

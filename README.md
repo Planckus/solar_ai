@@ -75,7 +75,7 @@ Solar AI decides within limits you set. Each one is a number, switch or picker o
 | Setting | What it decides | Default |
 |---|---|---|
 | Minimum export price | Lowest price at which solar and battery energy is sold; below it, export is blocked at the inverter, which covers negative prices | 0.00 DKK/kWh |
-| Minimum arbitrage spread | How much a battery sale must beat the night buy-back by, after charging losses, before battery energy is sold and bought back | 0.30 DKK/kWh |
+| Minimum arbitrage spread | Lowest price battery energy is sold at, and how much a sale must beat a grid buy-back (or the grid energy's cost) by, after charging losses | 0.30 DKK/kWh |
 | Battery wear cost | Cost per kWh cycled, counted in every buy and sell decision | 0.10 DKK/kWh |
 | Minimum SoC (export) | The battery is never sold below this | 50 % |
 | Blocked sell hours | Hours in which the battery is never sold | none |
@@ -357,6 +357,14 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.30.3 — battery sales never below the minimum gain, best price through the night
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Battery energy is never sold below *Minimum arbitrage spread*,** including spare solar. Solar exported because the battery is full still follows *Minimum export price*.
+- **The optimiser plans with the night floor as it falls through the night,** so a sale waits for the best price instead of selling as soon as a little energy appears above the floor.
+- **The plan no longer buys from the grid to sell later below the minimum gain.**
 
 ### v1.30.2 — minimum gain on grid-bought energy, midday bridge waits for prices
 
@@ -1061,7 +1069,7 @@ These build the buy- and sell-side prices the optimiser uses. (The DSO + Energin
 
 | Setting | Range | Default | What it does |
 |---|---|---|---|
-| **Minimum arbitrage spread**<br>_Minimum arbitrage-spread_ | 0.00–3.00 DKK/kWh | 0.30 | Required gap between selling now and buying back later (after round-trip losses) before the optimiser will export-and-rebuy. Higher = more conservative, fewer cycles. Energy the sun will replace is not subject to it while the dynamic floor holds the whole night's need in the battery: that sells at any price above *Minimum export price* (v1.24.0). When the night need is larger than the battery, or grid buys hold the night, a sale must beat the grid buy-back by this amount (v1.30.1). Energy bought from the grid and still in the battery sells only at this gain over what it cost (v1.30.2). |
+| **Minimum arbitrage spread**<br>_Minimum arbitrage-spread_ | 0.00–3.00 DKK/kWh | 0.30 | Required gap between selling now and buying back later (after round-trip losses) before the optimiser will export-and-rebuy. Higher = more conservative, fewer cycles. Battery energy is never sold below this price, including energy the sun will replace (v1.30.3); solar exported because the battery is full is governed by *Minimum export price*. When the night need is larger than the battery, or grid buys hold the night, a sale must beat the grid buy-back by this amount (v1.30.1). Energy bought from the grid and still in the battery sells only at this gain over what it cost (v1.30.2). |
 | **Battery wear cost**<br>_Batteri-slidomkostning_ | 0.00–1.00 DKK/kWh | 0.10 | Estimated battery degradation per kWh cycled. Subtracted from both charge and export rewards so the optimiser won't cycle the battery for tiny gains. Higher = less cycling. |
 | **Solar confidence**<br>_Sol-konfidens_ | 10–90 % | 50 | The percentile of each hour's solar forecast the optimiser plans against. 50 = median (neutral, = previous behaviour). Lower = assume less solar (more conservative — grid-charges more readily in cheap windows, holds back more battery). |
 

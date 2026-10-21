@@ -666,7 +666,7 @@ views:
       entities:
       - entity: number.solar_ai_minimum_arbitrage_spread
         name: Minimum gain per kWh
-        help: How large the gap between buy and sell price must be at minimum before the system charges the battery from the grid to sell it again later. Higher = fewer but safer trades.
+        help: Battery energy is never sold below this price. A sale that is bought back from the grid must also beat that buy-back by this amount, and energy charged from the grid must be sold at least this much above what it cost. Solar exported because the battery is full is governed by the minimum export price instead.
       - entity: number.solar_ai_batteri_slidomkostning_dkk_kwh_cyklet
         name: Battery wear cost
         help: Estimated battery wear per kWh charged/discharged, counted as a cost in every arbitrage calculation. Deducted on both the charging and selling side of a cycle, so the real bar for a trade is higher than "Minimum gain" alone suggests.
