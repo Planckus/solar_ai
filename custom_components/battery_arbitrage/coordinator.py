@@ -4363,7 +4363,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._peak_start = start
         self._peak_end = end
         self._peak_need_kwh = (
-            block_kwh + INVERTER_STANDBY_KW * block_h + self._peak_cover_kwh(now)) / se
+            block_kwh + INVERTER_STANDBY_KW * block_h + self._peak_cover_kwh(now)
+        ) / se * self._coverage_factor()
         self._peak_pre_deltas = deltas
 
     def _peak_shortfall_kwh(
@@ -4757,7 +4758,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # sane band, falling back to the fixed factor until then — so it adapts
         # to this house's variance but can never leave
         # [RESERVE_FACTOR_MIN, RESERVE_FACTOR_MAX].
-        margin = self._reserve_factor()
+        margin = max(self._reserve_factor(), self._coverage_factor())
         # Battery energy the house will draw over the bridge. Delivering
         # bridge_house_kwh (house-side kWh) from energy ALREADY in the battery
         # costs only the ONE-WAY discharge leg, not the full round trip — the
@@ -4915,6 +4916,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         samples.append(round(ratio, 3))
         if len(samples) > OVERNIGHT_SAMPLES_MAX:
             del samples[: len(samples) - OVERNIGHT_SAMPLES_MAX]
+
+    def _coverage_factor(self) -> float:
+        """v1.31.0 — coverage of the house's forecast use: the 'Planned house
+        use factor' slider (e.g. 1.20 = cover 120 % of the forecast). The
+        optimiser already plans with it (_dp_solve); it now also sizes the buy
+        before the 17-21 block and sets the lowest night-reserve margin, so the
+        battery carries the same buffer through the evening and the night.
+        1.0 changes nothing."""
+        return max(1.0, float(self._stored.get(
+            "planner_house_load_factor", DEFAULT_PLANNER_HOUSE_LOAD_FACTOR)))
 
     def _reserve_factor(self) -> float:
         """Effective reserve safety factor for the dynamic floor. Once warm, the
