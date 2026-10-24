@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.31.0] — 2026-10-24
+
+### Changed — *Planned house use factor* also covers the evening and the night
+
+The setting scaled only the optimiser's plan. The buy before the 17-21 block (peak cover) and the night reserve were sized on the forecast alone, so the battery could reach the expensive hours and the night with no more than the forecast need, and sat at a low level until the next cheap hours or the sun. The factor now also:
+
+- sizes the buy before the 17-21 block (forecast evening use, inverter standby and the learned heavy-evening cover, times the factor);
+- sets the lowest margin of the night reserve: the reserve covers at least the factor times the forecast night use. The learned margin is used when it is higher.
+
+When to buy is unchanged: the optimiser buys in the hours that cost less, after charge losses and wear, than the hours they cover, up to the next cheaper hours or the sun. The minimum gain still decides any sale. At 1.0, the default, nothing changes.
+
+In a 9-day simulation on recorded prices, solar and house load (the plan and the night reserve; the evening buy not modelled), a factor of 1.1-1.3 halved the time the battery spent at 25 % or below (25.8 h to 13.5 h) and cut house imports at prices above 1.80 DKK/kWh from 0.61 to 0.12 kWh, for about 1-2 DKK over the 9 days once the fuller battery at the end is valued.
+
+---
+
 ## [1.30.3] — 2026-10-21
 
 ### Fixed — battery sales below the minimum gain

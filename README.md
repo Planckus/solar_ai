@@ -87,7 +87,7 @@ Solar AI decides within limits you set. Each one is a number, switch or picker o
 |---|---|---|
 | Maximum SoC (grid charge) | Highest SoC a grid charge fills to | 100 % |
 | Grid import limit | Your main fuse; battery and car are kept below it together | 17 kW |
-| Planned house use factor | Plans as if the house uses this much more than learned, so it buys earlier and more before expensive hours | 1.0× |
+| Planned house use factor | Coverage of the house's forecast use (e.g. 1.2 = 120 %) for the plan, the buy before 17-21 and the night reserve, so it buys earlier and more before expensive hours | 1.0× |
 | Solar confidence | Which forecast percentile the plan relies on; lower plans for less sun | 50 % |
 | Price components | Spot markup, sell-side fee, electricity duty and VAT, so the prices it compares match your bill | set during setup |
 
@@ -357,6 +357,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.31.0 — one coverage setting for the plan, the evening and the night
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- ***Planned house use factor* is now the house-use coverage everywhere.** At 1.25 the optimiser plans for 125 % of the forecast use, the buy before 17-21 covers 125 % of the evening, and the night reserve covers at least 125 % of the night. The battery keeps a buffer instead of reaching its low point before the next cheap hours. At 1.0 nothing changes.
 
 ### v1.30.3 — battery sales never below the minimum gain, best price through the night
 
@@ -1045,7 +1051,7 @@ Every setting below is editable from the dashboard (**Indstillinger / Settings**
 | **Minimum SoC (export)**<br>_Minimum SoC (eksport)_ | 10–100 % | 50 % | The static export floor — the battery is never *exported* below this SoC, reserving the rest for the house. With *Dynamic discharge floor* on this is a hard minimum the dynamic reserve can only raise, never go below. |
 | **Maximum SoC (grid charge)**<br>_Maksimum SoC (netopladning)_ | 10–100 % | 100 % | Ceiling that grid-charging will fill the battery to. |
 | **Battery capacity**<br>_Batterikapacitet (kWh)_ | 3–30 kWh | from setup | Usable capacity used for all the energy maths (reserve sizing, exportable energy, cycle planning). Your value is the anchor: once the discharge-run learner has measured the real capacity it refines this, but only within ±50 % of what you set. |
-| **Planned house use factor**<br>_Planlagt husforbrug-faktor_ | 1.0–2.0× | 1.0× | The optimiser plans as if the house uses this multiple of its learned load. Higher = buys more, and earlier, before expensive hours, and sells less. Buys stay whole quarter hours at the charge rate. |
+| **Planned house use factor**<br>_Planlagt husforbrug-faktor_ | 1.0–2.0× | 1.0× | Coverage of the house's forecast use. The optimiser plans as if the house uses this multiple of its learned load; the buy before the 17-21 block is sized with it; and the night reserve covers at least this multiple of the forecast (the learned margin is used when it is higher) (v1.31.0). Higher = buys more, and earlier, before expensive hours, keeps the battery fuller, and sells less. Buys stay whole quarter hours at the charge rate. |
 | **Reserve safety factor**<br>_Reserve-sikkerhedsfaktor_ | 1.0–2.0× | 1.3× | Multiplier on the predicted overnight need that the *Dynamic discharge floor* reserves. Lower = sell more into peaks; higher = hold more for the night. Used until the adaptive learner has ≈7 clean nights of data, after which the measured value takes over and this setting has no effect. The learned factor is capped at 2.0; when it sits at the cap, *Model health* reports it, and *Reserve percentile* is the setting that changes it. |
 | **Blocked sell hours**<br>_Blokerede salgstimer_ | hours of day | none | Hours in which the battery is never sold — set with the clickable hour grid on the Settings page (or as a comma list, e.g. `20,21`). Solar export and house self-consumption are unaffected; only the battery *sell* is held. |
 | **Export power cap**<br>_Eksporteffekt-grænse (0 = ingen)_ | 0–10 kW | 0 (no cap) | Limits how fast the battery discharges to the grid. 0 = use the full available rate. |
