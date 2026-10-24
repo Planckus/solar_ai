@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.31.1] — 2026-10-24
+
+### Fixed — *Planned house use factor* could not be found or set to 1.25
+
+- The setting was not on the bundled dashboard; it is now on the settings page under the reserve settings, with a help text in Danish and English.
+- The slider moved in steps of 0.1, so a coverage such as 1.25 could not be set. It now moves in steps of 0.05 and shows two decimals.
+
+---
+
 ## [1.31.0] — 2026-10-24
 
 ### Changed — *Planned house use factor* also covers the evening and the night

@@ -206,9 +206,9 @@ async def async_setup_entry(
             unit="×",
             min_val=1.0,
             max_val=2.0,
-            step=0.1,
+            step=0.05,   # v1.31.1 — 0.1 left no way to set e.g. 1.25
             mode=NumberMode.SLIDER,
-            display_precision=1,
+            display_precision=2,
         ),
         BatteryArbitrageConfigNumber(
             coordinator, entry,
