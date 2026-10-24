@@ -1313,3 +1313,29 @@ class TestDecisionFixes1244:
         plan[2] = {"action": "IDLE", "soc": 100, "buy": 2.8, "sell": 1.9, "iso": "18:00"}
         plan[1]["soc"] = 60
         assert not _grid_sales_below_gain(plan, 10.67, 0.963, 1.5, 0.0, 0.0)
+
+
+class TestCoverageFactor:
+    """v1.31.0 — the planned house use factor also covers the evening buy and
+    the night reserve."""
+
+    def test_default_changes_nothing(self):
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {}
+        assert c._coverage_factor() == 1.0
+        c._stored = {"planner_house_load_factor": 0.8}
+        assert c._coverage_factor() == 1.0
+
+    def test_evening_buy_scales_with_coverage(self):
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._peak_cover_kwh = lambda now=None: 0.0
+        tz = timezone(timedelta(hours=2))
+        now = datetime(2026, 10, 24, 12, 0, tzinfo=tz)
+        slots = [(now + timedelta(minutes=30 * k), 1.0, 0.5, False, False, 0.0)
+                 for k in range(24)]
+        needs = []
+        for f in (1.0, 1.2):
+            c._stored = {"planner_house_load_factor": f}
+            c._size_peak_cover(now, slots, 1.0)
+            needs.append(c._peak_need_kwh)
+        assert needs[1] == pytest.approx(needs[0] * 1.2)
