@@ -358,6 +358,14 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.31.2 — no buy bursts near full, minimum gain per buy, car out of battery buying
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **No more one-minute buys near full.** 0.5 kWh of room is needed to start a buy, not to keep one going, and the optimiser no longer plans top-ups with less room than that.
+- **A buy that feeds a sale must earn the minimum gain on its own.** A dear top-up can no longer pass by being averaged with energy bought earlier at a lower price.
+- **The car is not part of battery buying.** The plan buys for the house's use; what the car takes shows in the live SoC at the next re-plan.
+
 ### v1.31.1 — house-use coverage on the settings page, 0.05 steps
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
@@ -936,7 +944,7 @@ All components are live-configurable number entities:
 | Per-hour accuracy correction | Rolling per-hour-of-day factor in [0.3, 1.5]: the forecast-weighted median of actual/forecast (v1.22.0). Applied inside the optimiser. |
 | Intra-hour correction (v0.28.6) | Per-tick residual tracking; `_st_solar_factor = mean(actual / forecast over last 4 closed 15-min slots)`. Applied with linear decay over 2 h on top of the per-hour factor. |
 | Net surplus | Predicted house load subtracted from forecast PV to compute available kWh for the battery. Grid charge skipped when solar will fill the battery. |
-| Planner sun-fill rule (v1.21.1) | During daylight the optimiser does not plan a grid charge when the sun alone fills the battery before sunset. It follows the EV controller's split: battery first below the battery-first threshold, the car first above it, and the battery again once the surplus drops below the car's minimum power (a PV-mode car stops there). A PV+battery session is not planned for (v1.22.2); what it takes from the battery shows in the live SoC. Buys at a negative price, overnight buys and the night bridge are unaffected. |
+| Planner sun-fill rule (v1.21.1) | During daylight the optimiser does not plan a grid charge when the sun alone fills the battery before sunset. The car is not part of the plan (v1.31.2): what it takes from the sun or the battery shows in the live SoC, and the plan is re-solved from it every 15 minutes. Buys at a negative price, overnight buys and the night bridge are unaffected. |
 
 ### House load model
 
@@ -961,9 +969,9 @@ EV-aware features run in EVCC and Hybrid live-data modes. In FoxESS-only mode th
 | Item | Detail |
 |---|---|
 | Charging detection | Based on actual EV charge power, configurable 500–10000 W (default > 3000 W). |
-| Hourly probability | Exponential smoothing over ~8 days. Grid charging is blocked in hours where EV charges ≥ 70% of the time. |
+| Hourly probability | Exponential smoothing over ~8 days. Shown on the dashboard; since v1.31.2 it does not affect battery buying. |
 | Max charge rate | ~20-sample EMA from full-speed sessions only (≥ 80% of current learned max). Solar-throttled sessions excluded. |
-| Battery-bypass model | EVCC's setting "battery does not feed the EV" is honoured. Solar allocated to the EV is subtracted from battery-available kWh, not from battery discharge. |
+| Battery-bypass model | EVCC's setting "battery does not feed the EV" is honoured. |
 | EVCC battery mode | Set to `hold` during arbitrage actions. Restored to `normal` when done. If EVCC has independently taken control, the integration backs off. |
 
 ### EV charge controller (opt-in)
@@ -1082,7 +1090,7 @@ These build the buy- and sell-side prices the optimiser uses. (The DSO + Energin
 
 | Setting | Range | Default | What it does |
 |---|---|---|---|
-| **Minimum arbitrage spread**<br>_Minimum arbitrage-spread_ | 0.00–3.00 DKK/kWh | 0.30 | Required gap between selling now and buying back later (after round-trip losses) before the optimiser will export-and-rebuy. Higher = more conservative, fewer cycles. Battery energy is never sold below this price, including energy the sun will replace (v1.30.3); solar exported because the battery is full is governed by *Minimum export price*. When the night need is larger than the battery, or grid buys hold the night, a sale must beat the grid buy-back by this amount (v1.30.1). Energy bought from the grid and still in the battery sells only at this gain over what it cost (v1.30.2). |
+| **Minimum arbitrage spread**<br>_Minimum arbitrage-spread_ | 0.00–3.00 DKK/kWh | 0.30 | Required gap between selling now and buying back later (after round-trip losses) before the optimiser will export-and-rebuy. Higher = more conservative, fewer cycles. Battery energy is never sold below this price, including energy the sun will replace (v1.30.3); solar exported because the battery is full is governed by *Minimum export price*. When the night need is larger than the battery, or grid buys hold the night, a sale must beat the grid buy-back by this amount (v1.30.1). Energy bought from the grid and still in the battery sells only at this gain over what it cost (v1.30.2). A grid buy above the export floor that a planned sale uses must earn this gain on its own; it is not averaged with cheaper buys (v1.31.2). |
 | **Battery wear cost**<br>_Batteri-slidomkostning_ | 0.00–1.00 DKK/kWh | 0.10 | Estimated battery degradation per kWh cycled. Subtracted from both charge and export rewards so the optimiser won't cycle the battery for tiny gains. Higher = less cycling. |
 | **Solar confidence**<br>_Sol-konfidens_ | 10–90 % | 50 | The percentile of each hour's solar forecast the optimiser plans against. 50 = median (neutral, = previous behaviour). Lower = assume less solar (more conservative — grid-charges more readily in cheap windows, holds back more battery). |
 
@@ -1162,7 +1170,7 @@ The integration supports three live-data modes. Pick one during setup:
 | Hybrid | EVCC handles the EV, but live grid and PV come directly from the inverter | EVCC + FoxESS Modbus + a solar forecast source |
 | FoxESS only | No EV, or the car charges through Solar AI's own charger connection (embedded OCPP server or FoxESS Modbus charger). Not with a charger controlled by EVCC: Solar AI cannot see that car and learns its charging as house use. | FoxESS Modbus + a solar forecast source (Solcast direct or Forecast.Solar) |
 
-Note on FoxESS-only mode: if there is an OCPP-connected EV charger, the embedded OCPP server (v0.27.0+) still detects EV charging directly via the charger. Grid-headroom protection caps battery charging based on live grid-import readings in all modes. EV-aware scheduling (skip grid charge during typical EV hours, hourly probability learning) requires EVCC live-data mode and is inactive in FoxESS-only mode.
+Note on FoxESS-only mode: if there is an OCPP-connected EV charger, the embedded OCPP server (v0.27.0+) still detects EV charging directly via the charger. Grid-headroom protection caps battery charging based on live grid-import readings in all modes. EV charge probability learning requires EVCC live-data mode and is inactive in FoxESS-only mode. It does not affect battery buying (v1.31.2).
 
 ### What the FoxESS Modbus integration must provide
 
@@ -1224,7 +1232,6 @@ If the tomorrow field is left blank, the optimiser plans against a 24-h horizon 
 | Mode-change notifications | Yes | Yes | Yes |
 | Live dashboard sliders / switches | Yes | Yes | Yes |
 | Grid headroom overcurrent protection | Yes | Yes | Yes (FoxESS CT) |
-| EV-aware optimiser scheduling | Yes | Yes | No |
 | EV charge probability learning | Yes | Yes | No (stays at 0) |
 | EVCC battery-mode coordination | Yes | Yes | n/a |
 
@@ -1270,15 +1277,18 @@ On spot price refresh (typically once per hour):
    - Actions per slot: CHARGE | EXPORT | IDLE
    - Inputs: per-slot buy/sell prices, learned house load profile (24 slots),
              per-slot solar forecast (with per-hour + short-term correction),
-             EV hourly probability × learned max rate, charge/discharge
-             efficiency, export floor SoC, physical floor SoC, max SoC
+             charge/discharge efficiency, export floor SoC,
+             physical floor SoC, max SoC (the car is not an input, v1.31.2)
    - Two distinct floors: the export floor gates selling; the physical floor
      (the inverter's own on-grid Min-SoC) bounds the SoC state space, since
      the house keeps drawing the band between them
    - EXPORT allowed only when:
        sell_price > min_export_price floor
        AND sell_price − cheapest_recharge / efficiency ≥ min_spread
-   - CHARGE blocked for hours where EV typically charges (≥ 70% probability)
+   - CHARGE planned only with at least 0.5 kWh of room; a buy already
+     running may finish its slot
+   - A buy above the export floor that feeds a sale must earn
+     min_spread on its own, or it is removed and the plan re-solved
    - Output: ordered plan {slot_start, action, expected SoC, buy, sell}
 
 3. Plan is stored and drives decisions for the next 60 minutes.
@@ -1304,9 +1314,8 @@ On spot price refresh (typically once per hour):
 
    GRID CHARGE if optimiser says CHARGE
               AND solar will not fill the battery on its own
-              AND importable kWh ≥ 0.5
+              AND (importable kWh ≥ 0.5 OR a buy is already running)
               AND grid headroom ≥ 0.3 kW
-              AND EV is not likely charging this hour
 
    FORCED CHARGE if buy price ≤ 0 (overrides all other checks)
 

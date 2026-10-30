@@ -208,7 +208,11 @@ These feed into the buy-price and sell-price formulas the optimiser uses.
 
 - Range: 0.00–3.00 DKK/kWh (0.05 steps)
 - Default: 0.30 DKK/kWh
-- Effect: gate on battery sales that are refilled from the grid. The optimiser only sells energy that has to be bought back if `(sell price after fees) − (buy-back price after charging losses)` is at least this much; the night floor only lowers for such a buy-back under the same condition. Energy the sun will replace before it is needed is not subject to it while the dynamic discharge floor holds the whole night's need in the battery: that sells at any price above *Minimum export price*. When planned grid charges count against that reserve, or the dynamic floor is off, the spread applies.
+- Effect: the lowest price battery energy is sold at, and the gain a sale needs over what the energy costs:
+  - Battery energy, including energy the sun will replace, is never sold below this price (v1.30.3). Solar exported because the battery is full follows *Minimum export price*.
+  - A sale that is bought back from the grid must beat the buy-back, after charging losses, by this amount; the night floor only lowers for such a buy-back under the same condition.
+  - Energy bought from the grid and still in the battery sells only at this gain over what it cost (v1.30.2).
+  - A planned grid buy above the export floor that a later sale uses must earn this gain on its own; it is not averaged with cheaper buys (v1.31.2).
 - Lower it: capture more legitimate arbitrage when the battery wear cost is doing the heavy lifting.
 - Raise it: larger safety margin on top of the wear cost.
 
