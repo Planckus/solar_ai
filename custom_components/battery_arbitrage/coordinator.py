@@ -2103,8 +2103,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # _night_refill_credit): the sell price now, every buy slot, the
             # sustained charge rate for the battery's temperature, and what
             # else draws on the grid limit in each hour.
-            _ev_hourly = list(self._stored.get("ev_charge_hourly", [0.0] * 24))
-            _ev_max = float(self._stored.get("ev_max_kw", 0.0))
             refill_inputs = {
                 "sell": export_price,
                 "wear": float(self._stored.get(
@@ -2114,7 +2112,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     "min_spread_arbitrage",
                     self.config.get("min_spread_arbitrage", DEFAULT_MIN_SPREAD_ARBITRAGE))),
                 "grid_max_kw": float(self._stored.get("grid_max_kw", GRID_MAX_KW)),
-                "ev_kw_by_hour": [p * _ev_max for p in (_ev_hourly + [0.0] * 24)[:24]],
+                # v1.31.2 — house use only; the car is not part of battery buying.
+                "ev_kw_by_hour": [0.0] * 24,
                 "slots": [
                     (start, float(dur_h), _buy_at(value, start, local_hour))
                     for start, dur_h, local_hour, _m, value in grid_slot_data
@@ -2312,6 +2311,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._last_plan_ev_key = ev_plan_key
             max_export_kw_setting = float(self._stored.get("max_export_kw", DEFAULT_MAX_EXPORT_KW))
             self._optimizer_plan = self._run_optimizer(
+                buy_running=self._current_mode == MODE_GRID_CHARGING,
                 now=now,
                 grid_slot_data=grid_slot_data_opt,
                 solar_slot_data=solar_slot_data_opt,
@@ -2345,13 +2345,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 grid_headroom_kw=planner_headroom_kw,
                 house_load_profile=self.get_house_load_profile(weekend=False),
                 house_load_weekend=self.get_house_load_profile(weekend=True),
-                ev_charge_hourly=list(self._stored.get("ev_charge_hourly", [0.0] * 24)),
-                ev_max_kw=float(self._stored.get("ev_max_kw", 0.0)),
+                # v1.31.2 — battery buying is sized on the house's use only. The
+                # car is never part of it: on Full the house battery is locked
+                # and the car charges from the grid, the same on the scheduled
+                # "on the way" mode, and in the solar modes the car takes what
+                # is there. Its learned habits made the plan expect the car to
+                # take ~3 kW of midday sun and buy at night what the sun filled.
+                ev_charge_hourly=[0.0] * 24,
+                ev_max_kw=0.0,
                 ev_pv_stop_kw=self._ev_pv_stop_kw(),
                 # v1.24.4 — nor a car that is not plugged in: within the
                 # session horizon the learned hour-of-day car draw only took
                 # sun from the battery for a car that was not there.
-                ev_ignore_session=ev_pv_battery_session or not ev_connected,
+                ev_ignore_session=True,
                 house_today_factor=self._house_today_factor(),
                 solar_sale_needs_spread=self._floor_grid_credited,
                 vat_factor=vat_factor,
@@ -2363,7 +2369,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 min_export_price=float(self._stored.get("min_export_price", DEFAULT_MIN_EXPORT_PRICE)),
                 min_spread=min_spread,
                 max_export_kw=max_export_kw_setting,
-                ev_session_kw=ev_session_kw,
+                ev_session_kw=0.0,
                 ev_session_horizon_h=EV_SESSION_DP_HORIZON_H,
                 grid_min_sell=grid_min_sell,
                 grid_sell_floor_soc=battery_soc - grid_kwh / capacity_kwh * 100.0
@@ -2482,6 +2488,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # Uses full 24h accuracy-corrected forecast minus predicted house load
         net_solar_for_battery = max(0.0, solar_kwh - predicted_house_load_24h)
         solar_will_fill = net_solar_for_battery >= importable_kwh
+        # v1.31.2 — MIN_GRID_CHARGE_KWH is the room a buy needs to start, not
+        # to keep going. Every buy path stopped as soon as the room fell below
+        # it (a few percent below full); the house then took 1 % and the buy
+        # started again: two-minute buys of 1 % every 20 minutes. A started
+        # buy now runs until its reason ends or the battery is full.
+        buy_running = self._current_mode == MODE_GRID_CHARGING
+        room_to_buy = importable_kwh >= MIN_GRID_CHARGE_KWH or buy_running
         should_grid_charge = (
             not should_export
             and bool(grid_vals)
@@ -2490,7 +2503,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # have prevented buying during a feed failure.
             and price_data_sufficient
             and optimizer_says_charge
-            and importable_kwh >= MIN_GRID_CHARGE_KWH
+            and room_to_buy
             # v0.66.0 — the day-ahead DP plan already models solar and the EV
             # session, so when a plan is driving this charge don't re-veto it with
             # the reactive heuristics (solar_will_fill / ev_likely_charging) —
@@ -2500,9 +2513,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and battery_soc < max_soc
             # Same EVCC respect: don't grid-charge if EVCC is managing battery
             and not evcc_managing_battery
-            # Skip if EV typically charges at this hour — only in the reactive
-            # fallback; with a plan the DP already accounts for the EV.
-            and (bool(self._optimizer_plan) or not ev_likely_charging)
+            # v1.31.2 — the car's habits no longer veto a battery buy.
             # Grid overcurrent protection: only charge if there is useful headroom
             and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
         )
@@ -2593,7 +2604,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             price_data_sufficient
             and buy_price_next_slot <= 0.0
             and not should_export
-            and importable_kwh >= MIN_GRID_CHARGE_KWH
+            and room_to_buy
             and battery_soc < max_soc
             and not evcc_managing_battery
             and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
@@ -2677,7 +2688,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and bool(grid_slot_data)
             and price_data_sufficient
             and not should_export
-            and importable_kwh >= MIN_GRID_CHARGE_KWH
+            and room_to_buy
             and battery_soc < max_soc
             and not evcc_managing_battery
             and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
@@ -2729,7 +2740,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             and bool(grid_slot_data)
             and price_data_sufficient
             and not should_export
-            and importable_kwh >= MIN_GRID_CHARGE_KWH
+            and room_to_buy
             and battery_soc < max_soc
             and not evcc_managing_battery
             and capped_charge_rate_kw >= GRID_MIN_CHARGE_KW
@@ -9970,6 +9981,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         grid_sell_floor_soc: float = 0.0,
         grid_gate_until: datetime | None = None,
         floor_schedule: list | None = None,
+        buy_running: bool = False,
     ) -> list[dict]:
         """Backward-induction dynamic programming optimizer.
 
@@ -9999,6 +10011,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # and a sale of grid energy below the gain is removed and the plan
         # solved again.
         blocked: set[str] = set()
+        blocked_buys: set[str] = set()
         plan: list[dict] = []
         try:
             for _ in range(6):
@@ -10019,8 +10032,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     grid_gate_until=grid_gate_until,
                     floor_schedule=floor_schedule,
                     blocked_exports=frozenset(blocked),
+                    blocked_charges=frozenset(blocked_buys),
+                    buy_running=buy_running,
                 )
                 se = efficiency ** 0.5 if efficiency > 0 else 1.0
+                # v1.31.2 — a buy above the house reserve that feeds a sale
+                # must earn the minimum gain on its own. Such a buy is removed
+                # and the sale kept; averaged with earlier cheap energy, a
+                # 4.14 top-up before a 4.31 sale passed the sale check below.
+                bad_buys = _sale_buys_below_gain(
+                    plan, capacity_kwh, se, min_spread, full_soc=max_soc)
+                if bad_buys - blocked_buys:
+                    blocked_buys.update(bad_buys)
+                    continue
                 bad = _grid_sales_below_gain(
                     plan, capacity_kwh, se, min_spread,
                     max(0.0, (current_soc - grid_sell_floor_soc) / 100.0 * capacity_kwh)
@@ -10085,6 +10109,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         grid_gate_until: datetime | None = None,
         floor_schedule: list | None = None,
         blocked_exports: frozenset = frozenset(),
+        blocked_charges: frozenset = frozenset(),
+        buy_running: bool = False,
     ) -> list[dict]:
         """Core DP computation at native 15-min resolution.
 
@@ -10575,8 +10601,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 # v1.21.1 — no grid buy while the sun left before sunset will fill
                 # the room anyway, unless the grid pays to import.
                 sun_fills = sun_fills_from[t][s] and buy_h >= 0.0
-                if (s < soc_max and effective_charge_rate_kw >= GRID_MIN_CHARGE_KW
-                        and not sun_fills):
+                # v1.31.2 — no buy is planned with less room than the executor
+                # needs to start one (MIN_GRID_CHARGE_KWH), as for sales since
+                # v1.24.0: the plan topped the battery up from 96-99 %, which
+                # the executor could only carry out as 1 % bursts. A buy that
+                # is already running may finish in the current slot.
+                if (s < soc_max
+                        and ((soc_max - s) / 100.0 * capacity_kwh >= MIN_GRID_CHARGE_KWH
+                             or (buy_running and t == 0))
+                        and effective_charge_rate_kw >= GRID_MIN_CHARGE_KW
+                        and not sun_fills and slot_iso not in blocked_charges):
                     # v1.24.4 — Force Charge stops at max SoC, so only the room
                     # left after the slot's own solar is bought. Paying for the
                     # whole slot and selling the overshoot back made a last
@@ -10662,6 +10696,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 "buy": sd["buy"],
                 "sell": sd["sell"],
                 "iso": sd["slot_start"].isoformat() if hasattr(sd["slot_start"], "isoformat") else str(sd["slot_start"]),
+                # v1.31.2 — the export floor at the slot (house reserve).
+                "floor": _floor_at(sd["slot_start"]),
             })
 
             # v1.24.4 — the same EV-reduced rate the backward pass planned with.
@@ -10815,6 +10851,37 @@ def _covering_value(
     if i >= 0 and t < slots[i][0] + timedelta(hours=slots[i][1]):
         return slots[i][4] / 1000.0
     return default
+
+
+def _sale_buys_below_gain(
+    plan: list[dict], capacity_kwh: float, se: float, min_spread: float,
+    full_soc: float = 100.0,
+) -> set[str]:
+    """v1.31.2 — planned buys made for a sale that pay less than the minimum
+    gain. Returns the isos of those buys.
+
+    A buy that starts at or above the slot's export floor adds energy beyond
+    the house reserve; when a sale follows before the sun refills the battery,
+    that energy is sold. Each such buy must earn the minimum gain against
+    every sale it feeds: sell >= buy / se + min_spread. Buys below the floor
+    fill the house reserve and are not checked here. The list resets when a
+    slot without a buy fills the battery, as in _grid_sales_below_gain.
+    """
+    bad: set[str] = set()
+    pending: list[dict] = []
+    for i, slot in enumerate(plan[:-1]):
+        nxt = plan[i + 1]["soc"]
+        delta = (nxt - slot["soc"]) / 100.0 * capacity_kwh
+        if slot["action"] == "EXPORT":
+            for buy in pending:
+                if slot["sell"] < buy["buy"] / se + min_spread:
+                    bad.add(buy["iso"])
+        if slot["action"] == "CHARGE" and delta > 0:
+            if slot["soc"] >= slot.get("floor", full_soc + 1):
+                pending.append(slot)
+        elif slot["action"] != "CHARGE" and delta > 0 and nxt >= full_soc - 1:
+            pending = []
+    return bad
 
 
 def _grid_sales_below_gain(

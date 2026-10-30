@@ -9,6 +9,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.31.2] — 2026-10-30
+
+### Fixed — the battery bought in one-minute bursts near full
+
+Every grid buy stopped as soon as the room left in the battery fell below 0.5 kWh, the room a buy needs to start, a few percent below full. The house then used 1 % and the buy started again: recorded nights show strings of 100-140 second buys from 95 % to 96 %, 16 in one night. The plan also asked for top-ups at 96-99 %, which could only run as these bursts.
+
+- 0.5 kWh of room is now needed to start a buy, not to keep one going. A started buy runs until what it was started for is covered (the planned slot, or the night bridge or peak cover shortfall) or the battery is full. This applies to the plan, the night bridge, the peak cover and buys at a negative price. A manual charge still stops at 0.5 kWh of room.
+- The optimiser no longer plans a buy with less than 0.5 kWh of room, the same rule sales have followed since v1.24.0. A buy that is already running may finish in the current slot when the plan is re-solved.
+
+### Fixed — a top-up at a high price could be sold below the minimum gain
+
+The check that energy bought from the grid sells only at *Minimum arbitrage spread* over its cost used the average cost of all buys before a sale. A dear top-up just before a sale passed because it was averaged with energy bought earlier at a lower price. When the check failed, it removed the sale, not the buy.
+
+A buy that starts at or above the export floor adds energy beyond the house reserve; when a sale follows before the sun refills the battery, that energy is sold. Each such buy must now earn the minimum gain on its own against every sale it feeds. A buy that does not is removed from the plan, and the sale is kept. Buys below the export floor fill the house reserve and are not affected.
+
+### Changed — the car is not part of battery buying
+
+The optimiser took the car's learned charging habits into account when it planned battery buys. It expected the car to take about 3 kW of midday sun, concluded the sun would not fill the battery, and bought at night what the sun then filled. Battery buying is now sized on the house's use only:
+
+- In *Full* mode the house battery is locked and the car charges from the grid; the scheduled mode does the same in its window.
+- In the solar modes the car takes the surplus that is there. What it takes from the battery shows in the live SoC, and the plan is re-solved from it every 15 minutes.
+
+The learned car habits no longer enter the plan, the night buy-back credit or the reactive buy decision. The grid import limit still includes the car's live draw.
+
+In a replay of five recorded nights on recorded prices, solar and house load, the bursts went from 16, 3, 6, 0-1 and 0 per night to none; the cost per night was essentially unchanged; the house did not import at higher prices and no sale fell below the minimum gain.
+
+---
+
 ## [1.31.1] — 2026-10-24
 
 ### Fixed — *Planned house use factor* could not be found or set to 1.25

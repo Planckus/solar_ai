@@ -1315,6 +1315,86 @@ class TestDecisionFixes1244:
         assert not _grid_sales_below_gain(plan, 10.67, 0.963, 1.5, 0.0, 0.0)
 
 
+class TestNoBurstBuys:
+    """v1.31.2 — no 1 % top-up buys near full, and a buy made for a sale
+    earns the minimum gain on its own."""
+
+    TZ = timezone(timedelta(hours=1))
+
+    def _coord(self):
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c._stored = {"battery_degradation_cost": 0.0}
+        c.get_solar_hour_percentile = lambda h, p: None
+        c.get_short_term_solar_factor = lambda h: 1.0
+        c._compute_buy_price = lambda **k: k["spot"]
+        return c
+
+    def _plan(self, soc, **kw):
+        # Cheap for one slot, expensive after: the plan wants the battery
+        # full for the house. No sun, no sales (export capped at 0).
+        now = datetime(2026, 10, 29, 14, 0, tzinfo=self.TZ)
+        grid = [(now + timedelta(minutes=15 * i), 0.25,
+                 (now + timedelta(minutes=15 * i)).hour,
+                 (now + timedelta(minutes=15 * i)).minute,
+                 0.5 if i == 0 else 5.0) for i in range(48)]
+        solar = [(now + timedelta(minutes=15 * i), 0.25, 0, 0, 0.0) for i in range(48)]
+        args = (now, grid, solar, 1.0, soc, 10.67, 40, 13, 0, 100, 0.927, 5.0, 17.0,
+                [0.6] * 24, [0.0] * 24, 0.0, 1.0, [0.0] * 24, 0.0, 0.0,
+                0.0, 0.0, 0.03, 1.25, 0.0)
+        return self._coord()._dp_solve(*args, house_load_weekend=[0.6] * 24, **kw)
+
+    def test_no_buy_planned_with_less_than_half_a_kwh_of_room(self):
+        # 96 % of 10.67 kWh leaves 0.43 kWh: too little to start a buy,
+        # even in the only cheap slot.
+        plan = self._plan(96.0)
+        assert not any(s["action"] == "CHARGE" for s in plan)
+        # 95 % leaves 0.53 kWh: the buy can start.
+        assert self._plan(95.0)[0]["action"] == "CHARGE"
+
+    def test_running_buy_finishes_in_the_current_slot(self):
+        # A re-plan in the middle of a buy does not stop it at 96 %.
+        plan = self._plan(96.0, buy_running=True)
+        assert plan[0]["action"] == "CHARGE"
+
+    def test_buy_for_a_sale_must_earn_the_gain_on_its_own(self):
+        from custom_components.battery_arbitrage.coordinator import _sale_buys_below_gain
+        # A cheap night-bridge buy below the floor, a 2.53 top-up and
+        # a 4.14 top-up above it, then sales at 4.31 and 4.15.
+        plan = [
+            {"action": "CHARGE", "soc": 30, "buy": 2.50, "sell": 1.7, "floor": 40, "iso": "13:30"},
+            {"action": "CHARGE", "soc": 50, "buy": 2.53, "sell": 1.7, "floor": 40, "iso": "14:15"},
+            {"action": "IDLE", "soc": 60, "buy": 3.0, "sell": 2.0, "floor": 40, "iso": "15:00"},
+            {"action": "CHARGE", "soc": 59, "buy": 4.14, "sell": 2.98, "floor": 40, "iso": "16:15"},
+            {"action": "EXPORT", "soc": 64, "buy": 6.27, "sell": 4.31, "floor": 40, "iso": "17:15"},
+            {"action": "EXPORT", "soc": 50, "buy": 6.06, "sell": 4.15, "floor": 40, "iso": "17:45"},
+            {"action": "IDLE", "soc": 40, "buy": 5.58, "sell": 3.76, "floor": 40, "iso": "18:00"},
+        ]
+        # 4.14 needs 4.14 / 0.963 + 1.25 = 5.55; 2.53 needs 3.88; the buy
+        # below the floor fills the house reserve and is not checked.
+        assert _sale_buys_below_gain(plan, 10.67, 0.963, 1.25) == {"16:15"}
+        # Without a sale nothing is flagged.
+        for slot in plan:
+            if slot["action"] == "EXPORT":
+                slot["action"] = "IDLE"
+        assert not _sale_buys_below_gain(plan, 10.67, 0.963, 1.25)
+
+    def test_sun_refill_ends_the_buys_a_sale_is_checked_against(self):
+        from custom_components.battery_arbitrage.coordinator import _sale_buys_below_gain
+        plan = [
+            {"action": "CHARGE", "soc": 60, "buy": 3.5, "sell": 2.5, "floor": 40, "iso": "a"},
+            {"action": "IDLE", "soc": 75, "buy": 2.0, "sell": 1.0, "floor": 40, "iso": "b"},
+            {"action": "IDLE", "soc": 100, "buy": 2.0, "sell": 1.0, "floor": 40, "iso": "c"},
+            {"action": "EXPORT", "soc": 100, "buy": 6.0, "sell": 4.0, "floor": 40, "iso": "d"},
+            {"action": "IDLE", "soc": 75, "buy": 5.0, "sell": 3.0, "floor": 40, "iso": "e"},
+        ]
+        assert not _sale_buys_below_gain(plan, 10.67, 0.963, 1.25)
+        plan[1]["soc"] = 70
+        plan[2]["soc"] = 80       # the sun did not fill it: the 3.5 buy is sold at 4.0
+        plan[3]["soc"] = 80
+        plan[4]["soc"] = 55
+        assert _sale_buys_below_gain(plan, 10.67, 0.963, 1.25) == {"a"}
+
+
 class TestCoverageFactor:
     """v1.31.0 — the planned house use factor also covers the evening buy and
     the night reserve."""
