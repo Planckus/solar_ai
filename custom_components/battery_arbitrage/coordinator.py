@@ -441,8 +441,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # v1.23.2 — end of the bridge a started bridge buy is completing; None
         # when no buy is under way.
         self._bridge_buy_until: datetime | None = None
-        # v1.24.4 — the running bridge buy is a fill-up (see fill_up below).
-        self._bridge_filling: bool = False
+        # v1.31.3 — the bridge's need per forecast slot, in time order:
+        # (start, dur_h, battery-side kWh incl. the reserve margin).
+        self._bridge_need_slots: list[tuple[datetime, float, float]] = []
         # v1.30.2 — SoC at the last grid-energy tracking tick.
         self._grid_track_soc: float | None = None
         # v1.30.3 — (slot start, slot end, floor %) through the night bridge.
@@ -453,6 +454,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._peak_end: datetime | None = None
         self._peak_need_kwh: float = 0.0
         self._peak_pre_deltas: list[float] = []
+        # v1.31.3 — end of the last slot before the block with a median-forecast
+        # sun surplus over the house, and the battery's forecast change per
+        # slot on the median sun (see _peak_wait_for_sun).
+        self._peak_sun_end: datetime | None = None
+        self._peak_pre_deltas_median: list[float] = []
+        self._peak_sun_slots: list[tuple[datetime, datetime]] = []
         self._peak_buy_until: datetime | None = None
         self._peak_cover_cache: tuple | None = None
         # v1.24.0 — cheapest night buy-back price that beats selling now (set by
@@ -2145,6 +2152,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # a stale figure after the switch is turned off.
             self._bridge_reserve_kwh = 0.0
             self._bridge_end = None
+            self._bridge_need_slots = []
             self._refill_buy_price = None
             # No night reserve without the dynamic floor: sales need the spread.
             self._floor_grid_credited = True
@@ -2638,7 +2646,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # fill it — so on a clear day it could come out false by a few percent
         # and buy at midday with a full afternoon of sun still to come.
         bridge_buy_active = False
-        bridge_buy_fill_up = False
         bridge_shortfall_kwh = 0.0
         # v1.24.0 — battery energy a buy adds per hour, for sizing buy windows:
         # the sustained charge rate at the battery's temperature, within the
@@ -2647,7 +2654,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self.get_effective_charge_rate() or learned_charge_rate,
             planner_headroom_kw,
         ) * efficiency ** 0.5
-        if self._bridge_reserve_kwh > 0 and self._bridge_end is not None and now < self._bridge_end:
+        # v1.31.3 — the part of the shortfall worth buying at the window's
+        # cheapest price, for the plan display below.
+        bridge_plan_kwh = 0.0
+        if (self._bridge_reserve_kwh > 0 and self._bridge_end is not None
+                and now < self._bridge_end and grid_slot_data):
             # v1.24.4 — battery-side kWh, as the reserve is (it already
             # divides the house need by the discharge leg). Multiplying by
             # √eff here as well counted that loss twice and over-bought.
@@ -2655,7 +2666,26 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 0.0,
                 (battery_soc - self._physical_floor_soc()) / 100.0 * capacity_kwh,
             )
-            bridge_shortfall_kwh = max(0.0, self._bridge_reserve_kwh - usable_kwh)
+            # v1.31.3 — only the hours that cost more than buying now after
+            # losses and wear (see _bridge_worth_buying_kwh). The whole
+            # shortfall was bought before, and the reserve runs until the sun
+            # covers the house, which in winter can be the next evening. It then
+            # counted the night's own hours and the midday, priced about the
+            # same as the buy.
+            bridge_prices = [
+                (start, start + timedelta(hours=float(dur_h)), _buy(value, start, local_hour))
+                for start, dur_h, local_hour, _local_minute, value in grid_slot_data
+            ]
+            degradation = float(self._stored.get(
+                "battery_degradation_cost", DEFAULT_BATTERY_DEGRADATION_COST))
+            bridge_shortfall_kwh = self._bridge_worth_buying_kwh(
+                now, usable_kwh, buy_price_next_slot, bridge_prices, efficiency, degradation)
+            window_prices = [p for st, en, p in bridge_prices
+                             if en > now and st < self._bridge_end]
+            bridge_plan_kwh = self._bridge_worth_buying_kwh(
+                now, usable_kwh,
+                min(window_prices) if window_prices else buy_price_next_slot,
+                bridge_prices, efficiency, degradation)
         # v1.24.3 — the sun only has to fill the room left in the battery. A
         # night need larger than that room cannot be stored now from either
         # source, so comparing the solar surplus with the whole shortfall
@@ -2665,25 +2695,15 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._bridge_solar_surplus_kwh * (efficiency ** 0.5)
             < min(bridge_shortfall_kwh, bridge_room_kwh)
         )
-        # "Really cheap and the sun will not do it": at a price in the day's
-        # cheapest quarter, with the 24 h solar forecast below the house's
-        # own 24 h need, fill the battery rather than buying the gap alone.
-        fill_up = (
-            buy_price_next_slot <= buy_price_p25
-            and solar_kwh < predicted_house_load_24h
-        )
-        # v1.24.4 — a fill-up keeps going after the gap is covered, while the
-        # price and the forecast still qualify. Since v1.17.0 the buy stopped
-        # the tick the shortfall reached 0, so it never filled.
-        bridge_filling = (
-            fill_up and self._bridge_filling
-            and self._bridge_end is not None
-            and self._bridge_buy_until is not None and now < self._bridge_buy_until
-        )
+        # v1.31.3 — the v1.24.0 fill-up is gone. At a price in the day's
+        # cheapest quarter with less sun than house need in the 24 h forecast
+        # it filled the battery to the top whatever the shortfall. That holds
+        # nearly every day from October to February, so every night bought
+        # to 100 % and left no room for the next day's sun.
         bridge_wait = self._bridge_waits_for_prices(
             now, grid_slot_data, battery_soc, capacity_kwh, efficiency)
         if (
-            ((bridge_shortfall_kwh > 0.0 and bridge_sun_short) or bridge_filling)
+            bridge_shortfall_kwh > 0.0 and bridge_sun_short
             and not bridge_wait
             and bool(grid_slot_data)
             and price_data_sufficient
@@ -2706,17 +2726,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # Prices can be negative: no "> 0" guard on the limit.
             at_cheapest = bridge_limit is not None and buy_price_next_slot <= bridge_limit
             if self._shortfall_buy_wanted(
-                self._bridge_buy_until, now, bridge_shortfall_kwh, at_cheapest, fill_up,
+                self._bridge_buy_until, now, bridge_shortfall_kwh, at_cheapest,
             ):
                 should_grid_charge = True
                 bridge_buy_active = True
-                bridge_buy_fill_up = fill_up
         if bridge_buy_active:
             self._bridge_buy_until = self._bridge_end
-            self._bridge_filling = fill_up
         elif bridge_shortfall_kwh <= 0.0:
             self._bridge_buy_until = None
-            self._bridge_filling = False
 
         # v1.23.2 — peak cover. The night bridge buys at the cheapest price
         # before the morning, which can come after the 17-21 h peak. Before the
@@ -2734,8 +2751,25 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 max(0.0, (battery_soc - phys_floor) / 100.0 * capacity_kwh),
                 max(0.0, (max_soc - phys_floor) / 100.0 * capacity_kwh),
             )
+        # v1.31.3 — not before the sun is done, when waiting is cheaper.
+        peak_sun_wait = False
+        if peak_shortfall_kwh > 0.0 and grid_slot_data and self._peak_sun_end is not None:
+            phys_floor = self._physical_floor_soc()
+            peak_sun_wait = self._peak_wait_for_sun(
+                now, peak_shortfall_kwh,
+                max(0.0, (battery_soc - phys_floor) / 100.0 * capacity_kwh),
+                max(0.0, (max_soc - phys_floor) / 100.0 * capacity_kwh),
+                buy_price_next_slot, window_kwh_per_h,
+                [(start, float(dur_h), _buy(value, start, local_hour))
+                 for start, dur_h, local_hour, _local_minute, value in grid_slot_data
+                 if self._peak_sun_end <= start < self._peak_start],
+                [value - export_fee - feed_in_tariff
+                 for start, _dur_h, _local_hour, _local_minute, value in grid_slot_data
+                 if any(a <= start < b for a, b in self._peak_sun_slots)],
+            )
         if (
             peak_shortfall_kwh > 0.0
+            and not peak_sun_wait
             and not should_grid_charge
             and bool(grid_slot_data)
             and price_data_sufficient
@@ -2786,18 +2820,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             ]
             per_h = window_kwh_per_h
             bridge_due = (
-                bridge_shortfall_kwh >= MIN_GRID_CHARGE_KWH
-                or (bridge_shortfall_kwh > 0.0 and self._bridge_buy_until is not None
+                bridge_plan_kwh >= MIN_GRID_CHARGE_KWH
+                or (bridge_plan_kwh > 0.0 and self._bridge_buy_until is not None
                     and now < self._bridge_buy_until)
             )
             if (bridge_due and self._bridge_end is not None and bridge_sun_short
                     and not bridge_wait):
                 window = [p for p in priced if p[0] < self._bridge_end]
                 if window:
-                    limit = self._buy_window_limit(window, bridge_shortfall_kwh, per_h)
+                    limit = self._buy_window_limit(window, bridge_plan_kwh, per_h)
                     expected_buys.update(self._expected_buy_slots(
                         [p for p in window if limit is not None and p[2] <= limit],
-                        bridge_shortfall_kwh, per_h))
+                        bridge_plan_kwh, per_h))
             peak_due = (
                 peak_shortfall_kwh >= MIN_GRID_CHARGE_KWH
                 or (peak_shortfall_kwh > 0.0 and self._peak_buy_until is not None
@@ -2805,6 +2839,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             )
             if peak_due and self._peak_start is not None:
                 before = [p for p in priced if p[0] < self._peak_start]
+                # v1.31.3 — after the sun while peak cover waits for it
+                # (_peak_wait_for_sun), as the buy itself does.
+                if peak_sun_wait:
+                    before = [p for p in before if p[0] >= self._peak_sun_end] or before
                 during = [p[2] for p in priced if self._peak_start <= p[0] < self._peak_end]
                 degradation = float(self._stored.get(
                     "battery_degradation_cost", DEFAULT_BATTERY_DEGRADATION_COST))
@@ -3039,7 +3077,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 evcc_battery_mode, evcc_managing_battery,
                 capped_charge_rate_kw,
                 bridge_shortfall_kwh if bridge_buy_active else 0.0,
-                bridge_buy_fill_up,
                 peak_shortfall_kwh if peak_buy_active else 0.0,
                 sale_buyback=self._refill_buy_price,
                 sale_margin=(
@@ -3379,7 +3416,6 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         evcc_managing_battery: bool,
         capped_charge_rate_kw: float = 0.0,
         bridge_shortfall_kwh: float = 0.0,
-        bridge_fill_up: bool = False,
         peak_shortfall_kwh: float = 0.0,
         sale_buyback: float | None = None,
         sale_margin: float | None = None,
@@ -3443,19 +3479,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # solar refill because the battery is short for the night, which can
             # be above p25.
             if bridge_shortfall_kwh > 0.0:
-                reason = (
-                    f"Night bridge: battery {bridge_shortfall_kwh:.1f} kWh short of the "
-                    f"house need until solar returns — buying at "
-                    f"{buy_price_next_slot:.2f} DKK/kWh, the cheapest price before then"
-                )
-                if bridge_fill_up:
-                    reason += " (filling up: price in the cheapest quarter, little sun forecast)"
-            elif bridge_fill_up:
                 reason = self._msg(
-                    f"Night bridge: filling up at {buy_price_next_slot:.2f} DKK/kWh — "
-                    f"price in the cheapest quarter, little sun forecast",
-                    f"Natbro: fylder op til {buy_price_next_slot:.2f} DKK/kWh — "
-                    f"prisen er i den billigste fjerdedel, lidt sol i prognosen",
+                    f"Night bridge: battery {bridge_shortfall_kwh:.1f} kWh short for hours "
+                    f"that cost more than this price after losses — buying at "
+                    f"{buy_price_next_slot:.2f} DKK/kWh, the cheapest price before then",
+                    f"Natbro: batteriet mangler {bridge_shortfall_kwh:.1f} kWh til timer, "
+                    f"der koster mere end denne pris efter tab — køber til "
+                    f"{buy_price_next_slot:.2f} DKK/kWh, den billigste pris inden da",
                 )
             elif peak_shortfall_kwh > 0.0:
                 reason = self._msg(
@@ -4072,10 +4102,40 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                          * capacity_kwh)
         return usable_kwh > need_kwh / max(efficiency, 0.5) ** 0.5
 
+    def _bridge_worth_buying_kwh(
+        self, now: datetime, usable_kwh: float, price_now: float,
+        slot_prices: list[tuple[datetime, datetime, float]],
+        efficiency: float, degradation_cost: float,
+    ) -> float:
+        """v1.31.3 — battery energy the night bridge buys at `price_now`.
+
+        Walks the bridge's need in time order: the energy already in the
+        battery covers the first hours. Of the rest, an hour counts only when
+        its own import price is above `price_now` after the round trip and
+        wear, the test _peak_cover_price_ok uses. An hour with no known price
+        counts, as every hour did before. With every hour dearer this is the
+        reserve less the usable energy, the shortfall before v1.31.3.
+        """
+        delivered_cost = price_now / max(efficiency, 0.5) + degradation_cost
+        left = usable_kwh
+        need = 0.0
+        for start, dur_h, kwh in self._bridge_need_slots:
+            if start + timedelta(hours=dur_h) <= now:
+                continue
+            covered = min(left, kwh)
+            left -= covered
+            rest = kwh - covered
+            if rest <= 0.0:
+                continue
+            price = next((p for st, en, p in slot_prices if st <= start < en), None)
+            if price is None or price > delivered_cost:
+                need += rest
+        return need
+
     @staticmethod
     def _shortfall_buy_wanted(
         until: datetime | None, now: datetime, shortfall_kwh: float,
-        price_ok: bool, fill_up: bool = False,
+        price_ok: bool,
     ) -> bool:
         """Whether a shortfall buy (night bridge, peak cover) runs this tick.
 
@@ -4087,7 +4147,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         """
         continuing = until is not None and now < until
         return price_ok and (
-            shortfall_kwh >= MIN_GRID_CHARGE_KWH or fill_up or continuing
+            shortfall_kwh >= MIN_GRID_CHARGE_KWH or continuing
         )
 
     def _update_house_load_hourly(
@@ -4337,8 +4397,14 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._peak_end = None
         self._peak_need_kwh = 0.0
         self._peak_pre_deltas = []
+        self._peak_sun_end = None
+        self._peak_pre_deltas_median = []
+        self._peak_sun_slots = []
 
-    def _size_peak_cover(self, now: datetime, slots: list[tuple], eff: float) -> None:
+    def _size_peak_cover(
+        self, now: datetime, slots: list[tuple], eff: float,
+        median_solar_kw: dict | None = None,
+    ) -> None:
         """v1.23.2 — size the next peak block for the peak-cover buy.
 
         Sets _peak_start / _peak_end, _peak_need_kwh (battery energy the block
@@ -4347,6 +4413,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         the block). Leaves them cleared while the block is running or when the
         forecast does not reach its end. `slots` are the dynamic floor's
         (start, house_kw, dur_h, solar_covers, charge_here, solar_kw).
+
+        v1.31.3 — also sets _peak_sun_end and _peak_pre_deltas_median from
+        `median_solar_kw` (slot start -> median forecast kW). The slots' own
+        solar is the low Solcast estimate on an uncertain day: right for sizing
+        what the battery must hold, but too low for judging how much of a buy
+        the sun would have filled anyway.
         """
         local = now.astimezone()
         if PEAK_TARIFF_FROM_HOUR <= local.hour < PEAK_TARIFF_TO_HOUR:
@@ -4357,14 +4429,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         end = start.replace(hour=PEAK_TARIFF_TO_HOUR)
         se = eff ** 0.5
         deltas: list[float] = []
+        deltas_median: list[float] = []
         block_kwh = 0.0
         reached = start
+        sun_end = None
+        sun_slots: list[tuple[datetime, datetime]] = []
         for st, house_kw, dur_h, _covers, _charge, solar_kw in slots:
             if st >= end:
                 break
             if st < start:
                 net = (solar_kw - house_kw) * dur_h
                 deltas.append(net * se if net > 0 else net / se)
+                median_kw = (median_solar_kw or {}).get(st, solar_kw)
+                net = (median_kw - house_kw) * dur_h
+                deltas_median.append(net * se if net > 0 else net / se)
+                if median_kw > house_kw:
+                    sun_end = st + timedelta(hours=dur_h)
+                    sun_slots.append((st, sun_end))
             else:
                 block_kwh += max(0.0, house_kw - solar_kw) * dur_h
                 reached = st + timedelta(hours=dur_h)
@@ -4377,20 +4458,68 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             block_kwh + INVERTER_STANDBY_KW * block_h + self._peak_cover_kwh(now)
         ) / se * self._coverage_factor()
         self._peak_pre_deltas = deltas
+        self._peak_sun_end = sun_end
+        self._peak_pre_deltas_median = deltas_median
+        self._peak_sun_slots = sun_slots
+
+    def _peak_wait_for_sun(
+        self, now: datetime, shortfall_kwh: float, usable_kwh: float,
+        max_usable_kwh: float, price_now: float, kwh_per_hour: float,
+        after_sun: list[tuple], sun_sell: list[float],
+    ) -> bool:
+        """v1.31.3 — whether peak cover waits until the sun is done.
+
+        Of the shortfall X, the median forecast says the sun fills a part f
+        before the block. Buying X now costs X x price_now, and the sun it
+        pushes out is sold at the average sell price s of the sun hours:
+        X x (price_now - f x s), s over the median-surplus slots. Waiting lets the sun fill its part and buys
+        the rest after it, at the price of the cheapest post-sun slots that
+        hold it (`after_sun`, (start, dur_h, price)): X x (1 - f) x p_after.
+        It waits only when that is cheaper and the post-sun slots can hold
+        the rest. When the night costs less than the sun sells for, buying at
+        night is right even if the sun is pushed out; when it costs more,
+        waiting is.
+        """
+        if (self._peak_start is None or now >= self._peak_start or shortfall_kwh <= 0.0
+                or self._peak_sun_end is None or now >= self._peak_sun_end
+                or not after_sun or not sun_sell or kwh_per_hour <= 0.0):
+            return False
+        median_short = self._peak_shortfall_kwh(
+            usable_kwh, max_usable_kwh, self._peak_pre_deltas_median)
+        f = min(1.0, max(0.0, (shortfall_kwh - median_short) / shortfall_kwh))
+        rest_kwh = (1.0 - f) * shortfall_kwh
+        if rest_kwh > kwh_per_hour * sum(dur_h for _st, dur_h, _p in after_sun):
+            return False
+        p_after = self._buy_window_limit(after_sun, rest_kwh, kwh_per_hour)
+        if p_after is None:
+            return False
+        s = sum(sun_sell) / len(sun_sell)
+        return (1.0 - f) * p_after < price_now - f * s
 
     def _peak_shortfall_kwh(
         self, usable_kwh: float, max_usable_kwh: float,
+        pre_deltas: list[float] | None = None,
     ) -> float:
         """v1.23.2 — battery energy missing at the start of the peak block:
         the need minus what the battery holds then, walking today's usable
         energy through the forecast slots before the block (bounded by empty
-        and full)."""
+        and full).
+
+        v1.31.3 — counted only up to what a buy now can still add at the
+        block: the level the walk reaches from a full battery. When the sun
+        fills the battery before the block, a buy now raises nothing at 17:00
+        and only takes the sun's room. A need above the battery's size used
+        to count as short even at 100 %, so it bought whatever the sun did.
+        """
         if self._peak_start is None:
             return 0.0
-        e = usable_kwh
-        for d in self._peak_pre_deltas:
-            e = min(max_usable_kwh, max(0.0, e + d))
-        return max(0.0, self._peak_need_kwh - e)
+
+        def _reach(e: float) -> float:
+            for d in (self._peak_pre_deltas if pre_deltas is None else pre_deltas):
+                e = min(max_usable_kwh, max(0.0, e + d))
+            return e
+
+        return max(0.0, min(self._peak_need_kwh, _reach(max_usable_kwh)) - _reach(usable_kwh))
 
     def _update_house_forecast_scorecard(self, now: datetime | None = None) -> None:
         """v1.23.0 — evening forecast scorecard.
@@ -4637,6 +4766,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # cannot leave a stale one behind for the overnight bridge buy.
         self._bridge_reserve_kwh = 0.0
         self._bridge_end = None
+        self._bridge_need_slots = []
         self._bridge_solar_surplus_kwh = 0.0
         self._refill_buy_price = None
         # Until a full night reserve is sized below, a sale needs the spread.
@@ -4662,6 +4792,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # solar_covers is the ONLY thing that ends the bridge; charge_here is
         # tracked separately so the planned-charge energy can be netted off.
         slots: list[tuple] = []
+        median_solar_kw: dict = {}
         for s in solar_slot_data:
             slot_start, dur_h = s[0], s[1]
             # include the slot currently in progress + all future ones
@@ -4688,6 +4819,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # moved the 60 % test with the hour's correction factor.
             solar_kw = self._bridge_solar_kw(slot_start, s[4] / 1000.0)
             solar_kw *= self.get_solar_confidence_factor_for_hour(loc.hour)
+            median_solar_kw[slot_start] = (
+                s[4] / 1000.0 * self.get_solar_confidence_factor_for_hour(loc.hour))
             solar_covers = house_kw > 0 and solar_kw >= onset * house_kw
             slot_end = slot_start + timedelta(hours=float(dur_h))
             charge_here = any(slot_start <= pc < slot_end for pc in planned_charge_dts)
@@ -4704,7 +4837,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # back battery that was in fact available.
         hw_floor = self._physical_floor_soc()
 
-        self._size_peak_cover(now, slots, max(efficiency, 0.5))
+        self._size_peak_cover(now, slots, max(efficiency, 0.5), median_solar_kw)
 
         # Next bridge = first upcoming slot where solar does NOT cover the house.
         start_idx = next((i for i, x in enumerate(slots) if not x[3]), None)
@@ -4745,6 +4878,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         bridge_house_kwh = 0.0
         bridge_charge_h = 0.0
         bridge_h = 0.0
+        bridge_slot_house: list[tuple[datetime, float, float]] = []
         bridge_end = slots[-1][0] + timedelta(hours=float(slots[-1][2]))
         for i in range(start_idx, len(slots)):
             _st, house_kw, dur_h, solar_covers, charge_here, solar_kw = slots[i]
@@ -4755,6 +4889,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 bridge_end = _st
                 break
             bridge_house_kwh += max(0.0, house_kw - solar_kw) * dur_h
+            bridge_slot_house.append((_st, dur_h, max(0.0, house_kw - solar_kw) * dur_h))
             if charge_here:
                 bridge_charge_h += dur_h
             bridge_h += dur_h
@@ -4839,6 +4974,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # the moment a charge appeared in the plan.
         self._bridge_reserve_kwh = house_need_kwh * margin
         self._bridge_end = bridge_end
+        # v1.31.3 — the same need slot by slot, so the bridge buy can weigh
+        # each part against the price when it is used. Sums to the reserve.
+        self._bridge_need_slots = [
+            (st, dur_h, (kwh + INVERTER_STANDBY_KW * dur_h) / (eff ** 0.5) * margin)
+            for st, dur_h, kwh in bridge_slot_house
+        ]
+
         return min(float(DYNAMIC_FLOOR_MAX_SOC), floor_soc)
 
     def _update_daily_solar(self, pv_power_w: float) -> None:

@@ -741,6 +741,83 @@ class TestPeakCover:
         c._size_peak_cover(now, slots, 1.0)
         assert c._peak_shortfall_kwh(0.0, 9.0) == 0.0
 
+    def test_no_buy_before_the_sun_fills_the_battery(self):
+        # v1.31.3 — 10:00, 3 h of 1 kW net sun, then 4 h of 0.5 kW drain. The
+        # need is above the battery, so before the fix it was short even at
+        # 100 %. The sun fills the battery from 7 kWh by 13:00, so a buy now
+        # adds nothing at 17:00.
+        now = datetime(2026, 10, 8, 10, 0, tzinfo=self.TZ)
+        c = self._coord({})
+        slots = self._slots(now, 12, 0.5, 1.5) + self._slots(now + timedelta(hours=3), 32, 0.5)
+        c._size_peak_cover(now, slots, 1.0)
+        c._peak_need_kwh = 12.0
+        assert c._peak_shortfall_kwh(7.0, 9.0) == 0.0
+
+    def test_after_the_sun_buys_what_it_can_add(self):
+        # v1.31.3 — 13:00, only drain left: 5 kWh now reaches 3 at 17:00, a
+        # full battery reaches 7. A need of 12 buys the 4 a buy can add.
+        now = datetime(2026, 10, 8, 13, 0, tzinfo=self.TZ)
+        c = self._coord({})
+        c._size_peak_cover(now, self._slots(now, 32, 0.5), 1.0)
+        c._peak_need_kwh = 12.0
+        assert c._peak_shortfall_kwh(5.0, 9.0) == pytest.approx(4.0)
+        c._peak_need_kwh = 5.0
+        assert c._peak_shortfall_kwh(5.0, 9.0) == pytest.approx(2.0)
+
+    def test_sun_end_uses_the_median_forecast(self):
+        # v1.31.3 — the slots carry the low estimate (0.2 kW, below the
+        # house); the median (1.5 kW until 14:00) still beats the house.
+        now = datetime(2026, 10, 8, 10, 0, tzinfo=self.TZ)
+        c = self._coord({})
+        slots = self._slots(now, 44, 0.5, 0.2)
+        median = {st: (1.5 if st.hour < 14 else 0.1) for st, *_ in slots}
+        c._size_peak_cover(now, slots, 1.0, median)
+        assert c._peak_sun_end == datetime(2026, 10, 8, 14, 0, tzinfo=self.TZ)
+        c._size_peak_cover(now, slots, 1.0)
+        assert c._peak_sun_end is None
+
+    def _waiting(self, price_now, after_price, sell, median_fill):
+        # Block at 17:00, sun done at 14:00, 4 kWh short on the low forecast.
+        # On the median sun the battery reaches 17:00 with `median_fill` kWh
+        # more, so the sun fills that part of a buy made now.
+        c = self._coord({})
+        c._peak_start = datetime(2026, 10, 8, 17, 0, tzinfo=self.TZ)
+        c._peak_need_kwh = 6.0
+        c._peak_pre_deltas = [-0.5] * 4                      # reach 2 from 4
+        c._peak_pre_deltas_median = [median_fill, -0.5, -0.5, -0.5, -0.5]
+        c._peak_sun_end = datetime(2026, 10, 8, 14, 0, tzinfo=self.TZ)
+        after = [(datetime(2026, 10, 8, 14, 15 * k, tzinfo=self.TZ), 0.25, after_price)
+                 for k in range(4)]
+        now = datetime(2026, 10, 8, 10, 0, tzinfo=self.TZ)
+        short = c._peak_shortfall_kwh(4.0, 9.0)
+        return c._peak_wait_for_sun(now, short, 4.0, 9.0, price_now, 4.0, after, [sell])
+
+    def test_waits_when_the_sun_would_fill_a_dear_buy(self):
+        # v1.31.3 — buy 2.41 now, sun sells 1.65, after the sun
+        # 2.53. The sun fills 2 of 4 kWh: now 4 x (2.41 - 0.5 x 1.65) = 6.34,
+        # wait 2 x 2.53 = 5.06.
+        assert self._waiting(2.41, 2.53, 1.65, 2.0)
+
+    def test_buys_now_when_the_night_is_cheaper_than_the_sun_sells(self):
+        # A cheap night: 0.40 now, the sun sells 0.55, 1.60 after the sun.
+        assert not self._waiting(0.40, 1.60, 0.55, 2.0)
+
+    def test_buys_now_when_the_sun_fills_nothing(self):
+        # Weak sun, heavy house; waiting only buys dearer.
+        assert not self._waiting(2.50, 2.94, 1.70, 0.0)
+
+    def test_no_wait_when_the_rest_does_not_fit_after_the_sun(self):
+        # Sun done at 16:45: one quarter hour after it holds 1 kWh at
+        # 4 kWh/h, not the 4 kWh short, so it buys now.
+        c = self._coord({})
+        c._peak_start = datetime(2026, 10, 8, 17, 0, tzinfo=self.TZ)
+        c._peak_sun_end = datetime(2026, 10, 8, 16, 45, tzinfo=self.TZ)
+        c._peak_pre_deltas = c._peak_pre_deltas_median = []
+        c._peak_need_kwh = 6.0
+        after = [(datetime(2026, 10, 8, 16, 45, tzinfo=self.TZ), 0.25, 1.0)]
+        now = datetime(2026, 10, 8, 10, 0, tzinfo=self.TZ)
+        assert not c._peak_wait_for_sun(now, 4.0, 2.0, 9.0, 3.0, 4.0, after, [0.5])
+
     def test_nothing_sized_during_the_block(self):
         now = datetime(2026, 10, 8, 18, 0, tzinfo=self.TZ)
         c = self._coord({})
@@ -1419,3 +1496,50 @@ class TestCoverageFactor:
             c._size_peak_cover(now, slots, 1.0)
             needs.append(c._peak_need_kwh)
         assert needs[1] == pytest.approx(needs[0] * 1.2)
+
+
+class TestBridgeBuyPrice:
+    """v1.31.3 — the night bridge buys only for hours that cost more than
+    buying now after losses and wear."""
+
+    TZ = timezone(timedelta(hours=1))
+
+    def _coord(self):
+        # 18 hourly slots of 1 kWh from 00:00: night 6 h at 2.40, morning
+        # 4 h at 2.90, midday 4 h at 2.45, evening 4 h at 3.60.
+        c = object.__new__(BatteryArbitrageCoordinator)
+        t0 = datetime(2026, 10, 31, 0, 0, tzinfo=self.TZ)
+        c._bridge_need_slots = [(t0 + timedelta(hours=h), 1.0, 1.0) for h in range(18)]
+        price = lambda h: 2.40 if h < 6 else 2.90 if h < 10 else 2.45 if h < 14 else 3.60
+        self.prices = [(t0 + timedelta(hours=h), t0 + timedelta(hours=h + 1), price(h))
+                       for h in range(18)]
+        self.t0 = t0
+        return c
+
+    def _need(self, c, usable, price_now=2.34, now=None, prices=None):
+        return c._bridge_worth_buying_kwh(
+            now or self.t0, usable, price_now,
+            self.prices if prices is None else prices, 0.927, 0.10)
+
+    def test_only_hours_dearer_than_buying_now_count(self):
+        # 2.34 / 0.927 + 0.10 = 2.62: the morning and the evening count
+        c = self._coord()
+        assert self._need(c, 0.0) == pytest.approx(8.0)
+
+    def test_battery_energy_covers_the_first_hours(self):
+        # 7 kWh covers the night and the first morning hour
+        c = self._coord()
+        assert self._need(c, 7.0) == pytest.approx(7.0)
+        assert self._need(c, 18.0) == 0.0
+
+    def test_every_hour_dearer_is_the_whole_shortfall(self):
+        c = self._coord()
+        assert self._need(c, 3.0, price_now=1.0) == pytest.approx(15.0)
+
+    def test_hours_without_a_price_count(self):
+        c = self._coord()
+        assert self._need(c, 0.0, prices=self.prices[:10]) == pytest.approx(12.0)
+
+    def test_hours_already_past_are_skipped(self):
+        c = self._coord()
+        assert self._need(c, 0.0, now=self.t0 + timedelta(hours=12)) == pytest.approx(4.0)
