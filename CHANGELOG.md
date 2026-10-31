@@ -9,6 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.31.4] — 2026-10-31
+
+### Changed — notes no longer quote figures from one installation
+
+The CHANGELOG, the README, code comments and earlier release notes quoted dates, prices and battery sizes from the installation the changes were tested on. Those figures do not apply to other installations and are removed; what each change does is described as before. Setting ranges and defaults, published tariff and tax rates, and release dates are kept.
+
+The 1.31.3 replay result is now given as relative figures and corrected: the first version read the recorded price and forecast snapshots at the wrong times.
+
+No change in behaviour.
+
+---
+
 ## [1.31.3] — 2026-10-31
 
 ### Fixed — the night bridge filled the battery whatever the shortfall

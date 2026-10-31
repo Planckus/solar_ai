@@ -358,6 +358,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.31.4 — notes without installation-specific figures
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Release notes, the README and code comments no longer quote dates, prices or battery sizes from one installation.** Setting values, published tariffs and release dates are kept. No change in behaviour.
+
 ### v1.31.3 — the night buys only what pays, peak cover leaves room for the sun
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
