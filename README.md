@@ -358,6 +358,14 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.31.3 — the night buys only what pays, peak cover leaves room for the sun
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The night bridge no longer fills the battery to the top.** It buys its shortfall only, and only for hours that cost more than the buy after losses and wear.
+- **Peak cover buys only what a buy can still add before 17:00,** and waits until the sun is done when that is cheaper than buying now.
+- **Known limitation:** on days when Solcast is unsure, the night can still buy for the next afternoon and evening, and a sunny day then finds the battery full.
+
 ### v1.31.2 — no buy bursts near full, minimum gain per buy, car out of battery buying
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
@@ -953,7 +961,7 @@ All components are live-configurable number entities:
 | Per-hour forecast (v1.23.0) | Weighted mean of the same hour on the same day type (weekday / weekend) over the last 28 days of measured load, each day weighted by 0.5^(age / 7 days). An hour with fewer than 3 days of history uses the exponential moving average below. |
 | Same-day correction (v1.23.0) | From 15:00 to 20:00 the rest of today is scaled by the square root of measured / forecast load over the last 6 hours, clamped to 0.5-2. |
 | Low-battery peak hours (v1.23.2) | An hour from 17:00 to 21:00 that starts below 30 % SoC is not recorded, so use reduced because the battery is low does not lower the forecast. |
-| Peak cover (v1.23.2) | Before 17:00 the battery is bought up, at the cheapest earlier price when the block's average still beats it after battery losses and wear, to the 17-21 h forecast plus a cover: the 90th percentile of how far each of the last 28 evenings ran above the forecast (0 until seven evenings are recorded). Requires the dynamic discharge floor. |
+| Peak cover (v1.23.2) | Before 17:00 the battery is bought up, at the cheapest earlier price when the block's average still beats it after battery losses and wear, to the 17-21 h forecast plus a cover: the 90th percentile of how far each of the last 28 evenings ran above the forecast (0 until seven evenings are recorded). Requires the dynamic discharge floor. Since v1.31.3 it counts only what a buy now can still add at 17:00, and waits until the sun is done when that is cheaper than buying now and selling the sun the buy pushes out. |
 | Evening scorecard (v1.23.0) | The 17-24 h forecast is logged at 17:00 for both the current method and the moving average, and scored after midnight. Shown by the *House load forecast error (evening)* sensor. |
 | Per-hour fallback | 24 slots, ~8-day exponential moving average per slot |
 | Short-term mean | 2-hour rolling average |
@@ -1091,7 +1099,7 @@ These build the buy- and sell-side prices the optimiser uses. (The DSO + Energin
 | Setting | Range | Default | What it does |
 |---|---|---|---|
 | **Minimum arbitrage spread**<br>_Minimum arbitrage-spread_ | 0.00–3.00 DKK/kWh | 0.30 | Required gap between selling now and buying back later (after round-trip losses) before the optimiser will export-and-rebuy. Higher = more conservative, fewer cycles. Battery energy is never sold below this price, including energy the sun will replace (v1.30.3); solar exported because the battery is full is governed by *Minimum export price*. When the night need is larger than the battery, or grid buys hold the night, a sale must beat the grid buy-back by this amount (v1.30.1). Energy bought from the grid and still in the battery sells only at this gain over what it cost (v1.30.2). A grid buy above the export floor that a planned sale uses must earn this gain on its own; it is not averaged with cheaper buys (v1.31.2). |
-| **Battery wear cost**<br>_Batteri-slidomkostning_ | 0.00–1.00 DKK/kWh | 0.10 | Estimated battery degradation per kWh cycled. Subtracted from both charge and export rewards so the optimiser won't cycle the battery for tiny gains. Higher = less cycling. |
+| **Battery wear cost**<br>_Batteri-slidomkostning_ | 0.00–1.00 DKK/kWh | 0.10 | Estimated battery degradation per kWh cycled. Subtracted from both charge and export rewards so the optimiser won't cycle the battery for tiny gains. The night bridge and peak cover add it when they weigh a buy against the hours it covers (v1.31.3). Higher = less cycling. |
 | **Solar confidence**<br>_Sol-konfidens_ | 10–90 % | 50 | The percentile of each hour's solar forecast the optimiser plans against. 50 = median (neutral, = previous behaviour). Lower = assume less solar (more conservative — grid-charges more readily in cheap windows, holds back more battery). |
 
 #### EV charge controller (requires the OCPP server or EVCC live-data mode)
@@ -1316,6 +1324,15 @@ On spot price refresh (typically once per hour):
               AND solar will not fill the battery on its own
               AND (importable kWh ≥ 0.5 OR a buy is already running)
               AND grid headroom ≥ 0.3 kW
+
+   NIGHT BRIDGE buy if the battery is short for the house until the sun
+              covers it again, counting only hours priced above the buy
+              price after losses and wear (v1.31.3), at the cheapest
+              price before then
+   PEAK COVER buy if the battery is short for 17-21 h, for what a buy
+              now can still add at 17:00, when the block's price beats it
+              after losses and wear; waits for the sun when that is
+              cheaper (v1.31.3)
 
    FORCED CHARGE if buy price ≤ 0 (overrides all other checks)
 

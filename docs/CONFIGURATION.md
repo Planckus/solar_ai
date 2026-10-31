@@ -220,7 +220,7 @@ These feed into the buy-price and sell-price formulas the optimiser uses.
 
 - Range: 0.00–1.00 DKK/kWh (0.01 steps)
 - Default: 0.10 DKK/kWh
-- Effect: per-kWh cost added to both CHARGE and EXPORT decisions inside the optimiser. Models battery wear.
+- Effect: per-kWh cost added to both CHARGE and EXPORT decisions inside the optimiser. Models battery wear. The night bridge (v1.31.3) and peak cover also add it when they weigh a buy now against the price of the hours it covers.
 - Estimation: `(battery_cost_per_kWh) / (cycle_life × depth_of_discharge)`. For typical residential LFP at ~2000 DKK/kWh, 0.10–0.30 is reasonable. 0 = maximum activity, faster wear.
 
 #### Planned house use factor — `planner_house_load_factor`

@@ -9,6 +9,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.31.3] — 2026-10-31
+
+### Fixed — the night bridge filled the battery whatever the shortfall
+
+Since v1.24.0 the night bridge filled the battery to the top whenever the price was in the day's cheapest quarter and the 24 h solar forecast was below the house's 24 h need. From October to February that holds on nearly every day, so most nights bought to 100 %. The fill-up is removed: the night bridge buys its shortfall only.
+
+### Fixed — the night bridge bought for hours that cost no more than the buy
+
+The night bridge bought the whole shortfall until the sun covers the house again, at the cheapest price before then. When Solcast is unsure, the bridge is sized on its low estimate and can run into the next evening. It then counted the night's own hours and the midday as part of the shortfall, though they cost about the same as the buy.
+
+Each hour of the need now counts only when its own price is above the buy price after round-trip losses and *Battery wear cost*. The energy already in the battery covers the first hours. An hour without a known price still counts, as before.
+
+### Fixed — peak cover bought what the sun would have filled
+
+- A need for the 17-21 h block larger than the battery counted as short even at 100 %, so peak cover bought whatever the sun did. It now counts only what a buy now can still add at 17:00, which is nothing when the sun fills the battery before then.
+- Peak cover waits until the sun is done when that is cheaper. It compares buying now, paying the price now and selling the sun the buy pushes out, with letting the median-forecast sun fill its part and buying the rest after the sun at the cheapest price before 17:00. A cheap night still buys at night when its price is below what the sun sells for.
+
+In a ten-day replay on recorded prices, solar, house load and forecasts, run through the integration's own sizing code (plan buys and sales left out, as this release does not change them), net cost fell by about 3 %, with one day slightly higher; about 5 % less was bought for the battery; solar exported while the battery was full fell by about a fifth; imports at 17-21 h were unchanged. These figures were corrected after release; the first version read the recorded price and forecast snapshots at the wrong times.
+
+### Known limitation
+
+When Solcast is unsure (its low estimate below 60 % of the median), the night bridge plans on the low estimate. If the next afternoon and evening cost more than the night after losses, it still buys for them at night, and a sunny day then finds the battery full. In the replay of such a day the battery still reached about 94 % by 07:00.
+
+---
+
 ## [1.31.2] — 2026-10-30
 
 ### Fixed — the battery bought in one-minute bursts near full
