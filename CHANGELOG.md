@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.31.5] — 2026-11-05
+
+### Changed — install instructions cover the Marketplace
+
+Home Assistant 2026.11 includes HACS as the built-in Marketplace, and HACS can no longer be installed on 2026.11 or newer. The installation guide now gives both routes:
+
+- Home Assistant 2026.11 or newer: *Settings → Marketplace → Add from link*, then install Solar AI. The setup opens directly when Home Assistant can load the integration, so no restart is needed for a first install.
+- Home Assistant 2026.10 or older: HACS custom repository, as before.
+
+An existing HACS install moves into the Marketplace when Home Assistant is updated and keeps receiving updates. The prerequisites now say where to install the FoxESS Modbus and Solcast integrations, and the Growatt guide names both routes for SolaX Inverter Modbus.
+
+No change in behaviour.
+
+---
+
 ## [1.31.4] — 2026-10-31
 
 ### Changed — notes no longer quote figures from one installation

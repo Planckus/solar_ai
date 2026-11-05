@@ -25,7 +25,7 @@ The generation is the classification used by the SolaX Inverter Modbus integrati
 | Dependency | Requirement |
 |---|---|
 | Connection | **ShineWLAN-X2** dongle on the local network, which provides Modbus TCP on port 502. An RS485-to-TCP adapter on the inverter's RS485 port is an alternative. The older ShineWiFi-S/-X dongles only talk to the Growatt cloud and are not supported. |
-| Home Assistant integration | [SolaX Inverter Modbus](https://github.com/wills106/homeassistant-solax-modbus) from HACS, with inverter type **Growatt** and interface **TCP / Ethernet**. Solar AI reads and writes through its entities and does not open its own Modbus connection. |
+| Home Assistant integration | [SolaX Inverter Modbus](https://github.com/wills106/homeassistant-solax-modbus) from the Marketplace (Home Assistant 2026.11 or newer) or HACS (2026.10 or older), with inverter type **Growatt** and interface **TCP / Ethernet**. Solar AI reads and writes through its entities and does not open its own Modbus connection. |
 | Write access | The integration's control entities must be enabled: VPP Remote Control, VPP Power, VPP Time, VPP Allow AC charging, Grid Export Limit, EMS Discharging Stop SOC (on grid). |
 | One Modbus client | The X2 handles one Modbus TCP client reliably. Do not run a second Modbus integration or tool against the same dongle. |
 | Inverter schedules | Time-of-use windows and Battery First / Grid First schedules set in the Growatt app or on the inverter must be disabled. They override mode changes. |
@@ -48,7 +48,7 @@ A VPP command runs for the duration in VPP Time and then the inverter returns to
 
 ## Installation (planned)
 
-1. Install SolaX Inverter Modbus from HACS and add it with type Growatt, TCP, the X2's IP address and port 502. Check that battery SoC, PV and grid power read correctly.
+1. Install SolaX Inverter Modbus from the Marketplace (Home Assistant 2026.11 or newer) or HACS (2026.10 or older) and add it with type Growatt, TCP, the X2's IP address and port 502. Check that battery SoC, PV and grid power read correctly.
 2. Disable time-of-use schedules in the Growatt app.
 3. Add Solar AI. The first setup step asks for the inverter brand; it is preselected when only one of the FoxESS Modbus and SolaX Inverter Modbus integrations is installed.
 4. Solar AI maps the needed entities from the entity registry, by owning integration rather than by name, and lists anything missing together with the feature it affects.

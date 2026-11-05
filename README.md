@@ -168,7 +168,7 @@ This is a step-by-step walkthrough written for someone who has used Home Assista
 | Needed | What for | Detail |
 |---|---|---|
 | Home Assistant **2024.7.0** or newer | Minimum supported version | — |
-| **HACS** | Installing and updating Solar AI | [Step 1](#1-install-hacs) |
+| **Marketplace** (Home Assistant 2026.11 or newer) or **HACS** (2026.10 or older) | Installing and updating Solar AI | [Step 1](#1-marketplace-or-hacs) |
 | **FoxESS Modbus integration**, with **write access** to the inverter | Reading the battery and grid, and controlling work mode and charge power | [Prerequisites](#prerequisites) |
 | **A solar forecast source** — Solcast (free account and API key), Forecast.Solar, or EVCC | Planning around tomorrow's sun | [Prerequisites](#prerequisites) |
 | An **EV charger** — EVCC, OCPP, or FoxESS Modbus | Optional; only for the EV features | [Step 5](#5-connect-an-ev-charger-optional) |
@@ -179,20 +179,39 @@ A read-only Modbus setup is the one that catches people out — Solar AI will sh
 
 The steps, in order:
 
-1. Install HACS (skip if you already have it).
-2. Add Solar AI to HACS and download it — or copy the files manually.
-3. Restart Home Assistant.
+1. Check which installer your Home Assistant has: the built-in Marketplace (2026.11 or newer) or HACS (2026.10 or older).
+2. Add Solar AI and install it — or copy the files manually.
+3. Restart Home Assistant (HACS and manual installs only).
 4. Add and configure the integration (the setup wizard).
 5. Connect an EV charger (optional).
 6. Import the dashboard.
 7. Set your retailer price components (auto-filled if you use Strømligning).
 8. Run in monitoring mode, then enable control.
 
-### 1. Install HACS
+### 1. Marketplace or HACS
 
-HACS (the Home Assistant Community Store) is the easiest way to install and update custom integrations. If *Settings → Devices & Services* already shows a **HACS** entry, skip to step 2. Otherwise follow the official guide: <https://hacs.xyz/docs/use/download/download/>. After installing HACS you must restart Home Assistant and add the HACS integration before continuing.
+Home Assistant 2026.11 includes HACS (the Home Assistant Community Store) as the built-in **Marketplace**. Which one you use depends on your Home Assistant version, shown under *Settings → About*:
 
-### 2. Add Solar AI to HACS
+| Home Assistant | Installer | Before step 2 |
+|---|---|---|
+| 2026.11 or newer | **Marketplace**, under *Settings → Marketplace* | Nothing to install. The first time you open the Marketplace, read the notice and select **I understand the risks and agree**; installing is blocked until you do. |
+| 2026.10 or older | **HACS** | If *Settings → Devices & Services* already shows a **HACS** entry, continue to step 2. Otherwise follow the official guide: <https://hacs.xyz/docs/use/download/download/>, restart Home Assistant and add the HACS integration. |
+
+HACS cannot be installed on 2026.11 or newer. If you installed Solar AI with HACS and then update Home Assistant to 2026.11, there is nothing to do: Home Assistant moves your HACS content into the Marketplace, and Solar AI stays installed and keeps receiving updates.
+
+### 2. Add Solar AI
+
+Solar AI is added from its GitHub link, as a custom repository.
+
+**Marketplace (Home Assistant 2026.11 or newer)**
+
+1. Go to *Settings → Marketplace*.
+2. In the upper-right corner, select **Add from link**.
+3. Under **GitHub link**, enter `https://github.com/Planckus/solar_ai` (or `Planckus/solar_ai`) and select **Add**. If GitHub is not connected yet, the Marketplace asks you to connect it first: it shows a code, you enter the code on GitHub and approve the connection. The connection reads public information only.
+4. Select **Solar AI** in the list, then **Install**, and confirm the version shown.
+5. When Home Assistant can load Solar AI right away, its setup opens as soon as the installation is complete: skip step 3 and continue with step 4 at the setup wizard. If you close it, add Solar AI later under *Settings → Devices & Services*. If a repair under *Settings → System → Repairs* asks for a restart instead, restart and then continue with step 4.
+
+**HACS (Home Assistant 2026.10 or older)**
 
 1. Open **HACS** from the left sidebar.
 2. Click the three-dot menu (⋮) in the top-right corner and choose **Custom repositories**.
@@ -204,7 +223,9 @@ HACS (the Home Assistant Community Store) is the easiest way to install and upda
 5. Back in HACS, search for **Solar AI**, open it, and click **Download** (accept the version shown). 
 6. Continue to step 3 to restart.
 
-**Manual installation (no HACS).** If you prefer not to use HACS:
+**Updates.** With either installer, new versions of Solar AI appear under *Settings → Updates*. Restart Home Assistant after an update; on 2026.11 or newer a repair reminds you and can restart for you.
+
+**Manual installation (no Marketplace or HACS).** If you prefer not to use either:
 
 1. Download the repository as a ZIP from <https://github.com/Planckus/solar_ai> (green **Code** button → **Download ZIP**) and unzip it.
 2. Copy the folder `custom_components/battery_arbitrage` from the unzipped files into your Home Assistant configuration folder so the final path is:
@@ -216,12 +237,12 @@ HACS (the Home Assistant Community Store) is the easiest way to install and upda
 
 ### 3. Restart Home Assistant
 
-*Settings → System → (power icon, top-right) → Restart Home Assistant.* Wait for it to come back online. This is what makes the newly-copied integration code available.
+*Settings → System → (power icon, top-right) → Restart Home Assistant.* Wait for it to come back online. This is what makes the newly-copied integration code available. Skip this step if you installed from the Marketplace and its setup opened directly.
 
 ### 4. Add and configure the integration
 
 1. Go to *Settings → Devices & Services → **Add Integration*** (bottom-right).
-2. Search for **Solar AI** and click it. (If it does not appear, the restart in step 3 was missed, or the browser needs a hard-refresh.)
+2. Search for **Solar AI** and click it. (If it does not appear after a HACS or manual install, the restart in step 3 was missed, or the browser needs a hard-refresh.)
 3. A setup wizard opens. Work through the pages:
 
    | Page | What to enter |
@@ -357,6 +378,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.31.5 — install from the Marketplace or HACS
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The installation guide covers Home Assistant's built-in Marketplace (2026.11 or newer) and HACS (2026.10 or older).** An existing HACS install moves into the Marketplace on update. No change in behaviour.
 
 ### v1.31.4 — notes without installation-specific figures
 
@@ -1214,6 +1241,8 @@ The entity names above are the defaults; each one is selectable in Solar AI's op
 | EVCC | Required | Required | Not used | [evcc.io](https://evcc.io) |
 | Solar forecast (one of: EVCC/Solcast, Solcast HA integration with both today + tomorrow entities, Forecast.Solar) | Required | Required | Required (excl. EVCC) | [Solcast](https://solcast.com) / [Forecast.Solar](https://www.home-assistant.io/integrations/forecast_solar/) |
 | Spot price entity (Strømligning, Tibber, etc.) | Optional | Optional | Optional | — |
+
+The FoxESS Modbus integration and the Solcast HA integration are community integrations listed in the catalog: install them from *Settings → Marketplace* on Home Assistant 2026.11 or newer, or from HACS on 2026.10 or older. Search for **FoxESS - Modbus** and **Solcast PV Forecast**. Forecast.Solar is built into Home Assistant and EVCC runs as an add-on or on its own host.
 
 If no spot price entity is configured, Solar AI reads spot prices directly from [Energi Data Service](https://api.energidataservice.dk).
 
