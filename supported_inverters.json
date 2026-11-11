@@ -21,7 +21,7 @@
     },
     {
       "brand": "FoxESS",
-      "model": "H1 (incl. AC1, AIO-H1, G2), H3 (incl. AC3, AIO-H3), H3 Pro, P1, KH",
+      "model": "H1 (incl. AC1, AIO-H1, G2), AC3, AIO-H3, H3 Pro, P1, KH",
       "connection": "Modbus TCP or RS485, via the FoxESS Modbus integration with write access",
       "firmware": "",
       "status": "untested",
@@ -36,6 +36,15 @@
       "status": "untested",
       "verified_with": "",
       "notes": "Listed as supported by the FoxESS Modbus integration. Same conditions as the FoxESS row above."
+    },
+    {
+      "brand": "FoxESS",
+      "model": "H3 (plain model, not Smart or Pro)",
+      "connection": "Via the FoxESS Modbus integration with write access",
+      "firmware": "Reported on Master 2.23",
+      "status": "not supported",
+      "verified_with": "",
+      "notes": "Grid charging does not work over Modbus: work mode register 41000 has no Force Charge option, and the inverter rejects the remote power register 44002. Reports from other firmware versions welcome as GitHub issues."
     },
     {
       "brand": "Growatt",

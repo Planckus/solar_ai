@@ -15,8 +15,9 @@ Solar AI controls the battery through the [FoxESS Modbus](https://github.com/nat
 |---|---|---|---|---|---|---|
 | Tested | FoxESS | H3-10.0-Smart | Modbus TCP over LAN, via the FoxESS Modbus integration | Master 1.49, Manager 1.31 | v1.24.0 | Maintainer's system. All features, including the PV-curtailment flag (register 49251) used to send otherwise throttled solar to the car. |
 | Supported | FoxESS | H3 Smart series (all H3-xx-Smart sizes) | Modbus TCP over LAN, via the FoxESS Modbus integration | — | v1.24.0 | Same platform as the tested H3-10.0-Smart; the sizes differ in power rating only. |
-| Untested | FoxESS | H1 (incl. AC1, AIO-H1, G2), H3 (incl. AC3, AIO-H3), H3 Pro, P1, KH | Modbus TCP or RS485, via the FoxESS Modbus integration with write access | — | — | Expected to work when the integration exposes work mode, force charge / discharge power and min SoC. The PV-curtailment flag is read from an H3 register and may be unavailable on other models. Reports welcome as GitHub issues. |
+| Untested | FoxESS | H1 (incl. AC1, AIO-H1, G2), AC3, AIO-H3, H3 Pro, P1, KH | Modbus TCP or RS485, via the FoxESS Modbus integration with write access | — | — | Expected to work when the integration exposes work mode, force charge / discharge power and min SoC. The PV-curtailment flag is read from an H3 register and may be unavailable on other models. Reports welcome as GitHub issues. |
 | Untested | Rebranded FoxESS | Kuara H3, Sonnenkraft SK-HWR, STAR, Solavita SP, a-TroniX AX | Via the FoxESS Modbus integration with write access | — | — | Listed as supported by the FoxESS Modbus integration. Same conditions as the FoxESS row above. |
+| Not supported | FoxESS | H3 (plain model, not Smart or Pro) | Via the FoxESS Modbus integration with write access | Reported on Master 2.23 | — | Grid charging does not work over Modbus: work mode register 41000 has no Force Charge option, and the inverter rejects the remote power register 44002. Reports from other firmware versions welcome as GitHub issues. |
 | Planned, not available | Growatt | MIN TL-XH, MOD TL3-XH, MID TL3-XH (GEN4 hybrid) | ShineWLAN-X2 (Modbus TCP, port 502) or RS485-to-TCP adapter, via the SolaX Inverter Modbus integration | Must support VPP remote power control (registers 30407-30410); versions not yet confirmed | — | Not available yet. Scope, dependencies and design: [Growatt support plan](docs/GROWATT.md). |
 | Not supported | Growatt | SPH, SPA (GEN3), MIC, MIN TL-X, MOD TL3-X, MID TL3-X, SPF, WIT | — | — | — | Older generation, no battery, off-grid or commercial models. Only GEN4 hybrids with VPP remote power control are in scope. |
 | Not supported | Other brands | Any | — | — | — | Battery control is written for FoxESS, with Growatt GEN4 hybrids planned. |
@@ -378,6 +379,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.31.6 — plain H3 listed as not supported
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The Supported inverters table lists the plain H3 (not Smart or Pro) as Not supported.** The model has no Force Charge path over Modbus, so grid charging does not work. No change in behaviour.
 
 ### v1.31.5 — install from the Marketplace or HACS
 
