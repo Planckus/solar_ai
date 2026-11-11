@@ -9,6 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.31.6] — 2026-11-11
+
+### Changed — plain H3 listed as not supported
+
+The Supported inverters table lists the plain H3 (not Smart or Pro) as Not supported instead of Untested. Grid charging does not work on this model over Modbus: work mode register 41000 has no Force Charge option, and the inverter rejects the remote power register 44002 (reported on firmware Master 2.23). H3 Smart and H3 Pro use different registers and are not affected.
+
+No change in behaviour.
+
+---
+
 ## [1.31.5] — 2026-11-05
 
 ### Changed — install instructions cover the Marketplace
