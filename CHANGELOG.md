@@ -9,6 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.31.7] — 2026-11-14
+
+### Fixed — a schedule card without weekdays said it was active
+
+A charge schedule runs only on the weekdays selected on its card, and the controller skips a schedule with none selected. The card still showed *Active* (*Aktiv*) when it was switched on, so a schedule with its times and mode set but no weekday never charged the car, with nothing on the dashboard to say why. Schedules 2-4 start with no weekdays selected.
+
+A card that is switched on with no weekday selected now shows *No days selected, not running* (*Ingen dage valgt, kører ikke*) in the warning colour. Scheduling itself is unchanged and is the same for the OCPP and FoxESS Modbus charger backends.
+
+---
+
 ## [1.31.6] — 2026-11-11
 
 ### Changed — plain H3 listed as not supported
