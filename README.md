@@ -380,6 +380,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.31.7 — schedule cards warn when no weekday is selected
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **A charge schedule that is switched on but has no weekday selected now says it will not run**, instead of showing *Active*. Applies to the OCPP and FoxESS Modbus charger backends alike.
+
 ### v1.31.6 — plain H3 listed as not supported
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
@@ -1041,7 +1047,7 @@ Five modes selectable from the dashboard (both backends):
 | Solar-only | Charge only from real-time PV surplus. Stops when surplus drops below the minimum. If the house battery starts discharging to cover the car, charging stops. |
 | Solar+Battery-to-minimum | Solar surplus first; house battery tops up to the minimum when surplus is insufficient. Stops at the battery floor. |
 | Full power | Maximum charge rate from any source, within the Net import limit. House battery discharge is locked at 0 A while the car draws, so the EV's grid demand cannot be supplemented from the house battery. The lock is lifted while Solar AI is grid-charging the battery (Force Charge), where the battery cannot feed the car. On the Modbus backend, full mode always uses three-phase. |
-| Scheduled | Follows the per-weekday charging windows (Skema 1–4) set on the dashboard; each window selects one of the modes above, with a configurable fallback outside any window. Scheduled survives the first plug-in after it is chosen, so it can be set before the car comes home. Once the car has been unplugged in Scheduled, the next plug-in returns to the default-on-connect mode, like every other mode. |
+| Scheduled | Follows the per-weekday charging windows (Skema 1–4) set on the dashboard; each window selects one of the modes above, with a configurable fallback outside any window. A window runs only on the weekdays selected on its card; a card that is switched on with no weekday selected never runs and says so (*No days selected, not running*). Scheduled survives the first plug-in after it is chosen, so it can be set before the car comes home. Once the car has been unplugged in Scheduled, the next plug-in returns to the default-on-connect mode, like every other mode. |
 
 Which mode a freshly plugged-in car starts in is set by the **default charge mode on connect** picker (both backends).
 

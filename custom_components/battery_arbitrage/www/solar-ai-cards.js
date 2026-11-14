@@ -1177,7 +1177,7 @@
       subtitle: 'Four schedules. Enable one or more and set EV mode to "Scheduled" to use them.',
       bannerTitle: 'Schedules are inactive right now',
       bannerText: 'Schedules only control charging when EV mode is "Scheduled". Changes here don’t affect the active charging session.',
-      active: 'Active', inactive: 'Inactive', start: 'Start', end: 'End',
+      active: 'Active', inactive: 'Inactive', noDays: 'No days selected, not running', start: 'Start', end: 'End',
       slot: (n) => 'Schedule ' + n, add: (n) => 'Add schedule ' + n,
       modes: { pv: 'PV', pv_battery: 'PV+Bat', full: 'Full' },
       days: [['Mo', 'Monday'], ['Tu', 'Tuesday'], ['We', 'Wednesday'], ['Th', 'Thursday'], ['Fr', 'Friday'], ['Sa', 'Saturday'], ['Su', 'Sunday']],
@@ -1187,7 +1187,7 @@
       subtitle: '4 skemaer. Aktivér et eller flere og sæt EV-tilstand til "Planlagt" for at bruge dem.',
       bannerTitle: 'Skemaer er inaktive lige nu',
       bannerText: 'Skemaerne styrer kun opladningen når EV-tilstand er "Planlagt". Ændringer her påvirker ikke den aktive opladning.',
-      active: 'Aktiv', inactive: 'Inaktiv', start: 'Start', end: 'Slut',
+      active: 'Aktiv', inactive: 'Inaktiv', noDays: 'Ingen dage valgt, kører ikke', start: 'Start', end: 'Slut',
       slot: (n) => 'Skema ' + n, add: (n) => 'Tilføj skema ' + n,
       modes: { pv: 'PV', pv_battery: 'PV+Bat', full: 'Full' },
       days: [['Ma', 'Mandag'], ['Ti', 'Tirsdag'], ['On', 'Onsdag'], ['To', 'Torsdag'], ['Fr', 'Fredag'], ['Lø', 'Lørdag'], ['Sø', 'Søndag']],
@@ -1263,6 +1263,12 @@
       }
 
       const trackBg = enabled ? SCHED_ACCENT : 'var(--divider-color)';
+      // An enabled schedule with no weekday selected never runs: the
+      // controller skips slots without days. Say so instead of "Active".
+      const noDays = enabled && !SCHED_WEEKDAYS.some((d) => state(hass, e.days[d]) === 'on');
+      const statusText = noDays ? T.noDays : (enabled ? T.active : T.inactive);
+      const statusColor = noDays ? 'var(--warning-color)'
+        : (enabled ? 'var(--success-color)' : 'var(--secondary-text-color)');
       const modeChips = ['pv', 'pv_battery', 'full'].map((m) => {
         const active = m === modeVal;
         return `<button data-act="mode" data-ent="${e.mode}" data-opt="${m}" style="flex:1;padding:10px 6px;min-height:44px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid ${active ? SCHED_ACCENT : 'var(--divider-color)'};background:${active ? SCHED_ACCENT : 'transparent'};color:${active ? '#fff' : 'var(--secondary-text-color)'};">${escapeHtml(T.modes[m] || m)}</button>`;
@@ -1284,7 +1290,7 @@
           <div style="width:36px;height:36px;min-width:36px;border-radius:50%;background:${SCHED_TINT};color:${SCHED_ACCENT};display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;">${n}</div>
           <div style="flex:1;min-width:0;">
             <div style="font-size:16px;font-weight:600;color:var(--primary-text-color);">${escapeHtml(T.slot(n))}</div>
-            <div style="font-size:13px;font-weight:600;color:${enabled ? 'var(--success-color)' : 'var(--secondary-text-color)'};margin-top:1px;">${escapeHtml(enabled ? T.active : T.inactive)}</div>
+            <div style="font-size:13px;font-weight:600;color:${statusColor};margin-top:1px;">${escapeHtml(statusText)}</div>
           </div>
           <button data-act="toggle" data-ent="${e.enabled}" style="all:unset;box-sizing:border-box;cursor:pointer;width:46px;height:28px;border-radius:14px;padding:3px;display:flex;align-items:center;background:${trackBg};transition:background .15s;">
             <span style="display:block;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.3);transform:translateX(${enabled ? '18px' : '0px'});transition:transform .15s;"></span>
