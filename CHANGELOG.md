@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.31.8] — 2026-11-18
+
+### Fixed — grid charging and export with EVCC controlling the battery
+
+Solar AI no longer sets EVCC's battery mode to `hold` when it starts grid charging or export. When EVCC controls a FoxESS battery, EVCC carries out `hold` by switching remote control off, setting the work mode to Self Use and writing 0 A to Max Discharge Current. That cancelled Force Charge and Force Discharge: the work mode select still read Force Charge, but the battery took no power. The 0 A limit stayed until Solar AI was switched off.
+
+Only installations on the EVCC or Hybrid data source are affected. The FoxESS data source never sent a battery mode to EVCC. The battery lock in Full EV mode still sets `hold`, as before.
+
+If EVCC shows the battery discharge as locked, switch Solar AI off before updating and on again after. Switching off returns EVCC to `normal`, which restores Max Discharge Current.
+
+> [!IMPORTANT]
+> Solar AI does not keep track of a `hold` it sent across a Home Assistant restart. After a restart it treats EVCC's `hold` as EVCC's own decision and stops grid charging and export. Switching Solar AI off then does not release it: EVCC must be returned to `normal` on the EVCC side.
+
+---
+
 ## [1.31.7] — 2026-11-14
 
 ### Fixed — a schedule card without weekdays said it was active

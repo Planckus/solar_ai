@@ -380,6 +380,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.31.8 — grid charging and export with EVCC controlling the battery
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Grid charging and export now work when EVCC controls the FoxESS battery.** Solar AI no longer sets EVCC's battery mode to `hold` when it starts either one. EVCC carried out `hold` by writing 0 A to Max Discharge Current, which cancelled Force Charge and Force Discharge. Only installations on the EVCC or Hybrid data source are affected.
+
 ### v1.31.7 — schedule cards warn when no weekday is selected
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
@@ -1026,7 +1032,7 @@ EV-aware features run in EVCC and Hybrid live-data modes. In FoxESS-only mode th
 | Hourly probability | Exponential smoothing over ~8 days. Shown on the dashboard; since v1.31.2 it does not affect battery buying. |
 | Max charge rate | ~20-sample EMA from full-speed sessions only (≥ 80% of current learned max). Solar-throttled sessions excluded. |
 | Battery-bypass model | EVCC's setting "battery does not feed the EV" is honoured. |
-| EVCC battery mode | Set to `hold` during arbitrage actions. Restored to `normal` when done. If EVCC has independently taken control, the integration backs off. |
+| EVCC battery mode | Not changed during grid charging or export. When EVCC controls a FoxESS battery, its `hold` switches remote control off, sets Self Use and writes 0 A to Max Discharge Current, which cancels Force Charge and Force Discharge. Set to `hold` only while the EV controller locks the battery in Full mode. If EVCC has independently taken control, the integration backs off. |
 
 ### EV charge controller (opt-in)
 

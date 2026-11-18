@@ -3604,10 +3604,10 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # export floor so Force Discharge physically stops at the floor even
             # if a Solar AI tick stalls. Restored the moment we leave EXPORTING.
             await self._apply_export_floor_min_soc(self._effective_floor_soc)
-            # Tell EVCC to hold so it doesn't fight our export
-            if coordinate_with_evcc:
-                self._we_set_evcc_mode = True
-                await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
+            # v1.31.8 — no EVCC battery mode is sent here. When EVCC controls a
+            # FoxESS battery, its "hold" switches remote control off, sets Self
+            # Use and writes 0 A to Max Discharge Current, which cancels Force
+            # Discharge (its "normal" also switches remote control off).
 
         elif new_mode == MODE_GRID_CHARGING:
             # Force Charge: inverter charges battery from grid at grid-headroom-capped rate
@@ -3624,9 +3624,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 self._force_charge_active = True
                 if self._ev_battery_locked:
                     await self._set_battery_lock(False)
-            if coordinate_with_evcc:
-                self._we_set_evcc_mode = True
-                await self._evcc_post(session, evcc_url, f"{EVCC_API_BATTERY_MODE}/{EVCC_BATTERY_HOLD}")
+            # v1.31.8 — no EVCC battery mode is sent here either: EVCC's "hold"
+            # on a FoxESS battery cancels Force Charge (see MODE_EXPORTING).
 
         elif new_mode == MODE_NORMAL:
             await self._restore_export_min_soc()  # leaving export — give the house its SoC back

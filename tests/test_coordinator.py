@@ -1543,3 +1543,57 @@ class TestBridgeBuyPrice:
     def test_hours_already_past_are_skipped(self):
         c = self._coord()
         assert self._need(c, 0.0, now=self.t0 + timedelta(hours=12)) == pytest.approx(4.0)
+
+
+class TestNoEvccHoldInForceModes:
+    """v1.31.8 — entering Force Charge or Force Discharge sends EVCC no battery
+    mode. EVCC's "hold" on a FoxESS battery switches remote control off, sets
+    Self Use and writes 0 A to Max Discharge Current, which cancels the force
+    mode. Installs on the FoxESS data source never posted to EVCC."""
+
+    def _coord(self, live_source):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from custom_components.battery_arbitrage import coordinator as C
+        c = object.__new__(BatteryArbitrageCoordinator)
+        c.hass = MagicMock()
+        st = MagicMock()
+        st.state = C.WORK_MODE_FORCE_CHARGE
+        c.hass.states.get = MagicMock(return_value=st)
+        c.config = {"evcc_url": "http://evcc:7070", "foxess_inverter_id": "inv"}
+        c._setting = lambda key, default=None: (
+            live_source if key == C.CONF_LIVE_DATA_SOURCE else default)
+        c._current_mode = C.MODE_NORMAL
+        c._we_set_evcc_mode = False
+        c._ev_lock_demand = False
+        c._ev_battery_locked = False
+        c._force_charge_active = False
+        c._effective_floor_soc = 10
+        c._stored = {}
+        for name in ("_evcc_post", "_set_work_mode", "_set_charge_power",
+                     "_set_discharge_power", "_apply_export_floor_min_soc",
+                     "_restore_export_min_soc", "_set_battery_lock"):
+            setattr(c, name, AsyncMock())
+        return c, C
+
+    def _run(self, c, C, mode):
+        import asyncio
+        from unittest.mock import MagicMock, patch
+        with patch.object(C, "async_get_clientsession", MagicMock()):
+            asyncio.run(c._transition_to(mode, 5.0, "test"))
+
+    @pytest.mark.parametrize("source", ["evcc", "hybrid", "foxess"])
+    @pytest.mark.parametrize("mode", ["grid_charging", "exporting"])
+    def test_force_modes_send_no_evcc_battery_mode(self, source, mode):
+        c, C = self._coord(source)
+        self._run(c, C, mode)
+        assert c._evcc_post.await_count == 0
+        assert c._we_set_evcc_mode is False
+
+    @pytest.mark.parametrize("source,posts", [("evcc", 1), ("hybrid", 1), ("foxess", 0)])
+    def test_earlier_hold_is_still_released_on_normal(self, source, posts):
+        c, C = self._coord(source)
+        c._current_mode = C.MODE_GRID_CHARGING
+        c._we_set_evcc_mode = True
+        self._run(c, C, C.MODE_NORMAL)
+        assert c._evcc_post.await_count == posts
