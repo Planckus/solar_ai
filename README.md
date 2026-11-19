@@ -384,7 +384,8 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
 
-- **Changes reach `main` through a pull request and are released only when all checks pass:** tests, Home Assistant's hassfest, HACS validation, lint and security lint, and a public-content check. No change in behaviour.
+- **Changes reach `main` through a pull request and are released only when all checks pass:** tests, Home Assistant's hassfest, HACS validation, lint and security lint, and a public-content check.
+- **Fixes from the first check run:** manifest dependencies, the OCPP setup text, and the Price area and Charging current step selects, which now show their option values (`DK1`, `0.1` and so on) instead of translated labels. Stored settings are unchanged.
 
 ### v1.31.8 — grid charging and export with EVCC controlling the battery
 

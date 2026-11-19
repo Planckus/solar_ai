@@ -23,7 +23,13 @@ Changes now reach `main` through a pull request from the `dev` branch, and a rel
 | Lint and security lint | Ruff for syntax errors and undefined names, Bandit for medium and high severity security findings |
 | Public content | Fails on private IP addresses and blocked terms in added lines and commit messages; warns on dates, DKK amounts and kWh figures that may come from one installation |
 
-No change in behaviour.
+### Fixed — findings from the first check run
+
+- The manifest lists `http` and `lovelace` in `after_dependencies`. The integration serves its card files and registers a dashboard resource through them.
+- The Price area and Charging current step selects no longer have translated option labels. Their option values (`DK1`, `DK2`, `0.1`, `0.5`, `1.0`) are not valid translation keys. The selects now show the option values. Stored settings are unchanged.
+- The OCPP setup step writes the charger backend URL as `ws://HA-IP:PORT/CPID/`. The angle-bracket form was read as HTML.
+- The embedded OCPP server keeps listening on all interfaces, since chargers on the local network connect to it. The line is marked as reviewed for Bandit.
+- The test requirements include `websockets`, which the OCPP server tests import.
 
 ---
 

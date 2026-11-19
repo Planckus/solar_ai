@@ -172,7 +172,7 @@
       },
       "ocpp_settings": {
         "title": "OCPP Settings",
-        "description": "Step 2 of 3 — EV charge controller. Solar AI hosts its own embedded OCPP 1.6 server (no separate HACS integration needed). Point your charger's backend URL to ws://<ha-ip>:<port>/<cpid>/. Turn off the embedded server only if you want to use lbbrhzn/ocpp instead.",
+        "description": "Step 2 of 3 — EV charge controller. Solar AI hosts its own embedded OCPP 1.6 server (no separate HACS integration needed). Point your charger's backend URL to ws://HA-IP:PORT/CPID/. Turn off the embedded server only if you want to use lbbrhzn/ocpp instead.",
         "data": {
           "ocpp_embedded": "Use Solar AI's embedded OCPP server (recommended)",
           "ocpp_port": "Embedded OCPP server port (default 9000, range 1024–65535)",
@@ -356,11 +356,7 @@
         }
       },
       "price_area": {
-        "name": "Price area",
-        "state": {
-          "DK1": "DK1 — Western Denmark",
-          "DK2": "DK2 — Eastern Denmark"
-        }
+        "name": "Price area"
       },
       "stromligning_product": { "name": "Electricity product (provider)" },
       "ev_charger_backend": {
@@ -378,12 +374,7 @@
         }
       },
       "ev_modbus_current_step": {
-        "name": "Charging current step",
-        "state": {
-          "0.1": "0.1 A (finest)",
-          "0.5": "0.5 A",
-          "1.0": "1.0 A (whole amps)"
-        }
+        "name": "Charging current step"
       },
       "ev_mode": {
         "name": "EV charging mode",

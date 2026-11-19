@@ -172,7 +172,7 @@
       },
       "ocpp_settings": {
         "title": "OCPP-indstillinger",
-        "description": "Trin 2 af 3 — EV-styring. Solar AI har sin egen indbyggede OCPP 1.6-server (du behøver ikke en separat HACS-integration). Indstil laderens backend-URL til ws://<ha-ip>:<port>/<cpid>/. Slå kun den indbyggede server fra hvis du i stedet vil bruge lbbrhzn/ocpp.",
+        "description": "Trin 2 af 3 — EV-styring. Solar AI har sin egen indbyggede OCPP 1.6-server (du behøver ikke en separat HACS-integration). Indstil laderens backend-URL til ws://HA-IP:PORT/CPID/. Slå kun den indbyggede server fra hvis du i stedet vil bruge lbbrhzn/ocpp.",
         "data": {
           "ocpp_embedded": "Brug Solar AIs indbyggede OCPP-server (anbefalet)",
           "ocpp_port": "Port til indbygget OCPP-server (standard 9000, område 1024–65535)",
@@ -356,11 +356,7 @@
         }
       },
       "price_area": {
-        "name": "Prisområde",
-        "state": {
-          "DK1": "DK1 — Vestdanmark",
-          "DK2": "DK2 — Østdanmark"
-        }
+        "name": "Prisområde"
       },
       "stromligning_product": { "name": "Elprodukt (udbyder)" },
       "ev_charger_backend": {
@@ -378,12 +374,7 @@
         }
       },
       "ev_modbus_current_step": {
-        "name": "Strømtrin (opladning)",
-        "state": {
-          "0.1": "0,1 A (fineste)",
-          "0.5": "0,5 A",
-          "1.0": "1,0 A (hele ampere)"
-        }
+        "name": "Strømtrin (opladning)"
       },
       "ev_mode": {
         "name": "EV-opladningstilstand",

@@ -67,7 +67,8 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+          # New branch, or a force-push whose old commit is no longer in history
+          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
             BASE_SHA=$(git merge-base origin/main HEAD)
           fi
           python .github/scripts/check_public_content.py "$BASE_SHA"
