@@ -113,7 +113,7 @@ def _make_client(reader, writer) -> fc.FoxessModbusClient:
     return client
 
 
-def test_read_reassembles_split_response():
+async def test_read_reassembles_split_response():
     """A read response delivered in two TCP segments must parse correctly."""
     # FC3 reply: 3 registers (6 bytes): 160, 0, 0
     pdu = bytes([3, 6]) + struct.pack(">HHH", 160, 0, 0)
@@ -123,25 +123,25 @@ def test_read_reassembles_split_response():
     writer = _FakeWriter()
     client = _make_client(reader, writer)
 
-    regs = asyncio.get_event_loop().run_until_complete(client.read(fc.REG_MAX_CURRENT, 3))
+    regs = await client.read(fc.REG_MAX_CURRENT, 3)
     assert regs == [160, 0, 0]
 
 
-def test_read_raises_on_exception_response():
+async def test_read_raises_on_exception_response():
     pdu = bytes([0x83, 0x02])  # FC3 | 0x80, exception code 2
     reader = _FakeReader([_mbap(1, pdu)])
     client = _make_client(reader, _FakeWriter())
     with pytest.raises(fc.ModbusError):
-        asyncio.get_event_loop().run_until_complete(client.read(0x9999, 1))
+        await client.read(0x9999, 1)
 
 
-def test_write_multi_frames_fc16():
+async def test_write_multi_frames_fc16():
     pdu_resp = struct.pack(">BHH", 16, fc.REG_MAX_POWER, 1)  # echo addr + count
     reader = _FakeReader([_mbap(1, pdu_resp)])
     writer = _FakeWriter()
     client = _make_client(reader, writer)
 
-    asyncio.get_event_loop().run_until_complete(client.write_multi(fc.REG_MAX_POWER, [30]))
+    await client.write_multi(fc.REG_MAX_POWER, [30])
     # Request PDU: unit(1) + fc(0x10) + addr + count + bytecount + value
     sent_pdu = writer.sent[7:]
     assert sent_pdu[0] == 16

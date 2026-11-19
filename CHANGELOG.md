@@ -30,6 +30,8 @@ Changes now reach `main` through a pull request from the `dev` branch, and a rel
 - The OCPP setup step writes the charger backend URL as `ws://HA-IP:PORT/CPID/`. The angle-bracket form was read as HTML.
 - The embedded OCPP server keeps listening on all interfaces, since chargers on the local network connect to it. The line is marked as reviewed for Bandit.
 - The test requirements include `websockets`, which the OCPP server tests import.
+- The test suite runs in CI. Tests that created their own event loop are async tests, pytest-asyncio runs in auto mode, and the Tests job runs in Danish local time, which the peak-block and plan-time tests assume.
+- The manifest keys are sorted as hassfest requires.
 
 ---
 

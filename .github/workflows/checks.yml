@@ -24,7 +24,11 @@ jobs:
           cache: pip
           cache-dependency-path: requirements_test.txt
       - run: pip install -r requirements_test.txt
-      - run: pytest -q
+      - name: Run pytest
+        # The tests use Danish local time (peak block 17-21 h, plan times).
+        env:
+          TZ: Europe/Copenhagen
+        run: pytest -q
 
   hassfest:
     name: Hassfest

@@ -1,15 +1,15 @@
 {
   "domain": "battery_arbitrage",
   "name": "Solar AI",
-  "version": "1.31.9",
-  "documentation": "https://github.com/Planckus/solar_ai",
-  "issue_tracker": "https://github.com/Planckus/solar_ai/issues",
-  "codeowners": ["@planckus"],
-  "requirements": ["ocpp>=2.1.0"],
-  "dependencies": [],
   "after_dependencies": ["foxess_modbus", "http", "lovelace"],
-  "iot_class": "local_polling",
+  "codeowners": ["@planckus"],
   "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/Planckus/solar_ai",
   "integration_type": "hub",
-  "quality_scale": "custom"
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/Planckus/solar_ai/issues",
+  "quality_scale": "custom",
+  "requirements": ["ocpp>=2.1.0"],
+  "version": "1.31.9"
 }

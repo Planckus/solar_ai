@@ -1576,24 +1576,23 @@ class TestNoEvccHoldInForceModes:
             setattr(c, name, AsyncMock())
         return c, C
 
-    def _run(self, c, C, mode):
-        import asyncio
+    async def _run(self, c, C, mode):
         from unittest.mock import MagicMock, patch
         with patch.object(C, "async_get_clientsession", MagicMock()):
-            asyncio.run(c._transition_to(mode, 5.0, "test"))
+            await c._transition_to(mode, 5.0, "test")
 
     @pytest.mark.parametrize("source", ["evcc", "hybrid", "foxess"])
     @pytest.mark.parametrize("mode", ["grid_charging", "exporting"])
-    def test_force_modes_send_no_evcc_battery_mode(self, source, mode):
+    async def test_force_modes_send_no_evcc_battery_mode(self, source, mode):
         c, C = self._coord(source)
-        self._run(c, C, mode)
+        await self._run(c, C, mode)
         assert c._evcc_post.await_count == 0
         assert c._we_set_evcc_mode is False
 
     @pytest.mark.parametrize("source,posts", [("evcc", 1), ("hybrid", 1), ("foxess", 0)])
-    def test_earlier_hold_is_still_released_on_normal(self, source, posts):
+    async def test_earlier_hold_is_still_released_on_normal(self, source, posts):
         c, C = self._coord(source)
         c._current_mode = C.MODE_GRID_CHARGING
         c._we_set_evcc_mode = True
-        self._run(c, C, C.MODE_NORMAL)
+        await self._run(c, C, C.MODE_NORMAL)
         assert c._evcc_post.await_count == posts
