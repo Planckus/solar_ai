@@ -31,6 +31,7 @@ Changes now reach `main` through a pull request from the `dev` branch, and a rel
 - The embedded OCPP server keeps listening on all interfaces, since chargers on the local network connect to it. The line is marked as reviewed for Bandit.
 - The test requirements include `websockets`, which the OCPP server tests import.
 - The test suite runs in CI. Tests that created their own event loop are async tests, pytest-asyncio runs in auto mode, and the Tests job runs in Danish local time, which the peak-block and plan-time tests assume.
+- The config flow tests cover the current setup wizard: the stop when FoxESS Modbus is missing, quick setup from source choice to a created entry, and the error for an unreachable EVCC. The previous tests described the first release's wizard.
 - The manifest keys are sorted as hassfest requires.
 
 ---

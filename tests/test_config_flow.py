@@ -1,13 +1,36 @@
-"""Tests for Battery Arbitrage config flow."""
+"""Tests for the Solar AI setup wizard (config flow)."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType
 
+from custom_components.battery_arbitrage import const as C
 from custom_components.battery_arbitrage.const import DOMAIN
+
+FLOW = "custom_components.battery_arbitrage.config_flow.BatteryArbitrageConfigFlow"
+DISCOVERY = "custom_components.battery_arbitrage.discovery"
+
+# What discovery returns on a FoxESS Modbus install where every entity is found.
+DETECTED = {
+    C.CONF_BATTERY_SOC_ENTITY: "sensor.foxessmodbus_battery_soc",
+    C.CONF_CELL_TEMP_ENTITY: "sensor.foxessmodbus_bms_cell_temp_low",
+    C.CONF_BATTERY_CHARGE_ENTITY: "sensor.foxessmodbus_battery_charge",
+    C.CONF_BATTERY_DISCHARGE_ENTITY: "sensor.foxessmodbus_battery_discharge",
+    C.CONF_BATTERY_CHARGE_TOTAL_ENTITY: "sensor.foxessmodbus_battery_charge_total",
+    C.CONF_BATTERY_DISCHARGE_TOTAL_ENTITY: "sensor.foxessmodbus_battery_discharge_total",
+    C.CONF_FOXESS_GRID_IMPORT_ENTITY: "sensor.foxessmodbus_grid_consumption",
+    C.CONF_FOXESS_GRID_EXPORT_ENTITY: "sensor.foxessmodbus_feed_in",
+    C.CONF_FOXESS_PV_POWER_ENTITY: "sensor.foxessmodbus_pv_power_now",
+    C.CONF_FOXESS_LOAD_POWER_ENTITY: "sensor.foxessmodbus_load_power",
+    C.CONF_FOXESS_WORK_MODE_ENTITY: "select.foxessmodbus_work_mode",
+    C.CONF_FOXESS_FORCE_CHARGE_ENTITY: "number.foxessmodbus_force_charge_power",
+    C.CONF_FOXESS_FORCE_DISCHARGE_ENTITY: "number.foxessmodbus_force_discharge_power",
+    C.CONF_FOXESS_MAX_DISCHARGE_ENTITY: "number.foxessmodbus_max_discharge_current",
+    C.CONF_FOXESS_INVERTER_ID: "inverter_device_id",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -16,23 +39,25 @@ def auto_enable_custom_integrations(enable_custom_integrations):
     yield
 
 
-async def test_full_flow(hass, mock_config):
-    """Test the full config flow succeeds with mocked EVCC and entities."""
-    # Pre-populate hass states so entity lookups work
-    hass.states.async_set("select.foxessmodbus_work_mode", "Self Use")
-    hass.states.async_set("number.foxessmodbus_force_charge_power", "3600")
-    hass.states.async_set("number.foxessmodbus_force_discharge_power", "3600")
-    hass.states.async_set("sensor.stromligning_spotprice_ex_vat", "1.5")
+async def test_no_foxess_modbus_aborts(hass):
+    """Without the FoxESS Modbus integration the wizard stops at once."""
+    with patch(f"{DISCOVERY}.has_foxess_modbus", return_value=False):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "no_foxess_modbus"
 
-    with patch(
-        "custom_components.battery_arbitrage.config_flow."
-        "BatteryArbitrageConfigFlow._test_evcc",
-        return_value=(True, {"battery": {"capacity": 11520}}),
+
+async def test_full_flow(hass):
+    """EVCC source, EVCC reachable, everything detected: quick setup creates the entry."""
+    with patch(f"{DISCOVERY}.has_foxess_modbus", return_value=True), patch(
+        f"{DISCOVERY}.discover_all", return_value=dict(DETECTED)
     ), patch(
-        "custom_components.battery_arbitrage.config_flow."
-        "BatteryArbitrageConfigFlow._list_dashboards",
-        return_value=[],
-    ):
+        f"{FLOW}._test_evcc", return_value=(True, {"battery": {"capacity": 11.52}})
+    ), patch(
+        "custom_components.battery_arbitrage.async_setup_entry", return_value=True
+    ) as mock_setup:
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
         )
@@ -41,71 +66,62 @@ async def test_full_flow(hass, mock_config):
 
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            user_input={"evcc_url": "http://localhost:7070"},
+            user_input={C.CONF_LIVE_DATA_SOURCE: C.LIVE_SOURCE_EVCC},
         )
         assert result["type"] == FlowResultType.FORM
-        assert result["step_id"] == "foxess"
+        assert result["step_id"] == "evcc_url"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={C.CONF_EVCC_URL: "http://evcc.local:7070/"},
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "quick"
 
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             user_input={
-                "foxess_inverter_id": "test_id",
-                "foxess_work_mode_entity": "select.foxessmodbus_work_mode",
-                "foxess_force_charge_entity": "number.foxessmodbus_force_charge_power",
-                "foxess_force_discharge_entity": "number.foxessmodbus_force_discharge_power",
+                C.CONF_BATTERY_CAPACITY: 11.52,
+                C.CONF_DSO_GLN: C.DEFAULT_DSO_GLN,
+                C.CONF_CURRENCY: "DKK",
+                C.CONF_CREATE_DASHBOARD: False,
+                "advanced": False,
             },
         )
-        assert result["type"] == FlowResultType.FORM
-        assert result["step_id"] == "stromligning"
+        await hass.async_block_till_done()
 
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            user_input={"stromligning_entity": "sensor.stromligning_spotprice_ex_vat"},
-        )
-        assert result["type"] == FlowResultType.FORM
-        assert result["step_id"] == "battery"
-
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            user_input={
-                "battery_capacity": 11.52,
-                "battery_floor_soc": 50,
-                "battery_max_soc": 100,
-                "round_trip_efficiency": 92,
-                "min_spread_arbitrage": 1.0,
-                "min_solar_export_price": 0.50,
-                "forecast_hours": 24,
-            },
-        )
-        assert result["type"] == FlowResultType.FORM
-        assert result["step_id"] == "dashboard"
-
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            user_input={"dashboard_url_path": ""},
-        )
-        assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["title"] == "Battery Arbitrage"
-        data = result["data"]
-        assert data["evcc_url"] == "http://localhost:7070"
-        # Efficiency should be normalised to 0–1
-        assert data["round_trip_efficiency"] == pytest.approx(0.92)
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Solar AI"
+    data = result["data"]
+    assert data[C.CONF_LIVE_DATA_SOURCE] == C.LIVE_SOURCE_EVCC
+    assert data[C.CONF_EVCC_URL] == "http://evcc.local:7070"
+    assert data[C.CONF_BATTERY_CAPACITY] == 11.52
+    assert data[C.CONF_DSO_GLN] == C.DEFAULT_DSO_GLN
+    assert data[C.CONF_CURRENCY] == "DKK"
+    assert data[C.CONF_CREATE_DASHBOARD] is False
+    assert data[C.CONF_SOLAR_FORECAST_SOURCE] == C.SOLAR_SOURCE_FORECAST_SOLAR
+    for key, entity_id in DETECTED.items():
+        assert data[key] == entity_id
+    assert "_evcc_data" not in data
+    assert len(mock_setup.mock_calls) == 1
 
 
 async def test_evcc_unreachable(hass):
-    """Test that an unreachable EVCC shows an error."""
-    with patch(
-        "custom_components.battery_arbitrage.config_flow."
-        "BatteryArbitrageConfigFlow._test_evcc",
-        return_value=(False, {}),
+    """An unreachable EVCC keeps the user on the EVCC URL step with an error."""
+    with patch(f"{DISCOVERY}.has_foxess_modbus", return_value=True), patch(
+        f"{FLOW}._test_evcc", return_value=(False, {})
     ):
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
         )
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            user_input={"evcc_url": "http://bad.host:7070"},
+            user_input={C.CONF_LIVE_DATA_SOURCE: C.LIVE_SOURCE_EVCC},
         )
-        assert result["type"] == FlowResultType.FORM
-        assert "evcc_url" in result["errors"]
-        assert result["errors"]["evcc_url"] == "evcc_unreachable"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={C.CONF_EVCC_URL: "http://bad.host:7070"},
+        )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "evcc_url"
+    assert result["errors"] == {C.CONF_EVCC_URL: "evcc_unreachable"}
