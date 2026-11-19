@@ -9,6 +9,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.31.9] — 2026-11-19
+
+### Changed — every change is checked before release
+
+Changes now reach `main` through a pull request from the `dev` branch, and a release is made only when all checks pass:
+
+| Check | What it does |
+|---|---|
+| Tests | Runs the test suite |
+| Hassfest | Home Assistant's validation of the integration |
+| HACS validation | Validates the repository for HACS and the Marketplace |
+| Lint and security lint | Ruff for syntax errors and undefined names, Bandit for medium and high severity security findings |
+| Public content | Fails on private IP addresses and blocked terms in added lines and commit messages; warns on dates, DKK amounts and kWh figures that may come from one installation |
+
+No change in behaviour.
+
+---
+
 ## [1.31.8] — 2026-11-18
 
 ### Fixed — grid charging and export with EVCC controlling the battery
