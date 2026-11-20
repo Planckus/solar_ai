@@ -822,7 +822,8 @@ class OcppServer:
         try:
             self._server = await websockets.serve(
                 self._handle_connection,
-                host="0.0.0.0",
+                # Chargers on the LAN connect to this server, so it listens on all interfaces.
+                host="0.0.0.0",  # nosec B104
                 port=self.port,
                 subprotocols=["ocpp1.6"],
             )

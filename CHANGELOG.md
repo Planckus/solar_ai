@@ -9,6 +9,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.31.9] — 2026-11-19
+
+### Changed — every change is checked before release
+
+Changes now reach `main` through a pull request from the `dev` branch, and a release is made only when all checks pass:
+
+| Check | What it does |
+|---|---|
+| Tests | Runs the test suite |
+| Hassfest | Home Assistant's validation of the integration |
+| HACS validation | Validates the repository for HACS and the Marketplace |
+| Lint and security lint | Ruff for syntax errors and undefined names, Bandit for medium and high severity security findings |
+| Public content | Fails on private IP addresses and blocked terms in added lines and commit messages; warns on dates, DKK amounts and kWh figures that may come from one installation |
+
+### Fixed — findings from the first check run
+
+- The manifest lists `http` and `lovelace` in `after_dependencies`. The integration serves its card files and registers a dashboard resource through them.
+- The Price area and Charging current step selects no longer have translated option labels. Their option values (`DK1`, `DK2`, `0.1`, `0.5`, `1.0`) are not valid translation keys. The selects now show the option values. Stored settings are unchanged.
+- The OCPP setup step writes the charger backend URL as `ws://HA-IP:PORT/CPID/`. The angle-bracket form was read as HTML.
+- The embedded OCPP server keeps listening on all interfaces, since chargers on the local network connect to it. The line is marked as reviewed for Bandit.
+- The test requirements include `websockets`, which the OCPP server tests import.
+- The test suite runs in CI. Tests that created their own event loop are async tests, pytest-asyncio runs in auto mode, and the Tests job runs in Danish local time, which the peak-block and plan-time tests assume.
+- The config flow tests cover the current setup wizard: the stop when FoxESS Modbus is missing, quick setup from source choice to a created entry, and the error for an unreachable EVCC. The previous tests described the first release's wizard.
+- The manifest keys are sorted as hassfest requires.
+
+---
+
 ## [1.31.8] — 2026-11-18
 
 ### Fixed — grid charging and export with EVCC controlling the battery
