@@ -931,6 +931,7 @@ CONF_BUY_PRICE_MODE = "buy_price_mode"
 BUY_PRICE_MODE_MANUAL = "manual"          # Existing manual stack (default, backward-compatible)
 BUY_PRICE_MODE_STROMLIGNING = "stromligning"  # Strømligning retailer pricing (DK)
 BUY_PRICE_MODE_OCTOPUS = "octopus"        # Octopus Energy retailer pricing (UK, v0.30.0)
+BUY_PRICE_MODE_PSTRYK = "pstryk"          # Pstryk retailer pricing, buy and sell (Poland, v1.32.0)
 DEFAULT_BUY_PRICE_MODE = BUY_PRICE_MODE_MANUAL
 
 # ── Country picker (v0.30.0) ────────────────────────────────────────────────
@@ -938,16 +939,37 @@ DEFAULT_BUY_PRICE_MODE = BUY_PRICE_MODE_MANUAL
 # in the config flow. Currently:
 #   denmark — Strømligning retailer pricing (DK), default VAT 25%
 #   uk      — Octopus Energy retailer pricing, default VAT 5%
+#   poland  — Pstryk retailer pricing (buy and sell prices, all-in)
 # More countries can be added later; the manual stack always remains
 # available as a fallback regardless of country.
 CONF_COUNTRY = "country"
 COUNTRY_DENMARK = "denmark"
 COUNTRY_UK = "uk"
+COUNTRY_POLAND = "poland"
 DEFAULT_COUNTRY = COUNTRY_DENMARK
 COUNTRY_OPTIONS: list[dict] = [
     {"value": COUNTRY_DENMARK, "label": "Denmark (Strømligning + Energi Data Service)"},
     {"value": COUNTRY_UK,      "label": "United Kingdom (Octopus Energy)"},
+    {"value": COUNTRY_POLAND,  "label": "Poland (Pstryk)"},
 ]
+
+# ── Pstryk retailer pricing (v1.32.0, Poland) ───────────────────────────────
+# Pstryk's API returns hourly all-in prices for today and, once published,
+# tomorrow: `price_gross` (what the customer pays to buy) and
+# `price_prosumer_gross` (what the customer is paid for export). Requests are
+# authorised with the API key from the customer's Pstryk account. In Pstryk
+# mode the sell price is the optimiser's price curve and the buy price comes
+# from the same response, so no Danish tariff, elafgift or VAT is applied.
+CONF_PSTRYK_API_KEY = "pstryk_api_key"
+PSTRYK_API_BASE = "https://api.pstryk.pl/integrations"
+PSTRYK_PRICING_PATH = (
+    "/meter-data/unified-metrics/?metrics=pricing"
+    "&resolution=hour&window_start={start}&window_end={end}"
+)
+PSTRYK_TIMEOUT_SEC = 30
+PSTRYK_RATE_LIMIT_DEFAULT_SECONDS = 900   # wait after HTTP 429 without Retry-After
+PSTRYK_MIN_SLOTS_PER_DAY = 20             # fewer hourly prices for a day = not published
+PSTRYK_PLACEHOLDER_SHARE = 0.9            # a day where this share of prices is identical = placeholder
 
 # ── Octopus Energy retailer pricing (v0.30.0) ──────────────────────────────
 # Octopus exposes a free public REST API that returns per-half-hour

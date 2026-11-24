@@ -78,10 +78,13 @@ from .const import (
     BUY_PRICE_MODE_MANUAL,
     BUY_PRICE_MODE_STROMLIGNING,
     BUY_PRICE_MODE_OCTOPUS,
+    BUY_PRICE_MODE_PSTRYK,
+    CONF_PSTRYK_API_KEY,
     SELL_SIDE_COMPANY_OPTIONS,
     COUNTRY_OPTIONS,
     COUNTRY_DENMARK,
     COUNTRY_UK,
+    COUNTRY_POLAND,
     OCTOPUS_GSP_REGIONS,
     CONF_PRICE_AREA,
     DEFAULT_PRICE_AREA,
@@ -377,7 +380,7 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                     )),
                 vol.Required(CONF_CURRENCY, default=DEFAULT_CURRENCY): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=["DKK", "EUR", "SEK", "NOK", "GBP", "USD", "AUD"],
+                        options=["DKK", "EUR", "SEK", "NOK", "GBP", "PLN", "USD", "AUD"],
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )),
                 vol.Optional(CONF_CREATE_DASHBOARD, default=True): bool,
@@ -609,7 +612,7 @@ class BatteryArbitrageConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.All(int, vol.Range(min=4, max=48)),
                 vol.Required(CONF_CURRENCY, default=DEFAULT_CURRENCY): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=["DKK", "EUR", "SEK", "NOK", "GBP", "USD", "AUD"],
+                        options=["DKK", "EUR", "SEK", "NOK", "GBP", "PLN", "USD", "AUD"],
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
@@ -742,7 +745,7 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                              default=data.get(CONF_CURRENCY, DEFAULT_CURRENCY)):
                     selector.SelectSelector(
                         selector.SelectSelectorConfig(
-                            options=["DKK", "EUR", "SEK", "NOK", "GBP", "USD", "AUD"],
+                            options=["DKK", "EUR", "SEK", "NOK", "GBP", "PLN", "USD", "AUD"],
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
@@ -846,11 +849,24 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
         Country picker drives which smart-pricing source is available:
           denmark → Strømligning retailer pricing
           uk      → Octopus Energy retailer pricing
+          poland  → Pstryk retailer pricing (v1.32.0)
         Manual stack is always available regardless of country.
         """
+        errors: dict[str, str] = {}
         if user_input is not None:
-            self._data.update(user_input)
-            return await self.async_step_ocpp_settings()
+            previous_country = {**self._entry.data, **self._data}.get(
+                CONF_COUNTRY, DEFAULT_COUNTRY)
+            if user_input.get(CONF_COUNTRY, previous_country) != previous_country:
+                # v1.32.0 — the buy-price modes on offer depend on the country,
+                # so a changed country redraws the form with that country's
+                # modes instead of saving a mode chosen from the old list.
+                self._data.update(user_input)
+            elif (user_input.get(CONF_BUY_PRICE_MODE) == BUY_PRICE_MODE_PSTRYK
+                    and not str(user_input.get(CONF_PSTRYK_API_KEY, "") or "").strip()):
+                errors[CONF_PSTRYK_API_KEY] = "pstryk_api_key_required"
+            else:
+                self._data.update(user_input)
+                return await self.async_step_ocpp_settings()
 
         data = {**self._entry.data, **self._data}
         country = data.get(CONF_COUNTRY, DEFAULT_COUNTRY)
@@ -905,9 +921,15 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                 "value": BUY_PRICE_MODE_OCTOPUS,
                 "label": "Octopus Energy retailer pricing (United Kingdom)",
             })
+        elif country == COUNTRY_POLAND:
+            buy_mode_options.append({
+                "value": BUY_PRICE_MODE_PSTRYK,
+                "label": "Pstryk retailer pricing, buy and sell (Poland)",
+            })
 
         return self.async_show_form(
             step_id="buy_price",
+            errors=errors,
             data_schema=vol.Schema({
                 vol.Required(
                     CONF_COUNTRY,
@@ -921,7 +943,12 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                 )),
                 vol.Required(
                     CONF_BUY_PRICE_MODE,
-                    default=data.get(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE),
+                    default=(
+                        data.get(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE)
+                        if data.get(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE)
+                        in [o["value"] for o in buy_mode_options]
+                        else BUY_PRICE_MODE_MANUAL
+                    ),
                 ): selector.SelectSelector(selector.SelectSelectorConfig(
                     options=buy_mode_options,
                     mode=selector.SelectSelectorMode.DROPDOWN,
@@ -962,6 +989,13 @@ class BatteryArbitrageOptionsFlow(OptionsFlow):
                 ): selector.SelectSelector(selector.SelectSelectorConfig(
                     options=OCTOPUS_GSP_REGIONS,
                     mode=selector.SelectSelectorMode.DROPDOWN,
+                )),
+                # Poland-specific field (only used when country=poland + mode=pstryk)
+                vol.Optional(
+                    CONF_PSTRYK_API_KEY,
+                    default=data.get(CONF_PSTRYK_API_KEY, ""),
+                ): selector.TextSelector(selector.TextSelectorConfig(
+                    type=selector.TextSelectorType.PASSWORD,
                 )),
                 # v0.29.0 — sell-side company picker. Independent of buy-side
                 # because Danish users often have different companies for the
