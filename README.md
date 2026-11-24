@@ -154,7 +154,7 @@ Between plan refreshes a **15-second execution tick** reads live FoxESS Modbus s
 
 The integration **learns**: it tracks per-hour solar forecast accuracy over the last 4 days, intra-hour residual error over the last 2 hours, actual battery charge/discharge rates at different temperatures, and your real house load by hour. Those corrections feed back into the next optimiser run, so after a few weeks of operation the plan reflects your specific install rather than a generic model. A live dashboard shows every decision and why; a session log records each EV charging session split into solar vs grid kWh; a savings tracker accumulates the realised arbitrage spread against a baseline of doing nothing.
 
-Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price areas + DatahubPricelist tariff fetch) and **United Kingdom** (Octopus Energy + GSP region picker). Other Nord Pool / EU markets work with the manual price-stack inputs.
+Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price areas + DatahubPricelist tariff fetch), **United Kingdom** (Octopus Energy + GSP region picker) and **Poland** (Pstryk buy and sell prices, new in v1.32.0 and not yet tested on a Polish install). Other Nord Pool / EU markets work with the manual price-stack inputs.
 
 ---
 
@@ -162,7 +162,7 @@ Country support today: **Denmark** (Strømligning retailers + DK1/DK2 price area
 
 This is a step-by-step walkthrough written for someone who has used Home Assistant but has never installed a custom integration. Budget about 30 minutes. Read [Prerequisites](#prerequisites) first and make sure the required integrations (at minimum the FoxESS Modbus integration and a solar-forecast source) are already installed and producing data — Solar AI builds on top of them.
 
-**Electricity prices are handled for you.** You do **not** need a separate price integration (Tibber, Nord Pool, etc.). During setup you just pick your **country**, **price area** (DK1/DK2 in Denmark) and your **electricity grid company (DSO)** from dropdowns, and Solar AI fetches the day-ahead spot price and the network tariffs automatically from Energi Data Service. Pointing it at an existing price sensor is optional (step 4).
+**Electricity prices are handled for you.** You do **not** need a separate price integration (Tibber, Nord Pool, etc.). During setup you just pick your **country**, **price area** (DK1/DK2 in Denmark) and your **electricity grid company (DSO)** from dropdowns, and Solar AI fetches the day-ahead spot price and the network tariffs automatically from Energi Data Service. In Poland, Solar AI takes both prices from your Pstryk account instead — see [Poland: Pstryk prices](#poland-pstryk-prices). Pointing it at an existing price sensor is optional (step 4).
 
 ### Before you start
 
@@ -173,6 +173,7 @@ This is a step-by-step walkthrough written for someone who has used Home Assista
 | **FoxESS Modbus integration**, with **write access** to the inverter | Reading the battery and grid, and controlling work mode and charge power | [Prerequisites](#prerequisites) |
 | **A solar forecast source** — Solcast (free account and API key), Forecast.Solar, or EVCC | Planning around tomorrow's sun | [Prerequisites](#prerequisites) |
 | An **EV charger** — EVCC, OCPP, or FoxESS Modbus | Optional; only for the EV features | [Step 5](#5-connect-an-ev-charger-optional) |
+| **Poland only:** a Pstryk account and its **API key** | Buy and sell prices from Pstryk | [Poland: Pstryk prices](#poland-pstryk-prices) |
 
 Electricity prices need nothing installed: Solar AI fetches the day-ahead spot price and your network tariffs itself.
 
@@ -183,7 +184,7 @@ The steps, in order:
 1. Check which installer your Home Assistant has: the built-in Marketplace (2026.11 or newer) or HACS (2026.10 or older).
 2. Add Solar AI and install it — or copy the files manually.
 3. Restart Home Assistant (HACS and manual installs only).
-4. Add and configure the integration (the setup wizard).
+4. Add and configure the integration (the setup wizard). In Poland, then switch the prices to Pstryk.
 5. Connect an EV charger (optional).
 6. Import the dashboard.
 7. Set your retailer price components (auto-filled if you use Strømligning).
@@ -254,13 +255,25 @@ Solar AI is added from its GitHub link, as a custom repository.
    | **No-EV acknowledgement** *(FoxESS-only)* | Confirm you have no EV, or that your charger never pulls from the house battery. This avoids tripping your main breaker. |
    | **Inverter control entities** | The work-mode `select`, the force-charge and force-discharge `number` entities, and the inverter ID. Defaults match the FoxESS Modbus integration; see [FoxESS Modbus entity IDs](#foxess-modbus-entity-ids). |
    | **Battery sensors** | SoC, cell temperature, charge/discharge power, and lifetime charge/discharge totals. |
-   | **Country, price area & grid company** | Choose your **country** (Denmark / UK), your **price area** (DK1 = western Denmark / Jutland + Fyn, DK2 = eastern Denmark / Sjælland), and your **electricity grid company (DSO)** from the dropdown. With just these, Solar AI fetches the day-ahead spot price **and** the network tariffs for your area automatically — **you do not need a separate electricity-price integration**. |
+   | **Country, price area & grid company** | Choose your **country** (Denmark / UK / Poland), your **price area** (DK1 = western Denmark / Jutland + Fyn, DK2 = eastern Denmark / Sjælland), and your **electricity grid company (DSO)** from the dropdown. With just these, Solar AI fetches the day-ahead spot price **and** the network tariffs for your area automatically — **you do not need a separate electricity-price integration**. |
    | **Electricity price source** *(optional)* | **Leave the spot-price entity blank** to use the automatic Energi Data Service prices from the choices above. Only fill it in if you'd rather read an existing price sensor instead (Strømligning, Tibber, etc.). |
    | **Solar forecast source** | EVCC, Solcast, Forecast.Solar, or Auto — plus the entity overrides. For Solcast see [the two-entity wiring note](#solcast-ha-integration--two-entity-wiring-v0280). |
    | **Battery & trading parameters** | Battery capacity (kWh), round-trip efficiency, starting thresholds and currency. |
    | **Dashboard** | Leave **"Create the Solar AI dashboard for me"** ticked (recommended) and the integration builds the dashboard for you at the URL `/solar-ai`, with the entity ids resolved to your system — you skip the manual import in step 6. Untick it if you'd rather import the YAML by hand or link an existing dashboard; a hand-imported copy keeps the bundled ids and may need editing. |
 
 Everything here can be changed later from *Settings → Devices & Services → Solar AI → **Configure*** without re-running the wizard. When the wizard finishes, Solar AI creates its sensors and switches and starts in monitoring mode (control off).
+
+### Poland: Pstryk prices
+
+New in v1.32.0 and not yet tested on a Polish installation. Pstryk mode takes the buy price and the sell price for each hour from your Pstryk account, so no Danish tariffs or taxes are added.
+
+1. Get your API key in the Pstryk app.
+2. Finish the setup wizard in step 4. Its grid-company and price-area choices are Danish; pick any, they are not used in Pstryk mode. Choose **PLN** as the currency on the page that asks for it.
+3. Open *Settings → Devices & Services → Solar AI → **Configure***, then click **Submit** on the first page to reach **Buy-price source**.
+4. Set **Country** to **Poland (Pstryk)** and click **Submit**. The page redraws with the Polish price source.
+5. Set **Buy-price mode** to **Pstryk**, paste the key into **Pstryk API key** and click **Submit**. Finish the remaining pages.
+
+Solar AI fetches prices once an hour. Tomorrow's prices are used once Pstryk has published them for the whole day, normally in the afternoon. If the key is wrong, the Home Assistant log shows "Pstryk rejected the API key" and Solar AI tries again an hour later. The price parameters in [step 7](#7-set-your-retailer-price-components) are not used in Pstryk mode.
 
 ### Using Solar AI with EVCC
 
@@ -352,7 +365,7 @@ You do **not** enter electricity prices here — the **spot price and the networ
 - **Seller-side fee** — your retailer's per-kWh cut on exports, if any.
 - **Minimum export price** — optional floor below which Solar AI will not export (default 0.00).
 
-(In Strømligning mode these fields are greyed out — they're filled automatically.) The grid feed-in tariff (DSO + Energinet production tariff) is always fetched and deducted automatically.
+(In Strømligning mode these fields are greyed out — they're filled automatically.) The grid feed-in tariff (DSO + Energinet production tariff) is always fetched and deducted automatically. In Pstryk mode (Poland) none of these values or tariffs are used: Pstryk's prices already include everything.
 
 ### 8. Run in monitoring mode, then enable control
 
@@ -379,6 +392,13 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.32.0 — Pstryk prices for Poland
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Pstryk (Poland):** choose *Poland (Pstryk)* and the *Pstryk* buy-price mode in *Configure*, and enter the API key from the Pstryk app. Solar AI then plans with Pstryk's hourly sell price and buys at Pstryk's gross price, with no Danish tariffs or taxes applied. Not yet tested on a Polish install.
+- **Setup:** the buy-price step redraws itself when the country changes; PLN is in the currency lists.
 
 ### v1.31.9 — every change is checked before release
 
@@ -1610,6 +1630,7 @@ Use the url_path exactly as it appears in *Settings → Dashboards* — the part
 ## Known limitations
 
 - **Denmark-focused.** The price model is built around DKK/kWh, Nord Pool Elspot via Energi Data Service, and the Danish DatahubPricelist tariff API. Tariff fetching is Danish-specific. The spot price area (DK1/DK2) is selected in the config flow; it defaults to DK2.
+- **Poland (Pstryk) is untested.** Pstryk mode (v1.32.0) follows Pstryk's API as used by existing Home Assistant integrations but has not yet run on a Polish installation. Setup is in [Poland: Pstryk prices](#poland-pstryk-prices). Like UK installs, PLN installs see some `DKK/kWh` labels; the numbers are in PLN.
 - **FoxESS Modbus required.** Work-mode control uses FoxESS-specific entities. Other inverters require code changes in `coordinator.py`.
 - **EVCC required for EV-aware scheduling.** Solar forecasts, live grid power, and EV charge data come from EVCC's API in EVCC and Hybrid modes. FoxESS-only mode loses the EV-aware scheduling features (the OCPP controller still works).
 - **DSO coverage.** Network tariff and indfødningstarif auto-fetch covers Dinel (Jutland/Fyn). Other Danish DSOs can be added in `const.py`; GLN numbers are available in the Energi Data Service DatahubPricelist.

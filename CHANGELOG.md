@@ -9,6 +9,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.32.0] — 2026-11-24
+
+### Added — Pstryk prices for Poland
+
+Solar AI can take its buy and sell prices from Pstryk, the Polish dynamic-tariff retailer. In *Configure → Buy-price source*, choose **Poland (Pstryk)** as the country, choose **Pstryk** as the buy-price mode and enter the API key from the Pstryk app.
+
+| What | In Pstryk mode |
+|---|---|
+| Price curve the optimiser plans over | Pstryk's hourly prosumer (sell) price, today and tomorrow once published |
+| Buy price per slot | Pstryk's gross price for the same hour, used as it is |
+| Sell price | Pstryk's prosumer price, with no sell-side fee and no feed-in tariff deducted |
+| Danish tariff, elafgift, VAT and the Energinet tariff fetch | Not applied |
+
+- Prices are fetched once an hour in one request. Tomorrow's prices are used once Pstryk has published a full day; incomplete or placeholder days are skipped.
+- A rejected API key pauses requests for an hour and logs an error. HTTP 429 pauses requests for the time Pstryk asks for. A failed fetch keeps the last good prices.
+- The API key is stored in the integration's configuration and sent only to Pstryk's API.
+
+This is new and has not yet run on a Polish installation. It needs testing with a real Pstryk account before it can be called supported.
+
+### Changed
+
+- The buy-price step redraws itself when the country changes, so the price sources for the new country can be chosen without saving and reopening.
+- PLN is available in the currency lists.
+
+---
+
 ## [1.31.9] — 2026-11-19
 
 ### Changed — every change is checked before release

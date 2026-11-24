@@ -299,6 +299,8 @@ from .const import (
     BUY_PRICE_MODE_MANUAL,
     BUY_PRICE_MODE_STROMLIGNING,
     BUY_PRICE_MODE_OCTOPUS,
+    BUY_PRICE_MODE_PSTRYK,
+    CONF_PSTRYK_API_KEY,
     DEFAULT_BUY_PRICE_MODE,
     DEFAULT_SELL_SIDE_COMPANY,
     DEFAULT_OCTOPUS_REGION,
@@ -408,6 +410,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # buy-price mode is not "octopus".
         self._cached_octopus_prices: dict[str, dict] = {}
         self._last_octopus_refresh: datetime | None = None
+        # Pstryk cache (v1.32.0, Poland). Buy price per slot, keyed by
+        # pstryk.slot_key(start). The sell prices from the same response become
+        # _cached_grid_rates. Empty unless the buy-price mode is "pstryk".
+        self._cached_pstryk_buy: dict[str, float] = {}
+        # After HTTP 429 or a rejected key, no request before this time.
+        self._pstryk_not_before: datetime | None = None
         # Learning tick gate: storage-write operations run every 5 min, not every fast tick
         self._last_learning_tick: datetime | None = None
         self._vacation_mode: bool = False  # Cached between learning ticks
@@ -1335,44 +1343,52 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 _LOGGER.warning("Solar forecast fetch failed (%s) — using cached/empty data", solar_err)
                 solar_ok = bool(self._cached_solar_rates.get("rates"))
 
-            # EDS spot prices — primary price source; _fetch_eds_prices handles its own errors
-            eds_data = await self._fetch_eds_prices(session, price_area, now)
             fresh_prices = False
-            if eds_data.get("rates"):
-                self._cached_grid_rates = eds_data
-                fresh_prices = True
-                _LOGGER.debug(
-                    "EDS: %d spot price slots for area %s",
-                    len(eds_data["rates"]), price_area,
-                )
+            if self._setting(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE) == BUY_PRICE_MODE_PSTRYK:
+                # v1.32.0 — Pstryk (Poland) supplies the whole price curve: its
+                # sell prices become the grid rates and its buy prices the
+                # per-slot buy price. Energi Data Service covers Danish price
+                # areas only, so it is not called. On a failed fetch the last
+                # good Pstryk prices stay in place.
+                fresh_prices = await self._refresh_pstryk_prices(session, now)
             else:
-                # v0.59.20 — opt-in cross-source forecast fallback: derive the
-                # spot-price forecast from the cached Strømligning prices (their
-                # spot component) so an EDS gap doesn't blank the chart/optimiser.
-                # Off by default; single-source users are unaffected.
-                sl_fc = self._stromligning_spot_forecast(now)
-                if sl_fc.get("rates"):
-                    self._cached_grid_rates = sl_fc
+                # EDS spot prices — primary price source; _fetch_eds_prices handles its own errors
+                eds_data = await self._fetch_eds_prices(session, price_area, now)
+                if eds_data.get("rates"):
+                    self._cached_grid_rates = eds_data
                     fresh_prices = True
-                    _LOGGER.info(
-                        "EDS spot prices unavailable for %s — using Strømligning "
-                        "spot forecast (%d slots)", price_area, len(sl_fc["rates"]),
+                    _LOGGER.debug(
+                        "EDS: %d spot price slots for area %s",
+                        len(eds_data["rates"]), price_area,
                     )
                 else:
-                    # EDS (+ Strømligning) unavailable — fall back to EVCC grid tariff
-                    _LOGGER.info(
-                        "EDS spot prices unavailable for %s — falling back to EVCC grid tariff",
-                        price_area,
-                    )
-                    try:
-                        grid_data = await self._fetch_json(session, f"{evcc_url}{EVCC_API_GRID}")
-                        if grid_data.get("rates"):
-                            self._cached_grid_rates = grid_data
-                            fresh_prices = True
-                        else:
-                            _LOGGER.warning("EVCC grid tariff also returned no rates")
-                    except Exception as evcc_err:
-                        _LOGGER.debug("EVCC grid tariff fallback failed: %s", evcc_err)
+                    # v0.59.20 — opt-in cross-source forecast fallback: derive the
+                    # spot-price forecast from the cached Strømligning prices (their
+                    # spot component) so an EDS gap doesn't blank the chart/optimiser.
+                    # Off by default; single-source users are unaffected.
+                    sl_fc = self._stromligning_spot_forecast(now)
+                    if sl_fc.get("rates"):
+                        self._cached_grid_rates = sl_fc
+                        fresh_prices = True
+                        _LOGGER.info(
+                            "EDS spot prices unavailable for %s — using Strømligning "
+                            "spot forecast (%d slots)", price_area, len(sl_fc["rates"]),
+                        )
+                    else:
+                        # EDS (+ Strømligning) unavailable — fall back to EVCC grid tariff
+                        _LOGGER.info(
+                            "EDS spot prices unavailable for %s — falling back to EVCC grid tariff",
+                            price_area,
+                        )
+                        try:
+                            grid_data = await self._fetch_json(session, f"{evcc_url}{EVCC_API_GRID}")
+                            if grid_data.get("rates"):
+                                self._cached_grid_rates = grid_data
+                                fresh_prices = True
+                            else:
+                                _LOGGER.warning("EVCC grid tariff also returned no rates")
+                        except Exception as evcc_err:
+                            _LOGGER.debug("EVCC grid tariff fallback failed: %s", evcc_err)
 
             self._last_tariff_refresh = now
             # v0.59.16 — drive the retry cadence: usable rates ⇒ hourly; nothing
@@ -1406,9 +1422,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         # DatahubPricelist). Skip the block when the user has disabled it
         # (typically because they're outside Denmark). The tariff_schedule
         # stays at zeros and per-hour tariff components don't get added.
+        # v1.32.0 — the Danish DSO/Energinet tariff fetch does not apply to
+        # Pstryk's all-in prices, so it is skipped in Pstryk mode.
         if tariff_schedule_stale and self.config.get(
             CONF_TARIFF_FETCH_ENABLED, DEFAULT_TARIFF_FETCH_ENABLED,
-        ):
+        ) and self._setting(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE) != BUY_PRICE_MODE_PSTRYK:
             from .tariffs import fetch_tariff_schedule, fetch_feed_in_tariff  # avoid circular import at module level
             dso_gln = self.config.get(CONF_DSO_GLN, DEFAULT_DSO_GLN)
             try:
@@ -1883,7 +1901,12 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         )
         spot_ex_vat: float = 0.0
         spot_from_entity = False
-        if spot_entity_id:
+        # v1.32.0 — in Pstryk mode the current price comes from the Pstryk
+        # curve below (the sell price), never from a configured spot entity.
+        pstryk_mode = (
+            self._setting(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE)
+            == BUY_PRICE_MODE_PSTRYK)
+        if spot_entity_id and not pstryk_mode:
             spot_state = self.hass.states.get(spot_entity_id)
             if spot_state and spot_state.state not in ("unknown", "unavailable"):
                 try:
@@ -1921,6 +1944,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                     export_fee = float(opt["fee_dkk_kwh"])
                     break
         feed_in_tariff = round(self._feed_in_tariff_dso + self._feed_in_tariff_energinet, 6)
+        if pstryk_mode:
+            # v1.32.0 — Pstryk's prosumer price is already what is paid for
+            # export: no sell-side fee and no Danish feed-in tariff.
+            export_fee = 0.0
+            feed_in_tariff = 0.0
         # Raw export price before floor guard (used in chart / plan)
         export_price_raw = spot_ex_vat - export_fee - feed_in_tariff
         export_price = max(0.0, export_price_raw)
@@ -9500,6 +9528,23 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         """
         mode = self._setting(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE)
 
+        # ── Pstryk mode (v1.32.0, Poland) ────────────────────────────────
+        # The all-in buy price comes from the same response as the price
+        # curve, so every slot has one. A slot without one (should not
+        # happen) gets the highest cached buy price, which keeps the
+        # optimiser from planning a buy on a price it does not know.
+        if mode == BUY_PRICE_MODE_PSTRYK:
+            if self._cached_pstryk_buy:
+                if slot_start_dt is not None:
+                    from .pstryk import slot_key  # noqa: PLC0415
+                    hour_start = slot_start_dt.astimezone(timezone.utc).replace(
+                        minute=0, second=0, microsecond=0)
+                    price = self._cached_pstryk_buy.get(slot_key(hour_start))
+                    if price is not None:
+                        return price
+                return max(self._cached_pstryk_buy.values())
+            return spot
+
         # ── Octopus Energy mode (v0.30.0, UK) ────────────────────────────
         if mode == BUY_PRICE_MODE_OCTOPUS and slot_start_dt is not None:
             # Octopus rates are keyed by `valid_from` ISO Z timestamps,
@@ -9585,6 +9630,57 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     # ------------------------------------------------------------------ #
     # Octopus Energy retailer pricing (v0.30.0)                            #
     # ------------------------------------------------------------------ #
+
+    async def _refresh_pstryk_prices(
+        self, session: aiohttp.ClientSession, now: datetime,
+    ) -> bool:
+        """Refresh the Pstryk price curve (v1.32.0, Poland).
+
+        On success the sell prices replace `_cached_grid_rates` and the buy
+        prices replace `_cached_pstryk_buy`; returns True. On failure the last
+        good Pstryk prices stay; returns False so the caller retries soon. If
+        there are no Pstryk prices yet, the grid rates are emptied instead of
+        keeping another market's prices from before the switch.
+        """
+        from homeassistant.util import dt as dt_util  # noqa: PLC0415
+        from . import pstryk  # noqa: PLC0415
+
+        def _failed() -> bool:
+            if not self._cached_pstryk_buy:
+                self._cached_grid_rates = {"rates": []}
+            return False
+
+        api_key = str(self.config.get(CONF_PSTRYK_API_KEY, "") or "").strip()
+        if self._pstryk_not_before is not None and now < self._pstryk_not_before:
+            return _failed()
+        if not api_key:
+            # Saving a key in Configure reloads the integration, which clears
+            # this wait; without one, warn once an hour rather than every retry.
+            _LOGGER.warning("Pstryk price mode is selected but no API key is set")
+            self._pstryk_not_before = now + timedelta(hours=1)
+            return _failed()
+        try:
+            slots = await pstryk.fetch_prices(
+                session, api_key, now, dt_util.now().tzinfo)
+        except pstryk.PstrykAuthError as err:
+            _LOGGER.error(
+                "Pstryk rejected the API key (%s). Check the key in Configure; "
+                "retrying in an hour", err)
+            self._pstryk_not_before = now + timedelta(hours=1)
+            return _failed()
+        except pstryk.PstrykRateLimited as err:
+            _LOGGER.warning("Pstryk rate limit: next request in %d s", err.retry_after)
+            self._pstryk_not_before = now + timedelta(seconds=err.retry_after)
+            return _failed()
+        if not slots:
+            return _failed()
+        self._pstryk_not_before = None
+        self._cached_grid_rates = {
+            "rates": [{"start": s["start"], "value": s["sell"]} for s in slots],
+        }
+        self._cached_pstryk_buy = {s["start"]: s["buy"] for s in slots}
+        _LOGGER.debug("Pstryk: %d hourly prices", len(slots))
+        return True
 
     async def _maybe_refresh_octopus_prices(
         self, session: aiohttp.ClientSession, now: datetime,
