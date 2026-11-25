@@ -97,6 +97,11 @@ from .const import (
     STROMLIGNING_SPOTPRICE_EX_VAT,
 )
 from .coordinator import BatteryArbitrageCoordinator
+# v1.32.1 — imported at module level so Home Assistant loads the OCPP library
+# in its import executor. Importing it inside async_setup_entry made the
+# library read its JSON schemas from disk inside the event loop, which Home
+# Assistant reports as a blocking call.
+from .ocpp_server import OcppServer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -336,7 +341,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Read via _setting so the Advanced-pane switch (stored override) decides
     # whether the server starts; storage is already loaded by this point.
     if coordinator._setting(CONF_OCPP_EMBEDDED, DEFAULT_OCPP_EMBEDDED):
-        from .ocpp_server import OcppServer
         port = int(entry.data.get(CONF_OCPP_PORT, DEFAULT_OCPP_PORT))
         # Share the persisted_metadata dict by reference (v0.27.3) — so the
         # OcppServer can pre-populate ChargePoint instances from values that

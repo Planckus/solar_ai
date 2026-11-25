@@ -103,3 +103,16 @@ def test_event_log_capped_at_50():
     assert len(cp.events) == 50
     assert cp.events[-1]["detail"] == "59"
     assert cp.events[0]["detail"] == "10"
+
+
+def test_ocpp_module_is_imported_with_the_integration():
+    """v1.32.1 — the OCPP module (and the ocpp library, which reads its JSON
+    schemas from disk) must load at integration import, which Home Assistant
+    runs in its import executor, not inside async_setup_entry on the event loop."""
+    import inspect
+
+    import custom_components.battery_arbitrage as integration
+    from custom_components.battery_arbitrage.ocpp_server import OcppServer
+
+    assert integration.OcppServer is OcppServer
+    assert "import OcppServer" not in inspect.getsource(integration.async_setup_entry)

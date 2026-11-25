@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.32.1] — 2026-11-25
+
+### Fixed
+
+- **Blocking call when the built-in OCPP server starts.** Solar AI imported the OCPP library inside its setup, so the library read its JSON schemas from disk inside Home Assistant's event loop, and Home Assistant logged "Detected blocking call". The OCPP module is now imported with the rest of the integration, which Home Assistant does in its import executor. Installs with the built-in OCPP server switched off were not affected.
+- **Inverter ID help text.** The setup wizard called the inverter ID "a hex string". The FoxESS Modbus service accepts the inverter's friendly name in that integration or its device ID; a wrong value makes export-limit writes fail with "Unable to find an inverter". The text now says so, and the *Configure* page shows it too.
+
+---
+
 ## [1.32.0] — 2026-11-24
 
 ### Added — Pstryk prices for Poland
