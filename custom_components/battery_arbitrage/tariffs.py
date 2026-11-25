@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import random
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -22,6 +23,42 @@ _TIMEOUT = aiohttp.ClientTimeout(total=15)
 # together.
 _FETCH_RETRIES = 4
 _RETRY_BACKOFF_SECONDS = [1.5, 2.5, 4.0]   # waits between attempts (last value reused)
+
+# v1.32.2 — Energi Data Service limits requests per IP over a short window and
+# answers HTTP 429 with Retry-After: 60. Fired together, the six tariff
+# queries kept tripping it, and retrying 1.5-5 s later kept them inside the
+# window, so a refresh could fail for hours. Every DatahubPricelist request
+# now goes through one lock, starts at least _MIN_REQUEST_GAP_SECONDS after
+# the previous one, and a 429 waits for the server's Retry-After. Identical
+# queries within _CACHE_SECONDS are answered from memory; the DSO lookback
+# query is shared by the schedule and the feed-in tariff fetch.
+_MIN_REQUEST_GAP_SECONDS = 65.0         # probed: 2-30 s apart -> 429, 75 s apart -> 200
+_RETRY_AFTER_DEFAULT_SECONDS = 60
+_RETRY_AFTER_MAX_SECONDS = 180
+_CACHE_SECONDS = 600
+
+_request_lock: asyncio.Lock | None = None
+_request_lock_loop: asyncio.AbstractEventLoop | None = None
+_last_request_at: float | None = None
+_response_cache: dict[str, tuple[float, list[dict]]] = {}
+
+
+def _get_request_lock() -> asyncio.Lock:
+    """One lock per event loop (tests run each case in a fresh loop)."""
+    global _request_lock, _request_lock_loop
+    loop = asyncio.get_running_loop()
+    if _request_lock is None or _request_lock_loop is not loop:
+        _request_lock = asyncio.Lock()
+        _request_lock_loop = loop
+    return _request_lock
+
+
+def _retry_after_seconds(resp: Any) -> float:
+    try:
+        value = float(resp.headers.get("Retry-After", ""))
+    except (TypeError, ValueError):
+        value = _RETRY_AFTER_DEFAULT_SECONDS
+    return max(1.0, min(value, _RETRY_AFTER_MAX_SECONDS))
 
 # Historical lookback start date.  Covers all seasonal/annual tariff records
 # (Energinet updates once a year, most DSOs update 1–4 times per year).
@@ -77,22 +114,42 @@ async def _fetch_raw_records(
         url += f"&end={end}"
     if sort:
         url += f"&sort={sort}"
+    global _last_request_at
+    cached = _response_cache.get(url)
+    if cached is not None and time.monotonic() - cached[0] < _CACHE_SECONDS:
+        return cached[1]
     last_err: Any = None
-    for attempt in range(_FETCH_RETRIES):
-        try:
-            async with session.get(url, timeout=_TIMEOUT) as resp:
-                if resp.status == 429 or resp.status >= 500:
-                    last_err = f"HTTP {resp.status}"
-                else:
-                    resp.raise_for_status()
-                    data: dict[str, Any] = await resp.json(content_type=None)
-                    return data.get("records", [])
-        except Exception as err:  # noqa: BLE001 — network/JSON/timeout all retryable
-            last_err = err
-        # Back off (with jitter) before the next attempt, except after the last.
-        if attempt < _FETCH_RETRIES - 1:
+    async with _get_request_lock():
+        # Another caller may have fetched the same query while this one waited.
+        cached = _response_cache.get(url)
+        if cached is not None and time.monotonic() - cached[0] < _CACHE_SECONDS:
+            return cached[1]
+        for attempt in range(_FETCH_RETRIES):
+            if _last_request_at is not None:
+                gap = _MIN_REQUEST_GAP_SECONDS - (time.monotonic() - _last_request_at)
+                if gap > 0:
+                    await asyncio.sleep(gap)
+            _last_request_at = time.monotonic()
             base = _RETRY_BACKOFF_SECONDS[min(attempt, len(_RETRY_BACKOFF_SECONDS) - 1)]
-            await asyncio.sleep(base + random.uniform(0, 1.0))
+            wait = base + random.uniform(0, 1.0)
+            try:
+                async with session.get(url, timeout=_TIMEOUT) as resp:
+                    if resp.status == 429:
+                        last_err = "HTTP 429"
+                        wait = _retry_after_seconds(resp)
+                    elif resp.status >= 500:
+                        last_err = f"HTTP {resp.status}"
+                    else:
+                        resp.raise_for_status()
+                        data: dict[str, Any] = await resp.json(content_type=None)
+                        records = data.get("records", [])
+                        _response_cache[url] = (time.monotonic(), records)
+                        return records
+            except Exception as err:  # noqa: BLE001 — network/JSON/timeout all retryable
+                last_err = err
+            # Wait before the next attempt (Retry-After on 429), except after the last.
+            if attempt < _FETCH_RETRIES - 1:
+                await asyncio.sleep(wait)
     _LOGGER.warning(
         "DatahubPricelist fetch failed for GLN %s (start=%s) after %d attempts: %s",
         gln, start, _FETCH_RETRIES, last_err,

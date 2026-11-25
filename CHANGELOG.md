@@ -9,6 +9,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.32.2] — 2026-11-25
+
+### Fixed — tariff refresh no longer fails for hours on HTTP 429
+
+Energi Data Service limits requests per IP over a short window and answers HTTP 429 with `Retry-After: 60`. The daily tariff refresh sent its six DatahubPricelist queries at once and retried a 429 after 1.5–5 seconds, inside the same window, so every query failed again. The whole round was repeated every 10 minutes and could fail for hours. The cached tariffs stayed in use, so prices were not affected, but a tariff change could arrive hours late.
+
+- DatahubPricelist requests are sent one at a time, at least 65 seconds apart. Requests up to 30 seconds apart were refused; 75 seconds apart they all succeeded. A refresh now takes about five minutes, once a day.
+- A 429 waits for the time in the server's `Retry-After` header before the next attempt.
+- An identical query within 10 minutes is answered from memory. The DSO query that the tariff schedule and the feed-in tariff both used is now sent once.
+- The refresh runs as a background task, so the paced requests never hold up the 15-second update that drives the inverter.
+
+---
+
 ## [1.32.1] — 2026-11-25
 
 ### Fixed

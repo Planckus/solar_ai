@@ -393,6 +393,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.32.2 — tariff refresh no longer fails for hours on HTTP 429
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Danish tariff refresh:** requests to Energi Data Service are sent one at a time with a pause between them, a rate-limit answer (HTTP 429) waits as long as the server asks, and a duplicate query is gone. The refresh runs in the background, so it never holds up battery control.
+
 ### v1.32.1 — no blocking call when the OCPP server starts
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).

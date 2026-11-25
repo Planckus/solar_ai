@@ -686,6 +686,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Close the FoxESS Modbus charger connection if one was opened (v0.57.0).
     await coordinator.async_close_ev_backend()
+    await coordinator.async_cancel_tariff_refresh()
 
     # Release the house-battery lock if it's currently engaged (v0.27.2).
     # Otherwise a restart mid-FULL-mode-charge would leave the battery
