@@ -416,6 +416,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         self._cached_pstryk_buy: dict[str, float] = {}
         # After HTTP 429 or a rejected key, no request before this time.
         self._pstryk_not_before: datetime | None = None
+        # v1.32.2 — background tariff refresh (see _refresh_tariff_schedule).
+        self._tariff_task: asyncio.Task | None = None
         # Learning tick gate: storage-write operations run every 5 min, not every fast tick
         self._last_learning_tick: datetime | None = None
         self._vacation_mode: bool = False  # Cached between learning ticks
@@ -1427,111 +1429,19 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if tariff_schedule_stale and self.config.get(
             CONF_TARIFF_FETCH_ENABLED, DEFAULT_TARIFF_FETCH_ENABLED,
         ) and self._setting(CONF_BUY_PRICE_MODE, DEFAULT_BUY_PRICE_MODE) != BUY_PRICE_MODE_PSTRYK:
-            from .tariffs import fetch_tariff_schedule, fetch_feed_in_tariff  # avoid circular import at module level
-            dso_gln = self.config.get(CONF_DSO_GLN, DEFAULT_DSO_GLN)
-            try:
-                # v0.49.1 — fetch sequentially, NOT via one asyncio.gather.
-                # Each call below itself issues two concurrent EDS queries, so
-                # gathering all three fired six requests at once and reliably
-                # tripped Energi Data Service's rate limit (HTTP 429). A 429 on
-                # an unlucky tick committed degenerate/zero data that then stuck
-                # for 24 h. This is a once-a-day fetch, so the small extra
-                # latency from running them one after another is irrelevant and
-                # keeps the burst within the rate limit.
-                #
-                # DSO: 24 hourly prices + genuinely varying hours, restricted
-                # to the residential C-time band via Note substring.
-                # v0.39.8 — `note_substring="Nettarif C"` because the
-                # require-all-prices + require-varying filters alone still let
-                # through tier-A and tier-B records (Dinel publishes 7 parallel
-                # bands; previously all 6 distinct profiles were summed,
-                # overstating the per-kWh tariff ~3x).
-                dso_sched = await fetch_tariff_schedule(
-                    session, dso_gln, now,
-                    require_all_prices=True,
-                    require_varying_prices=True,
-                    note_substring="Nettarif C",
+            # v1.32.2 — the refresh runs as a background task. Its requests to
+            # Energi Data Service are paced and wait out HTTP 429 (see
+            # tariffs.py), so it can take minutes; awaited here it would hold
+            # up this update, which also drives the inverter. The timestamp is
+            # moved first so a slow or failed refresh is retried in ~10 min,
+            # not on every tick.
+            if self._tariff_task is None or self._tariff_task.done():
+                self._last_tariff_schedule_refresh = now - timedelta(
+                    seconds=TARIFF_SCHEDULE_REFRESH_SECONDS - 600)
+                self._tariff_task = self.hass.async_create_background_task(
+                    self._refresh_tariff_schedule(session, now),
+                    name="solar_ai_tariff_refresh",
                 )
-                # Energinet: codes 40000 (Transmissions nettarif) + 41000
-                # (Systemtarif) — both apply to residential consumers.
-                # v0.39.8 — 41000 added; was missing before, halving the
-                # Energinet contribution. Excludes 40010 (Indfødningstarif
-                # produktion), 40020 (HV 132/150 kV), capacity / industrial.
-                energinet_sched = await fetch_tariff_schedule(
-                    session, ENERGINET_GLN, now,
-                    allowed_codes=ENERGINET_TARIFF_CODES,
-                )
-                # Feed-in tariffs: DSO indfødning C + Energinet indfødning produktion (40010)
-                dso_feed_in, en_feed_in = await fetch_feed_in_tariff(
-                    session, dso_gln, ENERGINET_GLN, now,
-                )
-                # v0.39.13 — only commit if BOTH fetches returned non-empty
-                # data. Before this guard, a partial fetch (e.g. Energinet
-                # returning [0]*24 due to a Datahub rate-limit or transient
-                # network issue) would silently overwrite the cache with
-                # bad data and lock that 24-hour-stale state for a full
-                # day. Observed live: nettarif_denne_time
-                # dropped from DSO+Energinet (correct) to DSO only
-                # after one of several restarts re-fetched
-                # while Datahub was flaky. Now: keep the previous good
-                # cache and retry on the next coordinator tick.
-                dso_ok = any(dso_sched)
-                energinet_ok = any(energinet_sched)
-                if dso_ok and energinet_ok:
-                    self._tariff_schedule = [
-                        round(d + e, 4) for d, e in zip(dso_sched, energinet_sched)
-                    ]
-                    # v0.59.4 — persist the schedule + its refresh time so a
-                    # restart reuses it and skips the daily Datahub re-fetch
-                    # while still fresh (avoids the repeated-restart rate-limit).
-                    self._stored["tariff_schedule_cache"] = self._tariff_schedule
-                    self._stored["tariff_schedule_refresh_iso"] = now.isoformat()
-                    # v0.49.1 — fetch_feed_in_tariff now returns None (not 0.0)
-                    # when the lookup failed (e.g. an EDS 429 on the feed-in
-                    # queries while the consumption queries succeeded). Only
-                    # commit + persist a real value; otherwise keep the last
-                    # good cached one instead of zeroing the export price.
-                    if dso_feed_in is not None:
-                        self._feed_in_tariff_dso = dso_feed_in
-                        self._stored["feed_in_tariff_dso"] = dso_feed_in
-                    if en_feed_in is not None:
-                        self._feed_in_tariff_energinet = en_feed_in
-                        self._stored["feed_in_tariff_energinet"] = en_feed_in
-                    self._last_tariff_schedule_refresh = now
-                    # v0.49.1 — if we still have NO feed-in tariff at all (cold
-                    # cache plus a failed feed-in lookup, e.g. a 429 that the
-                    # retries didn't clear), don't sit on the 24-hour timer with
-                    # the export price stuck at 0. Pretend the refresh is nearly
-                    # stale so the next attempt happens in ~15 min instead.
-                    # Once any real feed-in value lands (and is persisted) this
-                    # branch stops firing and the normal 24-hour cadence holds.
-                    if not (self._feed_in_tariff_dso or self._feed_in_tariff_energinet):
-                        self._last_tariff_schedule_refresh = now - timedelta(
-                            seconds=max(0, TARIFF_SCHEDULE_REFRESH_SECONDS - 900),
-                        )
-                    _LOGGER.debug(
-                        "Tariff schedule refreshed (GLN %s + Energinet). "
-                        "Hour 0: %.4f, Hour 12: %.4f DKK/kWh",
-                        dso_gln,
-                        self._tariff_schedule[0],
-                        self._tariff_schedule[12],
-                    )
-                else:
-                    _LOGGER.warning(
-                        "Tariff schedule fetch partial — DSO ok=%s (sum=%.4f), "
-                        "Energinet ok=%s (sum=%.4f). Keeping previous cache; "
-                        "will retry in ~10 minutes.",
-                        dso_ok, sum(dso_sched),
-                        energinet_ok, sum(energinet_sched),
-                    )
-                    # Bump the refresh timestamp forward so the next retry
-                    # fires after ~10 minutes instead of 24 hours, but not
-                    # every coordinator tick (which would hammer Datahub).
-                    self._last_tariff_schedule_refresh = (
-                        now - timedelta(seconds=TARIFF_SCHEDULE_REFRESH_SECONDS - 600)
-                    )
-            except Exception as err:
-                _LOGGER.warning("Tariff schedule refresh failed, keeping existing: %s", err)
 
             # ── Strømligning retailer prices (v0.29.0) ─────────────────────
             # Refreshed on the same daily cadence as tariffs. Only runs when
@@ -6678,6 +6588,16 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             self._ev_modbus_backend_key = key
         return self._ev_modbus_backend
 
+    async def async_cancel_tariff_refresh(self) -> None:
+        """Cancel a running background tariff refresh on unload."""
+        task, self._tariff_task = self._tariff_task, None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+
     async def async_close_ev_backend(self) -> None:
         """Close the Modbus charger connection on unload (best-effort)."""
         if self._ev_modbus_backend is not None:
@@ -9630,6 +9550,122 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
     # ------------------------------------------------------------------ #
     # Octopus Energy retailer pricing (v0.30.0)                            #
     # ------------------------------------------------------------------ #
+
+    async def _refresh_tariff_schedule(
+        self, session: aiohttp.ClientSession, now: datetime,
+    ) -> None:
+        """Fetch the DSO + Energinet tariff schedule and feed-in tariffs.
+
+        v1.32.2 — runs as a background task started from _async_update_data.
+        On success the schedule, the feed-in tariffs and the refresh time are
+        stored; on a partial result the previous cache is kept and the next
+        attempt follows in ~10 minutes.
+        """
+        from .tariffs import fetch_tariff_schedule, fetch_feed_in_tariff  # avoid circular import at module level
+        dso_gln = self.config.get(CONF_DSO_GLN, DEFAULT_DSO_GLN)
+        try:
+            # v0.49.1 — fetch sequentially, NOT via one asyncio.gather.
+            # Each call below itself issues two concurrent EDS queries, so
+            # gathering all three fired six requests at once and reliably
+            # tripped Energi Data Service's rate limit (HTTP 429). A 429 on
+            # an unlucky tick committed degenerate/zero data that then stuck
+            # for 24 h. This is a once-a-day fetch, so the small extra
+            # latency from running them one after another is irrelevant and
+            # keeps the burst within the rate limit.
+            #
+            # DSO: 24 hourly prices + genuinely varying hours, restricted
+            # to the residential C-time band via Note substring.
+            # v0.39.8 — `note_substring="Nettarif C"` because the
+            # require-all-prices + require-varying filters alone still let
+            # through tier-A and tier-B records (Dinel publishes 7 parallel
+            # bands; previously all 6 distinct profiles were summed,
+            # overstating the per-kWh tariff ~3x).
+            dso_sched = await fetch_tariff_schedule(
+                session, dso_gln, now,
+                require_all_prices=True,
+                require_varying_prices=True,
+                note_substring="Nettarif C",
+            )
+            # Energinet: codes 40000 (Transmissions nettarif) + 41000
+            # (Systemtarif) — both apply to residential consumers.
+            # v0.39.8 — 41000 added; was missing before, halving the
+            # Energinet contribution. Excludes 40010 (Indfødningstarif
+            # produktion), 40020 (HV 132/150 kV), capacity / industrial.
+            energinet_sched = await fetch_tariff_schedule(
+                session, ENERGINET_GLN, now,
+                allowed_codes=ENERGINET_TARIFF_CODES,
+            )
+            # Feed-in tariffs: DSO indfødning C + Energinet indfødning produktion (40010)
+            dso_feed_in, en_feed_in = await fetch_feed_in_tariff(
+                session, dso_gln, ENERGINET_GLN, now,
+            )
+            # v0.39.13 — only commit if BOTH fetches returned non-empty
+            # data. Before this guard, a partial fetch (e.g. Energinet
+            # returning [0]*24 due to a Datahub rate-limit or transient
+            # network issue) would silently overwrite the cache with
+            # bad data and lock that 24-hour-stale state for a full
+            # day. Observed live: nettarif_denne_time
+            # dropped from DSO+Energinet (correct) to DSO only
+            # after one of several restarts re-fetched
+            # while Datahub was flaky. Now: keep the previous good
+            # cache and retry on the next coordinator tick.
+            dso_ok = any(dso_sched)
+            energinet_ok = any(energinet_sched)
+            if dso_ok and energinet_ok:
+                self._tariff_schedule = [
+                    round(d + e, 4) for d, e in zip(dso_sched, energinet_sched)
+                ]
+                # v0.59.4 — persist the schedule + its refresh time so a
+                # restart reuses it and skips the daily Datahub re-fetch
+                # while still fresh (avoids the repeated-restart rate-limit).
+                self._stored["tariff_schedule_cache"] = self._tariff_schedule
+                self._stored["tariff_schedule_refresh_iso"] = now.isoformat()
+                # v0.49.1 — fetch_feed_in_tariff now returns None (not 0.0)
+                # when the lookup failed (e.g. an EDS 429 on the feed-in
+                # queries while the consumption queries succeeded). Only
+                # commit + persist a real value; otherwise keep the last
+                # good cached one instead of zeroing the export price.
+                if dso_feed_in is not None:
+                    self._feed_in_tariff_dso = dso_feed_in
+                    self._stored["feed_in_tariff_dso"] = dso_feed_in
+                if en_feed_in is not None:
+                    self._feed_in_tariff_energinet = en_feed_in
+                    self._stored["feed_in_tariff_energinet"] = en_feed_in
+                self._last_tariff_schedule_refresh = now
+                # v0.49.1 — if we still have NO feed-in tariff at all (cold
+                # cache plus a failed feed-in lookup, e.g. a 429 that the
+                # retries didn't clear), don't sit on the 24-hour timer with
+                # the export price stuck at 0. Pretend the refresh is nearly
+                # stale so the next attempt happens in ~15 min instead.
+                # Once any real feed-in value lands (and is persisted) this
+                # branch stops firing and the normal 24-hour cadence holds.
+                if not (self._feed_in_tariff_dso or self._feed_in_tariff_energinet):
+                    self._last_tariff_schedule_refresh = now - timedelta(
+                        seconds=max(0, TARIFF_SCHEDULE_REFRESH_SECONDS - 900),
+                    )
+                _LOGGER.debug(
+                    "Tariff schedule refreshed (GLN %s + Energinet). "
+                    "Hour 0: %.4f, Hour 12: %.4f DKK/kWh",
+                    dso_gln,
+                    self._tariff_schedule[0],
+                    self._tariff_schedule[12],
+                )
+            else:
+                _LOGGER.warning(
+                    "Tariff schedule fetch partial — DSO ok=%s (sum=%.4f), "
+                    "Energinet ok=%s (sum=%.4f). Keeping previous cache; "
+                    "will retry in ~10 minutes.",
+                    dso_ok, sum(dso_sched),
+                    energinet_ok, sum(energinet_sched),
+                )
+                # Bump the refresh timestamp forward so the next retry
+                # fires after ~10 minutes instead of 24 hours, but not
+                # every coordinator tick (which would hammer Datahub).
+                self._last_tariff_schedule_refresh = (
+                    now - timedelta(seconds=TARIFF_SCHEDULE_REFRESH_SECONDS - 600)
+                )
+        except Exception as err:
+            _LOGGER.warning("Tariff schedule refresh failed, keeping existing: %s", err)
 
     async def _refresh_pstryk_prices(
         self, session: aiohttp.ClientSession, now: datetime,
