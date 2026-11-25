@@ -7,6 +7,7 @@ Every setup field, slider, and switch with its value range, effect, and when to 
 ## Contents
 
 - [Setup wizard](#setup-wizard)
+- [Buy-price source (Configure)](#buy-price-source-configure)
 - [Number entities](#number-entities)
   - [Battery thresholds](#battery-thresholds)
   - [Pricing parameters](#pricing-parameters)
@@ -72,13 +73,15 @@ The HA sensor exposing the current spot price (excluding VAT, DKK/kWh). Works wi
 
 If left blank, the integration fetches the live spot price directly from Energi Data Service.
 
+In Pstryk mode (Poland) this entity is not read; the current price comes from Pstryk.
+
 ### FoxESS control entities
 
 Auto-detected; override only if the inverter setup differs.
 
 | Field | Description |
 |---|---|
-| `foxess_inverter_id` | Hex string ID of the FoxESS Modbus inverter |
+| `foxess_inverter_id` | The inverter's friendly name in the FoxESS Modbus integration, or its device ID. Used for register writes such as the export limit; a wrong value makes them fail with "Unable to find an inverter". |
 | `foxess_work_mode_entity` | `select.foxessmodbus_work_mode`. Used to switch between Self-Use / Feed-in First / Force Charge. |
 | `foxess_force_charge_entity` | `number.foxessmodbus_force_charge_power`. Sets Force Charge wattage. |
 | `foxess_force_discharge_entity` | `number.foxessmodbus_force_discharge_power`. Sets Force Discharge wattage (export power cap). |
@@ -132,6 +135,33 @@ Linking the bundled Lovelace dashboard from the integration page. Leave blank to
 
 ---
 
+## Buy-price source (Configure)
+
+Set in *Settings → Devices & Services → Solar AI → Configure*, on the second page (**Buy-price source**). It is not part of the first-time setup wizard.
+
+| Field | Description |
+|---|---|
+| Country | Denmark, United Kingdom or Poland. Decides which retailer price sources are offered. Changing it redraws the page with that country's sources. |
+| Buy-price mode | **Manual stack**: (spot + spot markup + DSO tariff + elafgift) × VAT. **Strømligning** (Denmark): the all-in price per 15 minutes from the chosen retailer. **Octopus Energy** (United Kingdom): the product's import rate per half hour; buy side only, the seller-side fee still applies to exports. **Pstryk** (Poland): buy and sell prices from the Pstryk account. |
+| Strømligning supplier and product | Denmark, Strømligning mode only. |
+| Use manual overrides | Strømligning mode only: your own VAT, markup and elafgift with Strømligning's tariff data. |
+| Octopus product and region | United Kingdom, Octopus mode only. |
+| Pstryk API key | Poland, Pstryk mode only, and required there. Get it in the Pstryk app. It is stored in the integration's configuration and sent only to Pstryk's API. |
+| Sell-side company | Who pays for your solar export; sets the seller-side fee. Not used in Pstryk mode. |
+
+### Pstryk mode
+
+| What | In Pstryk mode |
+|---|---|
+| Price curve the optimiser plans over | Pstryk's hourly prosumer (sell) price |
+| Buy price per hour | Pstryk's gross price, used as it is |
+| Danish tariffs, elafgift, VAT, feed-in tariff, seller-side fee | Not applied |
+| Energi Data Service and the Danish tariff fetch | Not called |
+| Refresh | Once an hour, one request. Tomorrow's prices are used once Pstryk has published a full day |
+| Errors | A rejected or missing API key logs an error and waits an hour; HTTP 429 waits for the time Pstryk gives. The last good prices stay in use |
+
+---
+
 ## Number entities
 
 All number entities are editable from the *Indstillinger* tab. Changes apply on the next optimiser tick (within seconds). No restart needed.
@@ -169,7 +199,7 @@ All number entities are editable from the *Indstillinger* tab. Changes apply on 
 
 ### Pricing parameters
 
-These feed into the buy-price and sell-price formulas the optimiser uses.
+These feed into the buy-price and sell-price formulas the optimiser uses. In Pstryk mode (Poland) VAT, spot markup, elafgift and the seller-side fee are not used: Pstryk's prices already include everything.
 
 #### Buy-side VAT — `vat_pct`
 
