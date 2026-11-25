@@ -253,7 +253,7 @@ Solar AI is added from its GitHub link, as a custom repository.
    | **EVCC URL** *(EVCC/Hybrid only)* | The address of your EVCC instance, e.g. `http://your-ha-ip:7070`. |
    | **FoxESS live sensors** *(Hybrid / FoxESS-only)* | Grid-import, grid-export, PV-power and house-load sensors. Auto-detected defaults are pre-filled — change only if your entity IDs differ. |
    | **No-EV acknowledgement** *(FoxESS-only)* | Confirm you have no EV, or that your charger never pulls from the house battery. This avoids tripping your main breaker. |
-   | **Inverter control entities** | The work-mode `select`, the force-charge and force-discharge `number` entities, and the inverter ID. Defaults match the FoxESS Modbus integration; see [FoxESS Modbus entity IDs](#foxess-modbus-entity-ids). |
+   | **Inverter control entities** | The work-mode `select`, the force-charge and force-discharge `number` entities, and the inverter ID (the inverter's friendly name in the FoxESS Modbus integration, or its device ID; a wrong value makes export-limit writes fail with "Unable to find an inverter"). Defaults match the FoxESS Modbus integration; see [FoxESS Modbus entity IDs](#foxess-modbus-entity-ids). |
    | **Battery sensors** | SoC, cell temperature, charge/discharge power, and lifetime charge/discharge totals. |
    | **Country, price area & grid company** | Choose your **country** (Denmark / UK / Poland), your **price area** (DK1 = western Denmark / Jutland + Fyn, DK2 = eastern Denmark / Sjælland), and your **electricity grid company (DSO)** from the dropdown. With just these, Solar AI fetches the day-ahead spot price **and** the network tariffs for your area automatically — **you do not need a separate electricity-price integration**. |
    | **Electricity price source** *(optional)* | **Leave the spot-price entity blank** to use the automatic Energi Data Service prices from the choices above. Only fill it in if you'd rather read an existing price sensor instead (Strømligning, Tibber, etc.). |
@@ -392,6 +392,13 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 ---
 
 ## Recent releases
+
+### v1.32.1 — no blocking call when the OCPP server starts
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **OCPP server start:** Home Assistant no longer reports a blocking call from Solar AI when the built-in OCPP server starts.
+- **Inverter ID help text:** the setup and *Configure* pages describe the inverter ID as the inverter's friendly name in the FoxESS Modbus integration, or its device ID.
 
 ### v1.32.0 — Pstryk prices for Poland
 
