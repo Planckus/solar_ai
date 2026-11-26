@@ -88,7 +88,7 @@
           "solar_forecast_source": "Prognose-kilde",
           "forecast_solar_entity": "Forecast.Solar-enhed (bruges kun hvis kilden er Forecast.Solar eller Auto)"
         },
-        "data_description": { "forecast_solar_entity": "Typisk sensor.energy_production_today — Solar AI læser 'watts'-attributten time for time" }
+        "data_description": { "forecast_solar_entity": "Typisk sensor.energy_production_today — enhver sensor fra Forecast.Solar-integrationen virker; Solar AI læser integrationens timeprognose" }
       },
       "battery": {
         "title": "Batteri- og handelsparametre",

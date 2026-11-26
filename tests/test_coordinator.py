@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1596,3 +1597,92 @@ class TestNoEvccHoldInForceModes:
         c._we_set_evcc_mode = True
         await self._run(c, C, C.MODE_NORMAL)
         assert c._evcc_post.await_count == posts
+
+
+class TestForecastSolarReader:
+    """The Forecast.Solar source reads the integration's energy platform; the
+    built-in sensors carry no per-slot attribute."""
+
+    ENTITY = "sensor.energy_production_today"
+
+    def _coord(self, *, domain="forecast_solar", loaded=True, attrs=None):
+        import types
+        from homeassistant.config_entries import ConfigEntryState
+        from custom_components.battery_arbitrage.coordinator import (
+            BatteryArbitrageCoordinator,
+        )
+        c = object.__new__(BatteryArbitrageCoordinator)
+        entry = types.SimpleNamespace(
+            entry_id="fs1", domain=domain,
+            state=ConfigEntryState.LOADED if loaded else ConfigEntryState.SETUP_RETRY,
+        )
+        state = types.SimpleNamespace(state="3.7", attributes=attrs or {})
+        c.hass = MagicMock()
+        c.hass.config_entries.async_get_entry = MagicMock(
+            side_effect=lambda eid: entry if eid == "fs1" else None)
+        c.hass.states.get = MagicMock(return_value=state)
+        return c
+
+    def _patches(self, forecast):
+        import types
+        registry = MagicMock()
+        registry.async_get = MagicMock(
+            return_value=types.SimpleNamespace(config_entry_id="fs1"))
+        energy = types.SimpleNamespace(
+            async_get_solar_forecast=AsyncMock(return_value=forecast))
+        return (
+            patch("homeassistant.helpers.entity_registry.async_get",
+                  return_value=registry),
+            patch("homeassistant.helpers.importlib.async_import_module",
+                  AsyncMock(return_value=energy)),
+        )
+
+    async def _read(self, c, forecast):
+        p1, p2 = self._patches(forecast)
+        with p1, p2:
+            return await c._fetch_solar_from_forecast_solar(self.ENTITY)
+
+    async def test_reads_energy_platform(self):
+        c = self._coord()
+        data = await self._read(c, {"wh_hours": {
+            "2026-06-01T10:00:00+00:00": 1500,
+            "2026-06-01T11:00:00+00:00": 2000,
+        }})
+        assert data["rates"] == [
+            {"start": "2026-06-01T10:00:00+00:00", "value": 1500.0},
+            {"start": "2026-06-01T11:00:00+00:00", "value": 2000.0},
+        ]
+
+    async def test_short_periods_convert_wh_to_average_watts(self):
+        # 15-minute periods (paid account): 500 Wh in 0.25 h = 2000 W.
+        c = self._coord()
+        data = await self._read(c, {"wh_hours": {
+            "2026-06-01T10:00:00+00:00": 500,
+            "2026-06-01T10:15:00+00:00": 250,
+        }})
+        assert [r["value"] for r in data["rates"]] == [2000.0, 1000.0]
+
+    async def test_overnight_gap_uses_previous_period_length(self):
+        c = self._coord()
+        data = await self._read(c, {"wh_hours": {
+            "2026-06-01T18:00:00+00:00": 300,
+            "2026-06-02T04:00:00+00:00": 100,
+            "2026-06-02T05:00:00+00:00": 400,
+        }})
+        # 18:00 has a 10 h gap after it → falls back to 1 h.
+        assert [r["value"] for r in data["rates"]] == [300.0, 100.0, 400.0]
+
+    async def test_falls_back_to_watts_attribute(self):
+        c = self._coord(domain="other_solar", attrs={
+            "watts": {"2026-06-01T10:00:00+00:00": 1234}})
+        data = await self._read(c, None)
+        assert data["rates"] == [
+            {"start": "2026-06-01T10:00:00+00:00", "value": 1234.0}]
+
+    async def test_entry_not_loaded_and_no_attribute_returns_empty(self):
+        c = self._coord(loaded=False)
+        assert await self._read(c, {"wh_hours": {"2026-06-01T10:00:00+00:00": 1}}) == {}
+
+    async def test_empty_forecast_returns_empty(self):
+        c = self._coord()
+        assert await self._read(c, {"wh_hours": {}}) == {}

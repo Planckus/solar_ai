@@ -9878,11 +9878,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("EVCC solar fetch failed: %s", err)
                 return {}
 
-        def try_forecast_solar() -> dict:
+        async def try_forecast_solar() -> dict:
             if not fs_entity:
                 _LOGGER.debug("forecast_solar entity not configured")
                 return {}
-            return self._fetch_solar_from_forecast_solar(fs_entity)
+            return await self._fetch_solar_from_forecast_solar(fs_entity)
 
         def try_solcast() -> dict:
             if not solcast_entity:
@@ -9913,7 +9913,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             return await try_evcc()
 
         if source == SOLAR_SOURCE_FORECAST_SOLAR:
-            return try_forecast_solar()
+            return await try_forecast_solar()
 
         if source == SOLAR_SOURCE_SOLCAST:
             return try_solcast()
@@ -9923,7 +9923,7 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             if data.get("rates"):
                 return data
             _LOGGER.debug("Auto: EVCC empty — trying Forecast.Solar")
-            data = try_forecast_solar()
+            data = await try_forecast_solar()
             if data.get("rates"):
                 return data
             _LOGGER.debug("Auto: Forecast.Solar empty — trying Solcast")
@@ -9932,14 +9932,97 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         _LOGGER.warning("Unknown solar forecast source '%s' — defaulting to EVCC", source)
         return await try_evcc()
 
-    def _fetch_solar_from_forecast_solar(self, entity_id: str) -> dict:
-        """Read a Forecast.Solar HA entity's `watts` attribute and convert to EVCC format.
+    async def _fetch_solar_from_forecast_solar(self, entity_id: str) -> dict:
+        """Read the per-slot forecast behind a Forecast.Solar entity.
 
-        Forecast.Solar exposes a `watts` attribute on its energy_production_* sensors,
-        keyed by ISO timestamp (typically hourly, local-naive or with TZ). We normalise
-        to UTC ISO and emit the same {start, value} list the rest of the coordinator
-        consumes from EVCC.
+        The built-in Forecast.Solar integration keeps its forecast in its
+        coordinator and exposes it through its energy platform
+        (`async_get_solar_forecast`, the call the Energy dashboard makes). Its
+        sensors carry no per-slot attribute, so the forecast is read from the
+        config entry that owns the configured entity.
+
+        Integrations that put a `watts` attribute on the entity (custom
+        Forecast.Solar-style integrations) are still read from that attribute
+        when the energy platform returns nothing.
         """
+        rates = await self._forecast_solar_energy_rates(entity_id)
+        if rates:
+            _LOGGER.debug(
+                "forecast_solar: read %d slots via energy platform for %s (first=%s, last=%s)",
+                len(rates), entity_id, rates[0]["start"], rates[-1]["start"],
+            )
+            return {"rates": rates}
+        return self._forecast_solar_watts_attribute_rates(entity_id)
+
+    async def _forecast_solar_energy_rates(self, entity_id: str) -> list[dict]:
+        """Rates from the Forecast.Solar energy platform, or [] if unavailable."""
+        from homeassistant.config_entries import ConfigEntryState
+        from homeassistant.helpers import entity_registry as er
+
+        reg_entry = er.async_get(self.hass).async_get(entity_id)
+        if reg_entry is None or not reg_entry.config_entry_id:
+            _LOGGER.debug("forecast_solar: %s has no config entry", entity_id)
+            return []
+        entry = self.hass.config_entries.async_get_entry(reg_entry.config_entry_id)
+        if entry is None or entry.domain != "forecast_solar":
+            _LOGGER.debug("forecast_solar: %s does not belong to Forecast.Solar", entity_id)
+            return []
+        if entry.state is not ConfigEntryState.LOADED:
+            _LOGGER.debug("forecast_solar: config entry for %s is not loaded", entity_id)
+            return []
+        try:
+            from homeassistant.helpers.importlib import async_import_module
+
+            energy = await async_import_module(
+                self.hass, "homeassistant.components.forecast_solar.energy"
+            )
+            forecast = await energy.async_get_solar_forecast(self.hass, entry.entry_id)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("forecast_solar: energy platform read failed: %s", err)
+            return []
+        wh_hours = (forecast or {}).get("wh_hours")
+        if not isinstance(wh_hours, dict) or not wh_hours:
+            _LOGGER.debug("forecast_solar: energy platform returned no data for %s", entity_id)
+            return []
+        return self._forecast_solar_wh_to_rates(wh_hours)
+
+    @staticmethod
+    def _forecast_solar_wh_to_rates(wh_hours: dict) -> list[dict]:
+        """Convert `{iso_start: Wh in the period}` to `{start, value: average W}`.
+
+        The period length is the gap to the next timestamp: one hour on a free
+        Forecast.Solar account, shorter on paid accounts. The last period, and
+        any gap outside (0, 2] hours such as the overnight gap, uses the
+        previous period length, or one hour when there is none.
+        """
+        parsed: list[tuple[datetime, float]] = []
+        for ts_str, wh in wh_hours.items():
+            try:
+                start_dt = datetime.fromisoformat(str(ts_str))
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=_CPH_TZ)
+                parsed.append((start_dt.astimezone(timezone.utc), float(wh)))
+            except (ValueError, TypeError) as err:
+                _LOGGER.debug("forecast_solar: skipping bad timestamp %s: %s", ts_str, err)
+        parsed.sort(key=lambda p: p[0])
+
+        rates: list[dict] = []
+        last_dur_h = 1.0
+        for i, (start, wh) in enumerate(parsed):
+            dur_h = None
+            if i + 1 < len(parsed):
+                gap_h = (parsed[i + 1][0] - start).total_seconds() / 3600
+                if 0 < gap_h <= 2:
+                    dur_h = gap_h
+            if dur_h is None:
+                dur_h = last_dur_h
+            else:
+                last_dur_h = dur_h
+            rates.append({"start": start.isoformat(), "value": round(wh / dur_h, 1)})
+        return rates
+
+    def _forecast_solar_watts_attribute_rates(self, entity_id: str) -> dict:
+        """Read a `watts` attribute keyed by ISO timestamp, for integrations that set one."""
         state = self.hass.states.get(entity_id)
         if state is None or state.state in ("unknown", "unavailable"):
             _LOGGER.debug("forecast_solar entity %s unavailable", entity_id)

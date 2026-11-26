@@ -88,7 +88,7 @@
           "solar_forecast_source": "Forecast source",
           "forecast_solar_entity": "Forecast.Solar entity (only used if source is Forecast.Solar or Auto)"
         },
-        "data_description": { "forecast_solar_entity": "Typically sensor.energy_production_today — Solar AI reads the per-hour 'watts' attribute" }
+        "data_description": { "forecast_solar_entity": "Typically sensor.energy_production_today — any sensor of the Forecast.Solar integration works; Solar AI reads that integration's hourly forecast" }
       },
       "battery": {
         "title": "Battery & Trading Parameters",
