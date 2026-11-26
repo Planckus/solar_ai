@@ -393,6 +393,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.32.3 — Forecast.Solar forecast is read again
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Forecast.Solar source:** Solar AI reads the forecast from the built-in Forecast.Solar integration instead of a sensor attribute that integration does not provide. Before this, the Forecast.Solar source returned no data and the optimiser planned without a solar forecast.
+
 ### v1.32.2 — tariff refresh no longer fails for hours on HTTP 429
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).

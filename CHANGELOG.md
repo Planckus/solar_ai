@@ -9,6 +9,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.32.3] — 2026-11-26
+
+### Fixed — Forecast.Solar forecast was never read
+
+With Forecast.Solar as the solar forecast source, Solar AI read a `watts` attribute from the selected entity. The Forecast.Solar integration built into Home Assistant has no such attribute on its sensors, so every refresh returned no data, the log showed "Solar forecast returned no rates — keeping cached data", and the optimiser planned without a solar forecast. Quick setup selects Forecast.Solar by default, so installs set up that way were affected.
+
+- Solar AI now reads the forecast from the Forecast.Solar config entry that owns the selected entity, through the same call the Energy dashboard uses. Any sensor of the integration can be selected.
+- Each period's energy (Wh) is converted to average power over the period, so hourly (free account) and shorter (paid account) periods both work.
+- A `watts` attribute on the entity is still read when the integration call returns nothing, for custom integrations that provide one.
+- The setup help text no longer mentions the `watts` attribute.
+
+---
+
 ## [1.32.2] — 2026-11-25
 
 ### Fixed — tariff refresh no longer fails for hours on HTTP 429
