@@ -47,7 +47,6 @@ views:
       icon_color: amber
       height: 180
       x_type: hour_offset
-      unit: kr
       series:
       - entity: sensor.solar_ai_24h_priskort
         path: slots
@@ -341,7 +340,6 @@ views:
       icon_color: amber
       height: 260
       x_type: hour_offset
-      unit: kr
       series:
       - entity: sensor.solar_ai_24h_priskort
         path: slots
@@ -428,14 +426,13 @@ views:
 
         |---:|---:|---:|---:|
 
-        | {{ ''%.0f'' | format(state_attr(''sensor.solar_ai_eksport_indtaegt'',''today'') | float(0)) }} kr | {{ ''%.0f'' | format(state_attr(''sensor.solar_ai_eksport_indtaegt'',''last_7_days'') | float(0)) }} kr | {{ ''%.0f'' | format(state_attr(''sensor.solar_ai_eksport_indtaegt'',''this_month'') | float(0)) }} kr | {{ ''%.0f'' | format(state_attr(''sensor.solar_ai_eksport_indtaegt'',''this_year'') | float(0)) }} kr |'
+        | {{ ''%.0f'' | format(state_attr(''sensor.solar_ai_eksport_indtaegt'',''today'') | float(0)) }} {{ state_attr(''sensor.solar_ai_eksport_indtaegt'',''unit_of_measurement'') }} | {{ ''%.0f'' | format(state_attr(''sensor.solar_ai_eksport_indtaegt'',''last_7_days'') | float(0)) }} {{ state_attr(''sensor.solar_ai_eksport_indtaegt'',''unit_of_measurement'') }} | {{ ''%.0f'' | format(state_attr(''sensor.solar_ai_eksport_indtaegt'',''this_month'') | float(0)) }} {{ state_attr(''sensor.solar_ai_eksport_indtaegt'',''unit_of_measurement'') }} | {{ ''%.0f'' | format(state_attr(''sensor.solar_ai_eksport_indtaegt'',''this_year'') | float(0)) }} {{ state_attr(''sensor.solar_ai_eksport_indtaegt'',''unit_of_measurement'') }} |'
     - type: custom:solar-ai-chart-card
       title: Daglig eksport-indtægt
       icon: mdi:cash-multiple
       icon_color: green
       height: 220
       x_type: category
-      unit: kr
       series:
       - entity: sensor.solar_ai_eksport_indtaegt
         path: daily
@@ -453,14 +450,13 @@ views:
 
         |---:|---:|---:|---:|
 
-        | {{ ''%+.0f'' | format(state_attr(''sensor.solar_ai_netto_el_balance'',''today'') | float(0)) }} kr | {{ ''%+.0f'' | format(state_attr(''sensor.solar_ai_netto_el_balance'',''last_7_days'') | float(0)) }} kr | {{ ''%+.0f'' | format(state_attr(''sensor.solar_ai_netto_el_balance'',''this_month'') | float(0)) }} kr | {{ ''%+.0f'' | format(state_attr(''sensor.solar_ai_netto_el_balance'',''this_year'') | float(0)) }} kr |'
+        | {{ ''%+.0f'' | format(state_attr(''sensor.solar_ai_netto_el_balance'',''today'') | float(0)) }} {{ state_attr(''sensor.solar_ai_netto_el_balance'',''unit_of_measurement'') }} | {{ ''%+.0f'' | format(state_attr(''sensor.solar_ai_netto_el_balance'',''last_7_days'') | float(0)) }} {{ state_attr(''sensor.solar_ai_netto_el_balance'',''unit_of_measurement'') }} | {{ ''%+.0f'' | format(state_attr(''sensor.solar_ai_netto_el_balance'',''this_month'') | float(0)) }} {{ state_attr(''sensor.solar_ai_netto_el_balance'',''unit_of_measurement'') }} | {{ ''%+.0f'' | format(state_attr(''sensor.solar_ai_netto_el_balance'',''this_year'') | float(0)) }} {{ state_attr(''sensor.solar_ai_netto_el_balance'',''unit_of_measurement'') }} |'
     - type: custom:solar-ai-chart-card
       title: Daglig netto-balance
       icon: mdi:scale-balance
       icon_color: blue
       height: 220
       x_type: category
-      unit: kr
       series:
       - entity: sensor.solar_ai_netto_el_balance
         path: daily

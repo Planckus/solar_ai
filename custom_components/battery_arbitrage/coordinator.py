@@ -17,6 +17,8 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
+    CONF_CURRENCY,
+    DEFAULT_CURRENCY,
     CALIBRATION_MAX_SAMPLES,
     CALIBRATION_MAX_SOC,
     CALIBRATION_MIN_CHARGE_KW,
@@ -2527,18 +2529,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if should_export and export_price < min_spread:
             should_export = False
             self._mode_reason = self._msg(
-                f"No sale: {export_price:.2f} DKK/kWh is below the minimum gain "
+                f"No sale: {export_price:.2f} {self._currency}/kWh is below the minimum gain "
                 f"{min_spread:.2f}",
-                f"Intet salg: {export_price:.2f} DKK/kWh er under minimum gevinst "
+                f"Intet salg: {export_price:.2f} {self._currency}/kWh er under minimum gevinst "
                 f"{min_spread:.2f}",
             )
         if should_export and grid_min_sell is not None and export_price < grid_min_sell:
             should_export = False
             self._mode_reason = self._msg(
                 f"Holding: {grid_kwh:.1f} kWh in the battery was bought from the grid; "
-                f"selling it needs {grid_min_sell:.2f} DKK/kWh, the price is {export_price:.2f}",
+                f"selling it needs {grid_min_sell:.2f} {self._currency}/kWh, the price is {export_price:.2f}",
                 f"Holder: {grid_kwh:.1f} kWh i batteriet er købt fra nettet; "
-                f"salg kræver {grid_min_sell:.2f} DKK/kWh, prisen er {export_price:.2f}",
+                f"salg kræver {grid_min_sell:.2f} {self._currency}/kWh, prisen er {export_price:.2f}",
             )
 
         # If grid is paying US to buy electricity (buy price ≤ 0), always charge if there's
@@ -3396,18 +3398,18 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # grid cost until the cheapest hour over the few kWh being sold.
             if sale_buyback is not None and sale_margin is not None:
                 reason = self._msg(
-                    f"Selling at {export_price:.2f} DKK/kWh, bought back tonight at "
-                    f"{sale_buyback:.2f}: {sale_margin:+.2f} DKK/kWh after losses and wear; "
+                    f"Selling at {export_price:.2f} {self._currency}/kWh, bought back tonight at "
+                    f"{sale_buyback:.2f}: {sale_margin:+.2f} {self._currency}/kWh after losses and wear; "
                     f"{above_floor_kwh:.1f} kWh above the floor",
-                    f"Sælger til {export_price:.2f} DKK/kWh, købes tilbage i nat til "
-                    f"{sale_buyback:.2f}: {sale_margin:+.2f} DKK/kWh efter tab og slid; "
+                    f"Sælger til {export_price:.2f} {self._currency}/kWh, købes tilbage i nat til "
+                    f"{sale_buyback:.2f}: {sale_margin:+.2f} {self._currency}/kWh efter tab og slid; "
                     f"{above_floor_kwh:.1f} kWh over gulvet",
                 )
             else:
                 reason = self._msg(
-                    f"Selling at {export_price:.2f} DKK/kWh: energy above the night "
+                    f"Selling at {export_price:.2f} {self._currency}/kWh: energy above the night "
                     f"reserve, {above_floor_kwh:.1f} kWh above the floor",
-                    f"Sælger til {export_price:.2f} DKK/kWh: energi over natreserven, "
+                    f"Sælger til {export_price:.2f} {self._currency}/kWh: energi over natreserven, "
                     f"{above_floor_kwh:.1f} kWh over gulvet",
                 )
         elif should_grid_charge:
@@ -3420,34 +3422,34 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 reason = self._msg(
                     f"Night bridge: battery {bridge_shortfall_kwh:.1f} kWh short for hours "
                     f"that cost more than this price after losses — buying at "
-                    f"{buy_price_next_slot:.2f} DKK/kWh, the cheapest price before then",
+                    f"{buy_price_next_slot:.2f} {self._currency}/kWh, the cheapest price before then",
                     f"Natbro: batteriet mangler {bridge_shortfall_kwh:.1f} kWh til timer, "
                     f"der koster mere end denne pris efter tab — køber til "
-                    f"{buy_price_next_slot:.2f} DKK/kWh, den billigste pris inden da",
+                    f"{buy_price_next_slot:.2f} {self._currency}/kWh, den billigste pris inden da",
                 )
             elif peak_shortfall_kwh > 0.0:
                 reason = self._msg(
                     f"Peak cover: battery {peak_shortfall_kwh:.1f} kWh short of the "
                     f"{PEAK_TARIFF_FROM_HOUR}-{PEAK_TARIFF_TO_HOUR} h need plus a heavy-evening "
-                    f"cover — buying at {buy_price_next_slot:.2f} DKK/kWh, the cheapest "
+                    f"cover — buying at {buy_price_next_slot:.2f} {self._currency}/kWh, the cheapest "
                     f"price before then",
                     f"Spidsdækning: batteriet mangler {peak_shortfall_kwh:.1f} kWh til "
                     f"forbruget kl. {PEAK_TARIFF_FROM_HOUR}-{PEAK_TARIFF_TO_HOUR} plus "
                     f"buffer til en tung aften — køber til {buy_price_next_slot:.2f} "
-                    f"DKK/kWh, den billigste pris inden da",
+                    f"{self._currency}/kWh, den billigste pris inden da",
                 )
             elif self._optimizer_plan:
                 # v1.30.2 — a charge the optimiser planned is not a p25 test;
                 # reporting it as one showed e.g. "1.49 ≤ p25 1.48".
                 reason = self._msg(
-                    f"Optimiser plan: buying at {buy_price_next_slot:.2f} DKK/kWh "
+                    f"Optimiser plan: buying at {buy_price_next_slot:.2f} {self._currency}/kWh "
                     f"(incl. tariffs + VAT), {importable_kwh:.1f} kWh room",
-                    f"Optimeringsplan: køber til {buy_price_next_slot:.2f} DKK/kWh "
+                    f"Optimeringsplan: køber til {buy_price_next_slot:.2f} {self._currency}/kWh "
                     f"(inkl. tariffer + moms), {importable_kwh:.1f} kWh plads",
                 )
             else:
                 reason = (
-                    f"Grid charging: buy price {buy_price_next_slot:.2f} ≤ p25 {buy_price_p25:.2f} DKK/kWh (incl. tariffs + VAT), "
+                    f"Grid charging: buy price {buy_price_next_slot:.2f} ≤ p25 {buy_price_p25:.2f} {self._currency}/kWh (incl. tariffs + VAT), "
                     f"{importable_kwh:.1f} kWh room available"
                 )
         else:
@@ -3661,9 +3663,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 await self._send_mobile_notification(
                     self._msg("☀️ Solar AI: Solar export blocked", "☀️ Solar AI: Solareksport blokeret"),
                     self._msg(
-                        f"Price {export_price_raw:.3f} DKK/kWh is below floor "
+                        f"Price {export_price_raw:.3f} {self._currency}/kWh is below floor "
                         f"{min_export_price:.2f} — solar export stopped",
-                        f"Pris {export_price_raw:.3f} DKK/kWh er under gulv "
+                        f"Pris {export_price_raw:.3f} {self._currency}/kWh er under gulv "
                         f"{min_export_price:.2f} — solareksport stoppet",
                     ),
                 )
@@ -3672,9 +3674,9 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
                 await self._send_mobile_notification(
                     self._msg("☀️ Solar AI: Solar export resumed", "☀️ Solar AI: Solareksport genoptaget"),
                     self._msg(
-                        f"Price {export_price_raw:.3f} DKK/kWh is above floor "
+                        f"Price {export_price_raw:.3f} {self._currency}/kWh is above floor "
                         f"{min_export_price:.2f} — export active again",
-                        f"Pris {export_price_raw:.3f} DKK/kWh er over gulv "
+                        f"Pris {export_price_raw:.3f} {self._currency}/kWh er over gulv "
                         f"{min_export_price:.2f} — eksport aktiv igen",
                     ),
                 )
@@ -5815,8 +5817,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             await self._send_mobile_notification(
                 self._msg("☀️ Solar AI: Export started", "☀️ Solar AI: Eksport startet"),
                 self._msg(
-                    f"Battery exporting to grid · SoC {soc:.0f}% · {price:.2f} DKK/kWh",
-                    f"Batteri eksporterer til nettet · SoC {soc:.0f}% · {price:.2f} DKK/kWh",
+                    f"Battery exporting to grid · SoC {soc:.0f}% · {price:.2f} {self._currency}/kWh",
+                    f"Batteri eksporterer til nettet · SoC {soc:.0f}% · {price:.2f} {self._currency}/kWh",
                 ),
             )
         # Mobile push notification — charge start
@@ -5824,8 +5826,8 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             await self._send_mobile_notification(
                 self._msg("⚡ Solar AI: Charging started", "⚡ Solar AI: Opladning startet"),
                 self._msg(
-                    f"Battery charging from grid · SoC {soc:.0f}% · {price:.2f} DKK/kWh",
-                    f"Batteri oplades fra nettet · SoC {soc:.0f}% · {price:.2f} DKK/kWh",
+                    f"Battery charging from grid · SoC {soc:.0f}% · {price:.2f} {self._currency}/kWh",
+                    f"Batteri oplades fra nettet · SoC {soc:.0f}% · {price:.2f} {self._currency}/kWh",
                 ),
             )
 
@@ -5877,13 +5879,13 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
         if action_type == "export" and self._stored.get("notify_export_stop", False):
             await self._send_mobile_notification(
                 self._msg("☀️ Solar AI: Export finished", "☀️ Solar AI: Eksport afsluttet"),
-                f"SoC {soc_start:.0f}%→{soc_end:.0f}% · {duration_min} min · {kwh} kWh · {dkk} DKK",
+                f"SoC {soc_start:.0f}%→{soc_end:.0f}% · {duration_min} min · {kwh} kWh · {dkk} {self._currency}",
             )
         # Mobile push notification — charge stop
         elif action_type == "charge" and self._stored.get("notify_charge_stop", False):
             await self._send_mobile_notification(
                 self._msg("⚡ Solar AI: Charging finished", "⚡ Solar AI: Opladning afsluttet"),
-                f"SoC {soc_start:.0f}%→{soc_end:.0f}% · {duration_min} min · {kwh} kWh · {dkk} DKK",
+                f"SoC {soc_start:.0f}%→{soc_end:.0f}% · {duration_min} min · {kwh} kWh · {dkk} {self._currency}",
             )
 
     async def _async_disk_usage(self) -> dict[str, Any]:
@@ -7446,6 +7448,11 @@ class BatteryArbitrageCoordinator(DataUpdateCoordinator):
             # v0.59.12 TEST — actual 0x300B value the charger holds (1=accepted sub-5, 5=clamped).
             "charger_suspend_interval": state.get("suspend_interval"),
         }
+
+    @property
+    def _currency(self) -> str:
+        """The currency the user chose, for prices and amounts in messages."""
+        return self.config.get(CONF_CURRENCY, DEFAULT_CURRENCY)
 
     def _msg(self, en: str, da: str) -> str:
         """Return a user-facing string in the integration's resolved language (v0.41.0).

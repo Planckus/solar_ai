@@ -89,6 +89,13 @@
     return st.attributes[key];
   }
 
+  // The currency in an entity's unit, e.g. "PLN/kWh" -> "PLN". Solar AI's
+  // money sensors carry the currency chosen in its settings.
+  function currency(hass, entityId) {
+    const unit = attr(hass, entityId, 'unit_of_measurement', '');
+    return escapeHtml(String(unit || '').split('/')[0].trim());
+  }
+
   function fmt(n, decimals) {
     if (!Number.isFinite(n)) return '–';
     return n.toFixed(decimals === undefined ? 1 : decimals);
@@ -384,6 +391,8 @@
       const buyPrice = num(hass, c.buy_price_entity);
       const sellPrice = num(hass, c.sell_price_entity);
       const savedToday = num(hass, c.savings_today_entity);
+      const priceCur = currency(hass, c.buy_price_entity);
+      const savedCur = currency(hass, c.savings_today_entity);
 
       const todayRest = attr(hass, c.solar_forecast_entity, 'today_remaining_kwh', null);
       const tomorrow = attr(hass, c.solar_forecast_entity, 'tomorrow_kwh', null);
@@ -489,15 +498,15 @@
           <div class="grid3" style="margin-bottom:12px;">
             <div class="tile" data-action="navigate" data-path="${c.prices_navigate_path || ''}">
               <div class="tile-label" style="font-size:15px;">${t(hass, 'buy_now')}</div>
-              <div style="font-size:22px;font-weight:500;">${fmt(buyPrice, 2)} kr</div>
+              <div style="font-size:22px;font-weight:500;">${fmt(buyPrice, 2)} ${priceCur}</div>
             </div>
             <div class="tile" data-action="navigate" data-path="${c.prices_navigate_path || ''}">
               <div class="tile-label" style="font-size:15px;">${t(hass, 'sell_now')}</div>
-              <div style="font-size:22px;font-weight:500;">${fmt(sellPrice, 2)} kr</div>
+              <div style="font-size:22px;font-weight:500;">${fmt(sellPrice, 2)} ${priceCur}</div>
             </div>
             <div class="tile" data-action="more-info" data-entity="${c.savings_today_entity || ''}">
               <div class="tile-label" style="font-size:15px;">${t(hass, 'saved_today')}</div>
-              <div style="font-size:22px;font-weight:500;color:var(--success-color);">${fmt(savedToday, 0)} kr</div>
+              <div style="font-size:22px;font-weight:500;color:var(--success-color);">${fmt(savedToday, 0)} ${savedCur}</div>
             </div>
           </div>
 
