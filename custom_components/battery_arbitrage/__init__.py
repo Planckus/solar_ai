@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import (
+    RETIRED_DSO_GLNS,
     CONF_BATTERY_CHARGE_ENTITY,
     CONF_BATTERY_CHARGE_TOTAL_ENTITY,
     CONF_BATTERY_DISCHARGE_ENTITY,
@@ -316,8 +317,24 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+def _replace_retired_dso_gln(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Point a stored grid-company GLN that no longer has tariffs at its current one.
+
+    v1.32.5 — done at setup rather than as a config-version migration, so the
+    entry can still be loaded by an older release after a downgrade.
+    """
+    old = entry.data.get(CONF_DSO_GLN)
+    new = RETIRED_DSO_GLNS.get(old) if isinstance(old, str) else None
+    if new:
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_DSO_GLN: new})
+        _LOGGER.info(
+            "Solar AI: grid company GLN %s has no current tariffs; using %s", old, new)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Battery Arbitrage from a config entry."""
+    _replace_retired_dso_gln(hass, entry)
     coordinator = BatteryArbitrageCoordinator(hass, dict(entry.data))
     await coordinator.async_load_storage()
     await coordinator.async_config_entry_first_refresh()

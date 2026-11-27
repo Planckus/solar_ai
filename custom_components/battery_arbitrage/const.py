@@ -900,9 +900,19 @@ DSO_OPTIONS: list[dict[str, str | None]] = [
     {"value": "5790000610877", "label": "Cerius (Sjælland + Lolland-Falster)", "price_area": "DK2", "stromligning": "cerius_c"},
     {"value": "5790001089030", "label": "N1 (Jutland, ex-NRGi/Konstant)",   "price_area": "DK1", "stromligning": "n1_c"},
     {"value": "5790000392261", "label": "TREFOR El-net (Trekantområdet)",   "price_area": "DK1", "stromligning": "trefor_el-net_c"},
-    {"value": "5790000681075", "label": "Vores Elnet (West/South Jutland)", "price_area": "DK1", "stromligning": "vores_elnet"},
-    {"value": "5790001088231", "label": "Elnet Midt (Central Jutland)",     "price_area": "DK1", "stromligning": "elnet_midt_c"},
+    {"value": "5790000610976", "label": "Vores Elnet (West/South Jutland)", "price_area": "DK1", "stromligning": "vores_elnet"},
+    {"value": "5790001100520", "label": "Elnet Midt (Central Jutland)",     "price_area": "DK1", "stromligning": "elnet_midt_c"},
 ]
+
+# GLNs a grid company no longer publishes tariffs under, mapped to the GLN it
+# publishes under now. Stored settings are rewritten on setup.
+# v1.32.5 — Vores Elnet: 5790000681075 has no tariff record after 2024.
+# Elnet Midt: 5790001088231 has no Nettarif C record and no record after
+# October 2025.
+RETIRED_DSO_GLNS: dict[str, str] = {
+    "5790000681075": "5790000610976",
+    "5790001088231": "5790001100520",
+}
 
 # ── EV battery-lock threshold (v0.30.1) ────────────────────────────────────
 # In FULL EV charge mode the house battery is locked from discharging so the

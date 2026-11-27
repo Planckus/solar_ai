@@ -143,3 +143,37 @@ class TestRequestPacing:
         session = _Session([_Resp(500)] * tariffs._FETCH_RETRIES + [_Resp(200, records=[{"x": 1}])])
         assert await tariffs._fetch_raw_records(session, "gln", "2022-01-01", 500) == []
         assert await tariffs._fetch_raw_records(session, "gln", "2022-01-01", 500) == [{"x": 1}]
+
+
+class TestRetiredDsoGln:
+    """A grid-company GLN without current tariffs is replaced at setup."""
+
+    def test_options_list_has_no_retired_gln(self):
+        from custom_components.battery_arbitrage.const import (
+            DSO_OPTIONS, RETIRED_DSO_GLNS,
+        )
+        values = {d["value"] for d in DSO_OPTIONS}
+        assert not values & set(RETIRED_DSO_GLNS)
+        assert set(RETIRED_DSO_GLNS.values()) <= values
+
+    def _run(self, gln):
+        import types
+        from unittest.mock import MagicMock
+        from custom_components.battery_arbitrage import _replace_retired_dso_gln
+        hass = MagicMock()
+        entry = types.SimpleNamespace(data={"dso_gln": gln, "battery_capacity": 10})
+        _replace_retired_dso_gln(hass, entry)
+        return hass.config_entries.async_update_entry
+
+    def test_vores_elnet_old_gln_is_replaced(self):
+        update = self._run("5790000681075")
+        update.assert_called_once()
+        assert update.call_args.kwargs["data"] == {
+            "dso_gln": "5790000610976", "battery_capacity": 10}
+
+    def test_elnet_midt_old_gln_is_replaced(self):
+        update = self._run("5790001088231")
+        assert update.call_args.kwargs["data"]["dso_gln"] == "5790001100520"
+
+    def test_current_gln_is_left_alone(self):
+        self._run("5790000610099").assert_not_called()
