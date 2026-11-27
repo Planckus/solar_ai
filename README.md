@@ -393,6 +393,13 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.32.5 — Vores Elnet and Elnet Midt tariffs are loaded again
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **Vores Elnet and Elnet Midt:** the grid company list used GLNs that no longer carry tariffs, so grid tariffs and the feed-in tariff were missing. Solar AI now uses the GLNs the companies publish under, and switches existing installs over at startup.
+- **Solar forecast chart:** the legend says "Raw forecast" instead of "Raw (Solcast)", since the bars show whichever source is selected. Create the dashboard again with `force: true` to get the new label.
+
 ### v1.32.4 — prices and amounts show the chosen currency
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).

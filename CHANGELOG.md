@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.32.5] — 2026-11-27
+
+### Fixed — Vores Elnet and Elnet Midt tariffs were not loaded
+
+The grid company list had two GLNs that no longer carry tariffs. Vores Elnet publishes no tariffs under 5790000681075 after 2024. Elnet Midt's 5790001088231 has no Nettarif C record and nothing after October 2025. For both, the tariff refresh found no current grid tariff, logged "Tariff schedule fetch partial — DSO ok=False" and kept an empty cache. The feed-in tariff lookup failed for the same reason.
+
+- Vores Elnet now uses GLN 5790000610976 and Elnet Midt uses 5790001100520. Both carry the company's current tariffs, including Nettarif C.
+- An existing install with one of the old GLNs is switched to the new one when Solar AI starts. No action is needed.
+
+### Fixed — solar chart legend named Solcast for every source
+
+The *Solar forecast (48h)* chart labelled its bars "Raw (Solcast)" whatever the selected forecast source. The bars show the forecast from the selected source, so the label is now "Raw forecast" ("Råt forecast" in Danish). An existing dashboard keeps the old label until it is created again with `force: true`.
+
+---
+
 ## [1.32.4] — 2026-11-27
 
 ### Fixed — prices and amounts show the chosen currency

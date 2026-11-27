@@ -79,7 +79,7 @@ views:
         y: raw_kw
         type: bar
         color: '#b0bec580'
-        name: Raw (Solcast)
+        name: Raw forecast
       - entity: sensor.solar_ai_solcelleprognose_48t_graf
         path: slots
         x: start
@@ -237,7 +237,7 @@ views:
         y: raw_kw
         type: bar
         color: '#b0bec580'
-        name: Raw (Solcast)
+        name: Raw forecast
       - entity: sensor.solar_ai_solcelleprognose_48t_graf
         path: slots
         x: start
