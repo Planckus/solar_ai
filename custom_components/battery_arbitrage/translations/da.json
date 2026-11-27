@@ -78,7 +78,7 @@
       },
       "spot_price": {
         "title": "Elpris-enhed",
-        "description": "Vælg en HA-sensor der leverer den aktuelle spotpris ekskl. moms (DKK/kWh). Virker med Strømligning, Tibber eller en anden kompatibel integration.",
+        "description": "Vælg en HA-sensor der leverer den aktuelle spotpris ekskl. moms, pr. kWh. Virker med Strømligning, Tibber eller en anden kompatibel integration.",
         "data": { "spot_price_entity": "Spotpris-enhed (ekskl. moms)" }
       },
       "solar_source": {
@@ -508,11 +508,11 @@
       "grid_max_kw": { "name": "Net-importgrænse" },
       "vat_pct": { "name": "Moms på køb (%)" },
       "export_fee": { "name": "Salgsgebyr (pr. kWh)" },
-      "elafgift": { "name": "Elafgift (DKK/kWh)" },
+      "elafgift": { "name": "Elafgift" },
       "spot_markup": { "name": "Spotpris-tillæg (elhandlertillæg)" },
       "max_export_kw": { "name": "Eksporteffekt-grænse (0 = ingen)" },
       "min_export_price": { "name": "Minimum eksportpris (0 = tillad negativ)" },
-      "battery_degradation_cost": { "name": "Batteri-slidomkostning (DKK/kWh cyklet)" },
+      "battery_degradation_cost": { "name": "Batteri-slidomkostning (pr. kWh cyklet)" },
       "ev_battery_priority_soc": { "name": "Batteri-først tærskel (%) — EV venter til husbatteriet når dette niveau" },
       "ev_modbus_upshift_kw": { "name": "Trefaset skift-tærskel (kW)" },
       "ev_modbus_phase_avg_window_min": { "name": "Faseudjævnings-vindue (min)" },

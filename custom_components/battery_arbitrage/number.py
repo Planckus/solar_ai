@@ -15,6 +15,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    CONF_CURRENCY,
+    DEFAULT_CURRENCY,
     BUY_PRICE_MODE_OCTOPUS,
     BUY_PRICE_MODE_STROMLIGNING,
     CONF_BUY_PRICE_MODE,
@@ -216,7 +218,7 @@ async def async_setup_entry(
             translation_key="min_spread_arbitrage",
             default=DEFAULT_MIN_SPREAD_ARBITRAGE,
             icon="mdi:chart-bar",
-            unit="DKK/kWh",
+            unit="{}/kWh",
             min_val=0.00,
             max_val=3.00,
             step=0.05,
@@ -254,7 +256,7 @@ async def async_setup_entry(
             translation_key="export_fee",
             default=DEFAULT_EXPORT_FEE,
             icon="mdi:cash-minus",
-            unit="DKK/kWh",
+            unit="{}/kWh",
             min_val=0.0,
             max_val=0.50,
             step=0.005,
@@ -265,7 +267,7 @@ async def async_setup_entry(
             translation_key="elafgift",
             default=DEFAULT_ELAFGIFT_DKK_KWH,
             icon="mdi:bank-outline",
-            unit="DKK/kWh",
+            unit="{}/kWh",
             min_val=0.0,
             max_val=3.0,
             step=0.001,
@@ -280,7 +282,7 @@ async def async_setup_entry(
             translation_key="spot_markup",
             default=DEFAULT_SPOT_MARKUP,
             icon="mdi:tag-plus-outline",
-            unit="DKK/kWh",
+            unit="{}/kWh",
             min_val=0.0,
             max_val=0.50,
             step=0.005,
@@ -307,7 +309,7 @@ async def async_setup_entry(
             translation_key="min_export_price",
             default=DEFAULT_MIN_EXPORT_PRICE,
             icon="mdi:currency-eur-off",
-            unit="DKK/kWh",
+            unit="{}/kWh",
             min_val=0.0,
             max_val=2.0,
             step=0.01,
@@ -320,7 +322,7 @@ async def async_setup_entry(
             translation_key="battery_degradation_cost",
             default=DEFAULT_BATTERY_DEGRADATION_COST,
             icon="mdi:battery-heart-variant",
-            unit="DKK/kWh",
+            unit="{}/kWh",
             min_val=0.0,
             max_val=1.0,
             step=0.01,
@@ -561,6 +563,9 @@ class BatteryArbitrageConfigNumber(
         self._attr_translation_key = translation_key
         self._attr_icon = icon
         self._attr_mode = mode
+        # A "{}" in the unit is the configured currency, e.g. "{}/kWh" -> "PLN/kWh".
+        if "{}" in unit:
+            unit = unit.format(coordinator.config.get(CONF_CURRENCY, DEFAULT_CURRENCY))
         self._attr_native_unit_of_measurement = unit
         self._attr_native_min_value = min_val
         self._attr_native_max_value = max_val

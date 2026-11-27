@@ -393,6 +393,12 @@ For installs on a Raspberry Pi / SD card, also enable the [disk-space alarm](#di
 
 ## Recent releases
 
+### v1.32.4 — prices and amounts show the chosen currency
+
+Per-version detail is in the [CHANGELOG](CHANGELOG.md).
+
+- **The currency setting applies everywhere Solar AI shows a price or an amount:** the status card, the dashboard tables, sensor units, the price settings and the decision and notification texts. Before, several of them said DKK or kr whatever currency was chosen. The dashboard tables change when the dashboard is created again with `force: true`.
+
 ### v1.32.3 — Forecast.Solar forecast is read again
 
 Per-version detail is in the [CHANGELOG](CHANGELOG.md).
@@ -1585,7 +1591,7 @@ All settings are in *Settings → Devices & Services → Solar AI → Configure*
 | Indfødningstarif | Auto-fetched | Read-only sensor | Feed-in production tariff deducted from export price. Updated daily. |
 | Notifications | Off | Yes | Persistent HA notification on every mode change |
 | Grid operator (DSO) | Dinel (Jutland/Fyn) | Options flow | DSO for hourly network tariff and indfødningstarif data |
-| Currency | DKK | Options flow | Price and savings sensor currency (DKK, EUR, SEK, NOK, GBP) |
+| Currency | DKK | Options flow | Currency for prices and amounts: sensor units, settings, the dashboard and status messages (DKK, EUR, SEK, NOK, GBP, PLN, USD, AUD) |
 | Live data poll interval | 15 s | Options flow | Fast-poll cadence (10–300 s) |
 | Embedded OCPP server | On | Options flow → OCPP Settings | Integration hosts its own OCPP 1.6 server. Turn off to use `lbbrhzn/ocpp` instead. |
 | Embedded OCPP port | 9000 | Options flow → OCPP Settings | TCP port the embedded server listens on |

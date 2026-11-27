@@ -383,7 +383,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="feed_in_tariff",
         translation_key="feed_in_tariff",
-        native_unit_of_measurement="DKK/kWh",
+        currency_unit_template="{}/kWh",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:transmission-tower-export",
         suggested_display_precision=4,
@@ -395,7 +395,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
     BatteryArbitrageSensorDescription(
         key="min_export_price_display",
         translation_key="min_export_price_display",
-        native_unit_of_measurement="DKK/kWh",
+        currency_unit_template="{}/kWh",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:currency-eur-off",
         suggested_display_precision=2,
@@ -458,7 +458,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         translation_key="price_forecast",
         icon="mdi:table-clock",
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement="DKK/kWh",
+        currency_unit_template="{}/kWh",
         value_fn=lambda d: (d.get("buy_price_forecast") or [{}])[0].get("buy", 0.0),
         attrs_fn=lambda d: {
             "slots": d.get("buy_price_forecast", []),
@@ -582,7 +582,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:cash-plus",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
-        native_unit_of_measurement="DKK",
+        currency_unit_template="{}",
         value_fn=lambda d: d.get("export_income_total", 0.0),
         attrs_fn=lambda d: {
             "today": d.get("export_income_today", 0.0),
@@ -600,7 +600,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:cash-minus",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
-        native_unit_of_measurement="DKK",
+        currency_unit_template="{}",
         value_fn=lambda d: d.get("import_cost_total", 0.0),
         attrs_fn=lambda d: {
             "today": d.get("import_cost_today", 0.0),
@@ -620,7 +620,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:scale-balance",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
-        native_unit_of_measurement="DKK",
+        currency_unit_template="{}",
         value_fn=lambda d: d.get("net_grid_total", 0.0),
         attrs_fn=lambda d: {
             "today": d.get("net_grid_today", 0.0),
@@ -643,7 +643,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:piggy-bank",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
-        native_unit_of_measurement="DKK",
+        currency_unit_template="{}",
         value_fn=lambda d: d.get("actual_savings_today", 0.0),
     ),
     BatteryArbitrageSensorDescription(
@@ -652,7 +652,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:piggy-bank-outline",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
-        native_unit_of_measurement="DKK",
+        currency_unit_template="{}",
         value_fn=lambda d: d.get("actual_savings_total", 0.0),
         attrs_fn=lambda d: {"tracked_days": d.get("actual_savings_days", 0)},
     ),
@@ -662,7 +662,7 @@ SENSORS: tuple[BatteryArbitrageSensorDescription, ...] = (
         icon="mdi:calendar-range",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
-        native_unit_of_measurement="DKK",
+        currency_unit_template="{}",
         value_fn=lambda d: d.get("actual_savings_range", 0.0),
         attrs_fn=lambda d: {
             "from": d.get("actual_savings_range_start", ""),

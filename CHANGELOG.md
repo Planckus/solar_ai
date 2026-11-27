@@ -9,6 +9,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.32.4] — 2026-11-27
+
+### Fixed — prices and amounts show the chosen currency
+
+The currency setting now applies everywhere Solar AI shows a price or an amount. Before, only part of it followed the setting, and the rest said DKK or kr whatever currency was chosen.
+
+| Where | Before | Now |
+|---|---|---|
+| Status card: buy price, sell price, saved today | kr | The currency from the sensor unit |
+| Dashboard tables: export income, net balance | kr | The currency from the sensor unit |
+| Sensors: export income, import cost, net balance, total savings (three), feed-in tariff, minimum export price, price forecast | DKK, DKK/kWh | The chosen currency |
+| Settings sliders: minimum spread and the other five price settings | DKK/kWh | The chosen currency per kWh |
+| Decision reasons and action-log notifications | DKK, DKK/kWh | The chosen currency |
+| Names of the electricity duty and battery wear cost settings | Ended in "(DKK/kWh)" | No unit in the name; the unit is shown next to the value |
+
+With DKK as the currency, the status card and dashboard tables show DKK where they showed kr.
+
+The status card, sensors, settings and messages change when Solar AI is updated. The dashboard tables change when the dashboard is created again with `battery_arbitrage.create_dashboard` and `force: true`, which replaces the dashboard's contents.
+
+On an installation with a currency other than DKK, Home Assistant reports a unit change for the sensors above under *Developer tools → Statistics*, where the recorded history can be adjusted.
+
+---
+
 ## [1.32.3] — 2026-11-26
 
 ### Fixed — Forecast.Solar forecast was never read
